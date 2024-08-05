@@ -1,0 +1,14 @@
+
+.DS_Store
+
+.idea/misc.xml
+
+
+chromium-user-data-dir
+datasheets
+specs
+search-results
+
+*.log
+test.pdf
+.token
