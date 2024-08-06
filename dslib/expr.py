@@ -1,3 +1,10 @@
+"""
+
+    https://regex101.com/r/Mi15wn/1
+
+
+"""
+
 QRR = {
 
     'infineon': r"(Q\s?rr|reverse\srecovery\scharge[\s()0-9]+Q|Qrr\s+Reverse\s+Recovery\s+Charge)\s+(?P<min>[-0-9.]+\s+)?(?P<typ>[-0-9.]+)\s+(?P<max>[-0-9.]+)\s*nC"
@@ -75,3 +82,5 @@ Source-Drain Recovery Charge
 (?P<typ>[-0-9.]+\s*)
 (nC|IF=\s*(?P<if>[0-9.]+)\s*A,di/dt=\s*(?P<didt>[0-9.]+)\s*A/μs)""",
 }
+
+# Time
