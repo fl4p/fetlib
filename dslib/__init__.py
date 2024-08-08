@@ -1,3 +1,12 @@
+import os.path
+
+
+def get_datasheets_path(mfr=None, mpn=None):
+    p = os.path.realpath(os.path.dirname(__file__) + '/../datasheets')
+    if mpn is None:
+        return p
+    return os.path.join(p, mfr, mpn + '.pdf')
+
 def mfr_tag(mnf: str):
     mnf = mnf.lower()
     for tag, prefix in dict(infineon='infineon', ti='texas instruments', ao='alpha & omega', nxp=('nxp', 'nexperia'),

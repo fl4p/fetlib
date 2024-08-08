@@ -165,4 +165,8 @@ Infineon diF/dt=100 A/μs
 # PDF Processing Tools
 
 * tabula (pdf table extraction), open source
-* 
+
+
+# Mosfet Selection
+- faster HS switching causes more ringing, use snubber and good input caps.
+- faster HS switching times can increase parasitic LS turn on (https://www.ti.com/lit/an/slyt664/slyt664.pdf?ts=1722820278050#page=3). Choose sync fet with low Qgd/Qgs ratio

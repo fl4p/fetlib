@@ -1,5 +1,12 @@
 """
 
+These regular expression find specification/test result values within a text from a PDF.
+Since values are inside tables, and tables might contain testing condition parameters,
+it is not always straightforward.
+
+For now, there is one regex for each manufacturer and each value to be extracted, so it doesn't
+scale very good. Might want to use more lenient regex.
+
     https://regex101.com/r/Mi15wn/1
 
 

@@ -6,9 +6,10 @@ import pandas as pd
 
 from dslib import mfr_tag
 from dslib.fetch import fetch_datasheet
-from dslib.parse import parse_datasheet, tabula_read, Field
-from dslib.powerloss import dcdc_buck_hs
+from dslib.pdf2txt.parse import parse_datasheet, tabula_read, Field
+from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
+from dslib.store import Part
 
 
 def get_part_specs_cached(mpn, mfr):
@@ -36,6 +37,7 @@ def read_digikey_results(csv_path):
     n = len(df)
 
     result_rows = []
+    result_parts = []
 
     uByp = dict()
     for i, row in df.iterrows():
@@ -101,8 +103,9 @@ def read_digikey_results(csv_path):
             if sym not in ds:
                 ds[sym] = Field(sym, min=math.nan, typ=typ, max=math.nan)
 
-        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3)
+        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500)
         fet_specs = MosfetSpecs(
+            Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
             Rds_on=row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip(),
             Qg=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
             tRise=ds.get('tRise') and (ds.get('tRise').typ_or_max_or_min * 1e-9),
@@ -110,14 +113,21 @@ def read_digikey_results(csv_path):
             Qrr=ds.get('Qrr') and (ds.get('Qrr').typ_or_max_or_min * 1e-9),
         )
 
-        try:
+        if 1:
             loss_spec = dcdc_buck_hs(dcdc, fet_specs)
             ploss = loss_spec.__dict__.copy()
-            ploss['P_sum'] = loss_spec.sum()
-            ploss['P_2p_sum'] = loss_spec.parallel(2).sum()
-        except Exception as e:
-            print(mfr, mpn, 'dcdc_buck_hs', e)
-            ploss = {}
+            ploss['P_hs'] = loss_spec.buck_hs()
+            ploss['P_2hs'] = loss_spec.parallel(2).buck_hs()
+
+            loss_spec = dcdc_buck_ls(dcdc, fet_specs)
+            ploss['P_rr'] = loss_spec.P_rr
+            ploss['P_on_ls'] = loss_spec.P_on
+            ploss['P_dt_ls'] = loss_spec.P_dt
+            ploss['P_ls'] = loss_spec.buck_ls()
+            #ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
+        #except Exception as e:
+        #    print(mfr, mpn, 'dcdc_buck_hs', e)
+        #    ploss = {}
 
         row = dict(
             mfr=mfr,
@@ -142,24 +152,57 @@ def read_digikey_results(csv_path):
         )
 
         result_rows.append(row)
+        result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs))
 
     df = pd.DataFrame(result_rows)
     df.to_csv('digikey-01.csv', index=False)
 
-    pass
+    dslib.store.add_parts(result_parts, overwrite=True)
+
 
 
 def tests():
     # TODO
     # datasheets/onsemi/NTBLS1D1N08H.pdf
 
+    d = tabula_read('datasheets/ts/TSM089N08LCR RLG.pdf')
+    assert d['Qrr'].typ == 35
+    assert d['tFall'].typ == 24
+    assert d['tRise'].typ == 21
+
+    d = tabula_read('datasheets/infineon/IAUZ40N08S5N100ATMA1.pdf')
+    assert d['tRise'].typ == 1
+    assert d['tFall'].typ == 5
+    assert d['Qrr'].typ == 32
+
+    d = tabula_read('datasheets/st/STL135N8F7AG.pdf')
+    assert d['Qrr'].typ == 66
+
+    d = tabula_read('datasheets/toshiba/TK6R9P08QM,RQ.pdf')
+    assert d['Qrr'].typ == 35
+
+    d = tabula_read('datasheets/toshiba/TPH2R408QM,L1Q.pdf')
+    assert d['Qrr'].typ == 74
+
+    d = tabula_read('datasheets/vishay/SIR826DP-T1-GE3.pdf')
+    assert d['Qrr'].typ == 78
+    assert d['Qrr'].max == 155
+
+
+    d = tabula_read('datasheets/ti/CSD19505KTT.pdf')
+    assert d['tRise'].typ == 5
+    assert d['tFall'].typ == 3
+    assert d['Qrr'].typ == 400
+
+
     d = tabula_read('datasheets/vishay/SUM60020E-GE3.pdf')
     assert d['Qrr'].typ == 182 and d['Qrr'].max == 275
     assert d['tRise'].typ == 13
     assert d['tFall'].typ == 15
 
-    d = tabula_read('datasheets/onsemi/NVBGS1D2N08H.pdf') # discontinued
+    d = tabula_read('datasheets/onsemi/NVBGS1D2N08H.pdf') # discontinued NRFND
     assert d['Qrr'].typ == 122
+
 
     d = tabula_read('datasheets/infineon/IAUA180N08S5N026AUMA1.pdf')
     assert d['tRise'].typ == 7
@@ -210,9 +253,7 @@ def tests():
 
     # rise 38.1 fall 18.4
 
-    d = tabula_read('datasheets/ti/CSD19505KTT.pdf')
-    assert d['tRise'].typ == 5
-    assert d['tFall'].typ == 3
+
 
     d = tabula_read('datasheets/nxp/PSMN8R2-80YS,115.pdf')
     # assert d # doenst work tabula doesnt find the tables right
@@ -239,6 +280,7 @@ def tests():
     assert d['tRise'].max == 26
     assert d['tFall'].typ == 15
     assert d['tFall'].max == 30
+    assert d['Qrr'].typ == 182
 
     d = parse_datasheet(mfr='vishay', mpn='SUM60020E-GE3')
     assert d['Qrr'].typ == 182.

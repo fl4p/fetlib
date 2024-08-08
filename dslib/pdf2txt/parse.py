@@ -4,19 +4,8 @@ from typing import List
 
 import pandas as pd
 
-from dslib import expr
 from dslib.cache import disk_cache
-
-
-def normalize_dash(s):
-    s = s.replace('‐', '-')  # utf8 b'\xe2\x80\x90'
-    s = s.replace('‑', '-')  # utf8 b'\xe2\x80\x91'
-    s = s.replace('−', '-')  # utf8 b'\xe2\x80\x92'
-    s = s.replace('–', '-')  # utf8 b'\xe2\x80\x93'
-    s = s.replace('—', '-')
-
-    s = s.replace('', '-')
-    return s
+from dslib.pdf2txt import expr, normalize_dash
 
 
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
@@ -49,8 +38,8 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
 
     if pat:
         rg = re.compile(pat, re.MULTILINE | re.IGNORECASE)
-        # qrr_m = rg.findall(pdf_text)
         qrr_ms = list(rg.finditer(pdf_text))
+
         # if len(qrr_ms) != 1:
         #    if len(qrr_ms) == 2 and mpn in {'IQD016N08NM5ATMA1', 'FDMC007N08LC', 'FDMS4D4N08C'}:
         #        pass
@@ -69,18 +58,14 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
                     qrr_d[k[:-1]] = v
                     del qrr_d[k]
 
-            if qrr_d.get('unit') == 'μC':
-                mul = 1000
-            else:
-                mul = 1
-
             fields.append(Field('Qrr',
                                 min=qrr_d.get('min'), typ=qrr_d.get('typ'), max=qrr_d.get('max'),
-                                mul=mul,
+                                mul=1,
                                 cond=dict(
                                     i_f=qrr_d.get('if'),
                                     didt=qrr_d.get('didt'),
-                                    vds=qrr_d.get('vds'))))  # vgs
+                                    vds=qrr_d.get('vds')),
+                                unit=qrr_d.get('unit')))  # vgs
     else:
         print('no Qrr pattern for ', mfr)
 
@@ -148,7 +133,7 @@ def tabula_read(ds_path):
         tFall=re.compile(r'(fall\s+time|^t\s?f$)', re.IGNORECASE),
         Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
                        re.IGNORECASE),
-        #Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
+        # Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
 
     )
@@ -157,9 +142,10 @@ def tabula_read(ds_path):
     # noinspection RegExpEmptyAlternationBranch
     dim_regs = dict(
         t=[
-            re.compile(r'(time|t\s?[rf]),([ =/a-z,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)', re.IGNORECASE),
+            re.compile(r'(time|t\s?[rf]),([ =/a-z,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)',
+                       re.IGNORECASE),
             re.compile(
-                r'[, ](?P<min>nan|-+||[-0-9]+(\.[0-9]+)?),(?P<typ>nan|-+||[-0-9.]+)[, ](?P<max>nan|-+||[-0-9.]+),(nan,)?(?P<unit>[uμn]s)(,|$)',
+                r'[, ](?P<min>nan|-+||[-0-9]+(\.[0-9]+)?),(?P<typ>nan|-*|[-0-9.]+)[, ](?P<max>nan|-+||[-0-9.]+),(nan,)?(?P<unit>[uμn]s)(,|$)',
                 re.IGNORECASE),
             re.compile(r'(time|t\s?[rf]),([\s=/a-z0-9.,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)',
                        re.IGNORECASE),
@@ -167,11 +153,12 @@ def tabula_read(ds_path):
             re.compile(r'(time|t\s?[rf]),(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
                        re.IGNORECASE),
 
+            re.compile(r'(time|t[_\s]?[rf])\s*,?\s*(?P<min>nan|-*|[-0-9.]+)\s*,?\s*(?P<typ>nan|-*|[-0-9.]+)\s*,?\s*(?P<max>nan|-*|[-0-9.]+)\s*,?\s*(?P<unit>[uμn]s)(,|$)',
+                       re.IGNORECASE),
+
         ],
         Q=[
 
-            re.compile(r'(charge|Q[ _]?[a-z]{1,3}),([ a-z]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
-                       re.IGNORECASE),
             re.compile(
                 r'(V|charge|Q[ _]?[a-z]{1,3}),(?P<min>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<typ>([0-9]+(\.[0-9]+)?)),(?P<max>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<unit>[uμnp]C)(,|$)',
                 re.IGNORECASE),
@@ -180,11 +167,21 @@ def tabula_read(ds_path):
                 r'(charge|Q[\s_]?[a-z]{1,3})([\s=/a-z0-9.,μ]+)?(?P<min>-*|nan|[0-9]+(\.[0-9]+)?),(?P<typ>-*|nan|[0-9]+(\.[0-9]+)?),(?P<max>-*|nan|[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
                 re.IGNORECASE),
 
-            re.compile(r'(charge|Q[\s_]?[a-z]{1,3}),(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
-                       re.IGNORECASE),
             re.compile(
                 r'(charge|Q[\s_]?[a-z]{1,3}),((-|nan|),){0,4}(?P<typ>[-0-9]+(\.[0-9]+)?),((-|nan|),){0,2}(?P<unit>[uμnp]C)(,|$)',
                 re.IGNORECASE),
+
+            re.compile(
+                r'(charge|Q[ _]?[a-z]{1,3}),([\s=/a-z0-9.,μ]+,)?(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
+                re.IGNORECASE),
+
+            re.compile(r'(charge|Q[\s_]?[a-z]{1,3}),(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
+                       re.IGNORECASE),
+
+            re.compile(
+                r'(charge|Q[\s_]?[a-z]{1,3})\s*,?\s*(?P<min>nan|-*|[0-9.]+)\s*,?\s*(?P<typ>nan|-*|[0-9.]+)\s*,?\s*(?P<max>nan|-*|[0-9.]+)\s*,?\s*(?P<unit>[uμn]C)(,|$)',
+                re.IGNORECASE),
+
         ],
     )
 
@@ -304,8 +301,8 @@ def tabula_read(ds_path):
                                                 mul=1, cond=dict(row.dropna()), unit=unit),
                                           )
                         except Exception as e:
-                            print(ds_path, 'error parsing field row', e)
-                            print(rl, rl_ff, rl_bf)
+                            print(ds_path, 'error parsing field with col_idx', dict(col_idx), e)
+                            print(row.values, rl, rl_ff, rl_bf)
                             # raise
                     else:
                         print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
@@ -339,13 +336,12 @@ class Field():
 
         self.unit = unit
 
-
         self.cond = cond
 
-        assert not math.isnan(self.typ) or not math.isnan(self.min) or not math.isnan(self.max), self.__repr__()
+        assert not math.isnan(self.typ) or not math.isnan(self.min) or not math.isnan(self.max), 'all nan ' + self.__repr__()
 
     def __repr__(self):
-        return f'Field("{self.symbol}", min={self.min}, typ={self.typ}, max={self.max}, cond={self.cond})'
+        return f'Field("{self.symbol}", min={self.min}, typ={self.typ}, max={self.max}, unit="{self.unit}", cond={repr(self.cond)})'
 
     @property
     def typ_or_max_or_min(self):

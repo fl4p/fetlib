@@ -3,7 +3,9 @@ import math
 
 class MosfetSpecs:
 
-    def __init__(self, Rds_on, Qg, tRise, tFall, Qrr):
+    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Vsd=None):
+        self.Vds = Vds_max
+
         if isinstance(Rds_on, str):
             if Rds_on.endswith('mOhm'):
                 Rds_on = float(Rds_on[:-4].strip()) * 1e-3
@@ -15,20 +17,30 @@ class MosfetSpecs:
         self.Qg = Qg
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
-        self.Qrr = math.nan if Qrr is None else Qrr # GaN have Qrr = 0
+        self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
+        self.Vsd = Vsd  # body diode forward
+
+        assert 1e-9 < Qg < 1000e-9, Qg
+        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 1000e-9, self.Qrr  # GaN have 0 qrr
+        assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
+        assert math.isnan(self.tFall) or 1e-9 < self.tFall < 1000e-9, self.tFall
+        assert Vsd is None or 0.2 < Vsd < 2, Vsd
 
     @staticmethod
-    def mpn(mpn, mfr):
-        datasheet_path = os.path.join('datasheets', mfr, mpn + '.pdf')
-        from dslib.parse import parse_datasheet
-        ds = parse_datasheet(datasheet_path, mfr=mfr, mpn=mpn)
-        return MosfetSpecs()
+    def from_mpn(mpn, mfr) -> 'MosfetSpecs':
+        import dslib.store
 
+        part = dslib.store.load_part(mpn, mfr)
+        assert part.is_fet
+        return part.specs
+
+    def __str__(self):
+        return f'MosfetSpecs({self.Vds}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
 
 
 class DcDcSpecs:
 
-    def __init__(self, vi, vo, f, Vgs, io=None, ii=None, pin=None, dil=None, ripple_factor=None):
+    def __init__(self, vi, vo, f, Vgs, tDead=None, io=None, ii=None, pin=None, dil=None, ripple_factor=None):
         """
 
         :param vi:
@@ -40,6 +52,7 @@ class DcDcSpecs:
         :param pin:
         :param dil: coil ripple current il_ton - il_0. CCM if dil<2*il. see https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
         """
+
         self.Vi = vi
         self.Vo = vo
 
@@ -63,6 +76,7 @@ class DcDcSpecs:
         self.f = f
         # self.Ir = Ir # ripple current
         self.Vgs = Vgs
+        self.tDead = tDead
 
     @property
     def Pout(self):
@@ -70,5 +84,4 @@ class DcDcSpecs:
 
     def __str__(self):
         return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW)' % (
-        self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout)
-
+            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout)

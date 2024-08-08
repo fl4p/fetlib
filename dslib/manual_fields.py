@@ -1,6 +1,6 @@
 import math
 
-from dslib.parse import Field
+from dslib.pdf2txt.parse import Field
 
 infineon = {
     'BSZ070N08LS5ATMA1': [  # need OCR

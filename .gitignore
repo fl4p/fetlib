@@ -13,3 +13,5 @@ search-results
 test.pdf
 .token
 *.pickle
+
+*.csv
