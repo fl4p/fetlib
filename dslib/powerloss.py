@@ -51,7 +51,7 @@ class SwitchPowerLoss():
         :return:
         """
         return SwitchPowerLoss(
-            P_on=self.P_on / (n ** 2),
+            P_on=self.P_on / n,
             P_sw=self.P_sw,
             P_rr=n * self.P_rr,
             P_gd=n * self.P_gd,
