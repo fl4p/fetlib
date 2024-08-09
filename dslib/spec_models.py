@@ -78,6 +78,9 @@ class DcDcSpecs:
         self.Vgs = Vgs
         self.tDead = tDead
 
+        p = 1/self.f
+        assert tDead / p < 0.1
+
     @property
     def Pout(self):
         return self.Io * self.Vo

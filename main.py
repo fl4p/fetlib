@@ -103,7 +103,7 @@ def read_digikey_results(csv_path):
             if sym not in ds:
                 ds[sym] = Field(sym, min=math.nan, typ=typ, max=math.nan)
 
-        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500)
+        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
         fet_specs = MosfetSpecs(
             Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
             Rds_on=row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip(),
@@ -124,7 +124,7 @@ def read_digikey_results(csv_path):
             ploss['P_on_ls'] = loss_spec.P_on
             ploss['P_dt_ls'] = loss_spec.P_dt
             ploss['P_ls'] = loss_spec.buck_ls()
-            #ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
+            ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
         #except Exception as e:
         #    print(mfr, mpn, 'dcdc_buck_hs', e)
         #    ploss = {}
