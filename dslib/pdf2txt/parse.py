@@ -4,6 +4,7 @@ from typing import List
 
 import pandas as pd
 
+from dslib.field import Field
 from dslib.cache import disk_cache
 from dslib.pdf2txt import expr, normalize_dash
 
@@ -105,6 +106,16 @@ def tabula_pdf_dataframes(pdf_path=None):
     if pdf_path in fails:
         raise Exception(f'PDF {pdf_path} known to fail')
     dfs = tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None})
+
+    """
+     from subprocess import check_output
+        out = check_output(["java" "-jar" "~/dev/tabula-java/target/tabula-1.0.6-SNAPSHOT-jar-with-dependencies.jar",
+                            "--guess",
+                            "--pages", "all",
+                            '""'])
+        #'~dev/crypto/venv-arm/lib/python3.9/site-packages/tabula/tabula-1.0.5-jar-with-dependencies.jar'
+    """
+
     return dfs
 
 
@@ -113,21 +124,13 @@ def is_gan(d):
 
 
 def tabula_read(ds_path):
-    if 1:
-        try:
-            dfs = tabula_pdf_dataframes(ds_path)
-        except Exception as e:
-            print(ds_path, e)
-            dfs = []
-            return {}
-    else:
-        from subprocess import check_output
-        out = check_output(["java" "-jar" "~/dev/tabula-java/target/tabula-1.0.6-SNAPSHOT-jar-with-dependencies.jar",
-                            "--guess",
-                            "--pages", "all",
-                            '""'])
+    try:
+        dfs = tabula_pdf_dataframes(ds_path)
+    except Exception as e:
+        print(ds_path, e)
+        dfs = []
+        return {}
 
-        '/Users/fab/dev/crypto/venv-arm/lib/python3.9/site-packages/tabula/tabula-1.0.5-jar-with-dependencies.jar'
 
     # regex matched on cell contents
     fields_detect = dict(
@@ -322,49 +325,6 @@ def tabula_read(ds_path):
             print(ds_path, 'no value for field', s)
 
     return d
-
-
-class Field():
-
-    def __init__(self, symbol: str, min, typ, max, mul=1, cond=None, unit=None):
-        self.symbol = symbol
-
-        if unit in {'uC', 'μC'}:
-            assert mul == 1
-            mul = 1000
-            unit = 'nC'
-
-        self.min = parse_field_value(min) * mul
-        self.typ = parse_field_value(typ) * mul
-        self.max = parse_field_value(max) * mul
-
-        self.unit = unit
-
-        self.cond = cond
-
-        assert not math.isnan(self.typ) or not math.isnan(self.min) or not math.isnan(self.max), 'all nan ' + self.__repr__()
-
-    def __repr__(self):
-        return f'Field("{self.symbol}", min={self.min}, typ={self.typ}, max={self.max}, unit="{self.unit}", cond={repr(self.cond)})'
-
-    @property
-    def typ_or_max_or_min(self):
-        if not math.isnan(self.typ):
-            return self.typ
-        elif not math.isnan(self.max):
-            return self.max
-        elif not math.isnan(self.min):
-            return self.min
-        raise ValueError()
-
-
-def parse_field_value(s):
-    if isinstance(s, (float, int)):
-        return s
-    if not s:        return math.nan
-    s = normalize_dash(s.strip().strip('\x03').rstrip('L'))
-    if not s or s == '-' or set(s) == {'-'}:        return math.nan
-    return float(s)
 
 
 def find_value(pdf_text, label, unit):

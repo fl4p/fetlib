@@ -1,6 +1,6 @@
 import math
 
-from dslib.pdf2txt.parse import Field
+from dslib.field import Field
 
 
 def fallback_specs(mfr, mpn):

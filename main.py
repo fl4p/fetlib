@@ -6,8 +6,9 @@ import pandas as pd
 
 import dslib.manual_fields
 from dslib import mfr_tag
+from dslib.field import Field
 from dslib.fetch import fetch_datasheet
-from dslib.pdf2txt.parse import parse_datasheet, Field
+from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
 from dslib.store import Part
