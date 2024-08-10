@@ -1,10 +1,10 @@
 import glob
 import math
 import os.path
-import sys
 
 import pandas as pd
 
+import dslib.manual_fields
 from dslib import mfr_tag
 from dslib.fetch import fetch_datasheet
 from dslib.pdf2txt.parse import parse_datasheet, Field
@@ -14,20 +14,17 @@ from dslib.store import Part
 from dslib.tests import tests
 
 
+def main():
+    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
+    read_digikey_results(csv_path='digikey-results/*.csv', dcdc=dcdc)
+
+
 def read_digikey_results(csv_path, dcdc):
     df = pd.concat([pd.read_csv(fn) for fn in sorted(glob.glob(csv_path))], axis=0, ignore_index=True)
-    #df = pd.read_csv(csv_path)
+    # df = pd.read_csv(csv_path)
 
-    result_rows = []
-    result_parts = []
-
-    uByp = dict()
-    for i, row in df.iterrows():
-        pn = row['Mfr Part #']
-        u = row.Datasheet
-        if pn in uByp:
-            pass  # assert u == uByp[pn], (uByp[pn], u)
-        uByp[pn] = u
+    result_rows = []  # csv
+    result_parts = []  # db storage
 
     for i, row in df.iterrows():
         mfr = mfr_tag(row.Mfr)
@@ -35,12 +32,12 @@ def read_digikey_results(csv_path, dcdc):
         ds_url = row.Datasheet
 
         datasheet_path = os.path.join('datasheets', mfr, mpn + '.pdf')
-        fetch_datasheet(ds_url, datasheet_path, mfr=mfr, mpn=mpn)
+        if not os.path.exists(datasheet_path):
+            fetch_datasheet(ds_url, datasheet_path, mfr=mfr, mpn=mpn)
 
         ds = {}
 
         # place manual fields:
-        import dslib.manual_fields
         man_fields = dslib.manual_fields.__dict__
         if mfr in man_fields:
             for mf in man_fields[mfr].get(mpn, []):
@@ -67,17 +64,13 @@ def read_digikey_results(csv_path, dcdc):
             if sv and sym not in ds:
                 ds[sym] = Field(sym, min=math.nan, typ=sv, max=math.nan)
 
-        def fallback_specs(mfr, mpn):
-            if mfr_tag(mfr) == 'epc':
-                return dict(tRise=4, tFall=4)
-            return dict()
-
-        fs = fallback_specs(mfr, mpn)
-
+        # fallback specs for GaN etc (EPC tRise and tFall)
+        fs = dslib.manual_fields.fallback_specs(mfr, mpn)
         for sym, typ in fs.items():
             if sym not in ds:
                 ds[sym] = Field(sym, min=math.nan, typ=typ, max=math.nan)
 
+        # create specification for DC-DC loss model
         try:
             fet_specs = MosfetSpecs(
                 Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
@@ -91,6 +84,7 @@ def read_digikey_results(csv_path, dcdc):
             print(mfr, mpn, 'error creating mosfetspecs')
             raise
 
+        # compute power loss
         if 1:
             loss_spec = dcdc_buck_hs(dcdc, fet_specs)
             ploss = loss_spec.__dict__.copy()
@@ -142,12 +136,4 @@ def read_digikey_results(csv_path, dcdc):
 
 if __name__ == '__main__':
     tests()
-
-    mfr = 'onsemi'
-    mpn = 'FDP090N10'
-    datasheet_path = os.path.join('datasheets', mfr, mpn + '.pdf')
-    fetch_datasheet('https://www.onsemi.com/pdf/datasheet/fdp090n10-d.pdf', datasheet_path, mfr=mfr, mpn=mpn)
-
-    # parse_datasheet('datasheets/onsemi/FDP027N08B.pdf', 'onsemi', mpn='test')
-    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
-    read_digikey_results(csv_path='digikey-results/*.csv',dcdc=dcdc)
+    main()

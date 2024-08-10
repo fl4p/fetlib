@@ -2,6 +2,13 @@ import math
 
 from dslib.pdf2txt.parse import Field
 
+
+def fallback_specs(mfr, mpn):
+    from dslib import mfr_tag
+    if mfr_tag(mfr) == 'epc':
+        return dict(tRise=4, tFall=4)
+    return dict()
+
 infineon = {
     'BSZ070N08LS5ATMA1': [  # need OCR
         Field('Qrr', min=math.nan, typ=27, max=54, unit='nC'),

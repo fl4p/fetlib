@@ -17,32 +17,32 @@ def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         ds_url_alt = ds_url
         ds_url = f'https://www.ti.com/lit/ds/symlink/{mpn.lower()}.pdf'
 
-    if not os.path.exists(datasheet_path):
-        if 'infineon-technologies/fundamentals-of-power-semiconductors' in ds_url:
-            print(mfr, 'skip url to', ds_url)
-            return None
 
-        if ds_url == '-':
-            # asyncio.get_event_loop().run_until_complete(download_with_chromium(
-            #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
-            #    click='a#pdp-datasheet_0,a#lnkDataSheet_1',
-            # ))
+    if 'infineon-technologies/fundamentals-of-power-semiconductors' in ds_url:
+        print(mfr, 'skip url to', ds_url)
+        return None
 
-            print('SKIP', datasheet_path, ds_url)
-            return None
+    if ds_url == '-':
+        # asyncio.get_event_loop().run_until_complete(download_with_chromium(
+        #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
+        #    click='a#pdp-datasheet_0,a#lnkDataSheet_1',
+        # ))
 
-        else:
+        print('SKIP', datasheet_path, ds_url)
+        return None
 
-            print('downloading', ds_url, datasheet_path)
-            dp = os.path.dirname(datasheet_path)
-            os.path.isdir(dp) or os.makedirs(dp)
-            for du in (ds_url, ds_url_alt):
-                if not du:
-                    continue
-                try:
-                    asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
-                except Exception as e:
-                    print('ERROR', du, e)
+    else:
+
+        print('downloading', ds_url, datasheet_path)
+        dp = os.path.dirname(datasheet_path)
+        os.path.isdir(dp) or os.makedirs(dp)
+        for du in (ds_url, ds_url_alt):
+            if not du:
+                continue
+            try:
+                asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
+            except Exception as e:
+                print('ERROR', du, e)
 
 
 def download(url, filename):

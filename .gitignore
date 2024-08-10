@@ -14,4 +14,4 @@ test.pdf
 .token
 *.pickle
 
-*.csv
+/*.csv
