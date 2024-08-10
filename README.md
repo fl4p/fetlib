@@ -233,6 +233,10 @@ possible.
   symbols
   correctly.
 * Mouser, API?
+* Extract more fields
+  * Qgd/Qgs (self turn on)
+  * Vsd (body diode forward voltage)
+  * r_g
 
 # Resources
 
