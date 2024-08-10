@@ -99,6 +99,8 @@ def tabula_pdf_dataframes(pdf_path=None):
              'datasheets/onsemi/FDD86367-F085.pdf', 'datasheets/onsemi/NVMFWS6D2N08XT1G.pdf',
              'datasheets/onsemi/FDD86369-F085.pdf', 'datasheets/onsemi/NVMFWS1D9N08XT1G.pdf',
              'datasheets/ao/AOTL66811.pdf',
+
+             'datasheets/diodes/DMT10H9M9SCT.pdf', # unsupported operation
              }
     if pdf_path in fails:
         raise Exception(f'PDF {pdf_path} known to fail')
@@ -163,17 +165,16 @@ def tabula_read(ds_path):
                 r'(V|charge|Q[ _]?[a-z]{1,3}),(?P<min>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<typ>([0-9]+(\.[0-9]+)?)),(?P<max>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<unit>[uμnp]C)(,|$)',
                 re.IGNORECASE),
 
-            re.compile(
-                r'(charge|Q[\s_]?[a-z]{1,3})([\s=/a-z0-9.,μ]+)?(?P<min>-*|nan|[0-9]+(\.[0-9]+)?),(?P<typ>-*|nan|[0-9]+(\.[0-9]+)?),(?P<max>-*|nan|[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
-                re.IGNORECASE),
 
             re.compile(
                 r'(charge|Q[\s_]?[a-z]{1,3}),((-|nan|),){0,4}(?P<typ>[-0-9]+(\.[0-9]+)?),((-|nan|),){0,2}(?P<unit>[uμnp]C)(,|$)',
                 re.IGNORECASE),
 
+
             re.compile(
                 r'(charge|Q[ _]?[a-z]{1,3}),([\s=/a-z0-9.,μ]+,)?(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
                 re.IGNORECASE),
+
 
             re.compile(r'(charge|Q[\s_]?[a-z]{1,3}),(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
                        re.IGNORECASE),
@@ -182,6 +183,9 @@ def tabula_read(ds_path):
                 r'(charge|Q[\s_]?[a-z]{1,3})\s*,?\s*(?P<min>nan|-*|[0-9.]+)\s*,?\s*(?P<typ>nan|-*|[0-9.]+)\s*,?\s*(?P<max>nan|-*|[0-9.]+)\s*,?\s*(?P<unit>[uμn]C)(,|$)',
                 re.IGNORECASE),
 
+            re.compile(
+                r'(charge|Q[\s_]?[a-z]{1,3})([\s=/a-z0-9.,μ]+)?(?P<min>-*|nan|[0-9]+(\.[0-9]+)?),(?P<typ>-*|nan|[0-9]+(\.[0-9]+)?),(?P<max>-*|nan|[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
+                re.IGNORECASE),
         ],
     )
 

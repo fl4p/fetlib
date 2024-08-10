@@ -30,7 +30,7 @@ home = expanduser("~")
 data_dir = os.path.dirname(__file__) + "/../data"
 cache_dir = os.path.realpath(data_dir + "/cache")
 ran_housekeeping = False
-logger = get_logger('cache')
+logger = get_logger()
 
 
 def get_parquet_engine():

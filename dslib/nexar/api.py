@@ -7,6 +7,7 @@ import requests
 import pyperclip
 
 from dslib import mfr_tag
+from dslib.cache import disk_cache
 
 NEXAR_URL = "https://api.nexar.com/graphql"
 QUERY_MPN = """query ($mpn: String!) {
@@ -64,6 +65,7 @@ def read_token():
     with open(os.path.dirname(__file__) + "/.token", "r") as f:
         return f.read().strip()
 
+@disk_cache(ttl='7d')
 def get_part_specs(mpn, mfr):
     token = read_token()  # pyperclip.paste() or
     variables = {"mpn": mpn}
@@ -81,6 +83,24 @@ def get_part_specs(mpn, mfr):
                 print(mfr, mpn, 'empty specs')
                 continue
             return {s['attribute']['shortname']: s['displayValue'] for s in p['specs']}
+
+def get_part_specs_cached(mpn, mfr):
+    dn = os.path.join('specs', mfr)
+    fn = os.path.join(dn, mpn + '.json')
+    os.path.isdir(dn) or os.makedirs(dn)
+    if os.path.exists(fn):
+        with open(fn, 'r') as f:
+            return json.load(f)
+
+    specs = get_part_specs(mpn, mfr=mfr)
+
+    if not specs:
+        print(mfr, mpn, 'no specs found')
+        # return
+
+    with open(fn, 'w') as f:
+        json.dump(specs, f)
+    return specs
 
     # print(mfr, mpn, 'no mfr match!')
 

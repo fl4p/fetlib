@@ -59,7 +59,7 @@ browser_page = None
 
 async def get_browser_page():
     global browser_page
-    if browser_page is None:
+    if browser_page is None or browser_page.isClosed():
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
         os.path.exists(userDataDir) or os.makedirs(userDataDir)
         browser = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir))
@@ -74,10 +74,9 @@ https://stackoverflow.com/questions/50804931/how-to-download-a-pdf-that-opens-in
 
 
 async def download_with_chromium(url, filename, click='#open-button'):
-    page = await get_browser_page()
 
     def _check_dl():
-        dl_files = glob.glob(dl_path + '/*.pdf')
+        dl_files = glob.glob(dl_path + '/*.[pP][dD][fF]')
         if len(dl_files) > 0:
             print('got download', dl_files[0])
             os.rename(dl_files[0], filename)
@@ -85,11 +84,16 @@ async def download_with_chromium(url, filename, click='#open-button'):
         return False
 
     dl_path = os.path.realpath(filename + '_downloads')
+    if os.path.exists(dl_path):
+        import shutil
+        shutil.rmtree(dl_path)
     assert not os.path.exists(dl_path), dl_path
     try:
         os.path.isdir(dl_path) or os.makedirs(dl_path)
 
         print('download folder', dl_path)
+
+        page = await get_browser_page()
 
         await page._client.send('Page.setDownloadBehavior', {
             'behavior': 'allow',

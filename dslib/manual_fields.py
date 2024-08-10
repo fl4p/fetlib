@@ -131,3 +131,14 @@ ao = {
         Field('Qrr', min=math.nan, typ=233, max=math.nan, unit='nC'),
     ]
 }
+
+
+vishay = {
+    'SUM70042E-GE3': [
+        Field('Qrr', min=math.nan, typ=126, max=189, unit='nC'),
+    ],
+
+    'SUP70042E-GE3': [
+        Field('Qrr', min=math.nan, typ=126, max=189, unit='nC'),
+    ]
+}
