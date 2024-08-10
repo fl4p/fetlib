@@ -1,6 +1,9 @@
 # Extensive parametric search of MOSFETs for DC-DC converters
 
+![](spreadsheet.png)
+
 Finding the right switches for your DCDC-Converter might be not as straight forward as it looks on first sight.
+Especially the reverse recovery loss appears to be often overlooked.
 Both switching operate in rather different conditions. This program tries to help you with the selection.
 
 What it does:
@@ -9,7 +12,7 @@ What it does:
 - Download parts datasheets in PDF
 - Extract specification values from the PDF files
 - Store gathered parts specifications in a database or CSV file
-- Power Loss estimation in a DC-DC converter
+- Compute power Loss estimation for a given DC-DC converter
 
 # How to use
 
