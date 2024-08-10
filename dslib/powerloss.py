@@ -65,7 +65,7 @@ class SwitchPowerLoss():
 
     def buck_ls(self):
         # P_rr is induced but not self loss !
-        p = self.P_rr + self.P_on + self.P_gd
+        p = self.P_rr + self.P_on + self.P_gd + self.P_dt
         # assert not math.isnan(p)
         return p
 
@@ -81,11 +81,20 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs):
     assert mf.Qrr is not None, 'Qrr must be set ' + mf.__repr__()
     assert math.isnan(dc.dIl) or dc.dIl > 0
 
+    tr = mf.tRise
+    tf = mf.tFall
+    if math.isnan(tr) and not math.isnan(tf):
+        tr = tf
+
+    if math.isnan(tf) and not math.isnan(tr):
+        warnings.warn('tFall nan, assuming 1.5*tRise')
+        tf = tr * 1.5
+
     if math.isfinite(dc.dIl):
         assert dc.dIl < 2 * dc.Io, 'CCM required, DCM not supported TODO'
-        P_sw = 0.5 * dc.Vi * dc.f * (mf.tRise * (dc.Io - dc.dIl / 2) + mf.tFall * (dc.Io + dc.dIl / 2))
+        P_sw = 0.5 * dc.Vi * dc.f * (tr * (dc.Io - dc.dIl / 2) + tf * (dc.Io + dc.dIl / 2))
     else:
-        P_sw = 0.5 * dc.Vi * dc.Io * dc.f * (mf.tRise + mf.tFall)
+        P_sw = 0.5 * dc.Vi * dc.Io * dc.f * (tr + tf)
 
     return SwitchPowerLoss(
         P_on=dc.Io ** 2 * mf.Rds_on * dc.Vo / dc.Vi,
@@ -160,7 +169,7 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
 
 
 def tests():
-    dcdc = DcDcSpecs(24, 12, 40_000, 12, 500e3, 10)
+    dcdc = DcDcSpecs(24, 12, 40_000, 12, 500e-9, 10)
     mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 1)
 
     loss = dcdc_buck_hs(dcdc, mf)
@@ -172,11 +181,11 @@ def tests():
 
     loss = dcdc_buck_ls(dcdc, mf)
     assert loss.P_on == (10 ** 2) * 10e-3 * .5
-    assert loss.P_dt == 1 * 10 * (500e3 * 2) * 40e3
+    assert loss.P_dt == 1 * 10 * (500e-9 * 2) * 40e3
     assert loss.P_rr == 24 * 40e3 * 120e-9
     assert loss.P_gd == (12 * 40e3 * 2 * 100e-9)
     assert math.isnan(loss.P_sw)
-    assert loss.buck_ls() == loss.P_rr + loss.P_on + loss.P_gd
+    assert loss.buck_ls() == loss.P_rr + loss.P_on + loss.P_gd + loss.P_dt
 
 
 if __name__ == '__main__':
