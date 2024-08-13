@@ -1,6 +1,6 @@
 import math
 
-from dslib import normalize_dash
+from dslib.pdf2txt import normalize_dash
 
 
 class Field():
@@ -13,9 +13,18 @@ class Field():
             mul = 1000
             unit = 'nC'
 
-        self.min = parse_field_value(min) * mul
-        self.typ = parse_field_value(typ) * mul
-        self.max = parse_field_value(max) * mul
+        min = parse_field_value(min) * mul
+        typ = parse_field_value(typ) * mul
+        max = parse_field_value(max) * mul
+
+        if symbol == 'Qrr' and math.isnan(max) and not math.isnan(min) and not math.isnan(typ):
+            max = typ
+            typ = min
+            min = math.nan
+
+        self.min = min
+        self.typ = typ
+        self.max = max
 
         self.unit = unit
 
@@ -33,6 +42,16 @@ class Field():
             return self.typ
         elif not math.isnan(self.max):
             return self.max
+        elif not math.isnan(self.min):
+            return self.min
+        raise ValueError()
+
+    @property
+    def max_or_typ_or_min(self):
+        if not math.isnan(self.max):
+            return self.max
+        elif not math.isnan(self.typ):
+            return self.typ
         elif not math.isnan(self.min):
             return self.min
         raise ValueError()

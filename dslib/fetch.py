@@ -18,7 +18,7 @@ def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         ds_url = f'https://www.ti.com/lit/ds/symlink/{mpn.lower()}.pdf'
 
 
-    if 'infineon-technologies/fundamentals-of-power-semiconductors' in ds_url:
+    if ('infineon-technologies/fundamentals-of-power-semiconductors' in ds_url or 'MCCProductCatalog.pdf ' in ds_url):
         print(mfr, 'skip url to', ds_url)
         return None
 
