@@ -1,3 +1,4 @@
+import math
 import os.path
 
 
@@ -52,3 +53,17 @@ def get_logger(verbose: bool = False):
     logger.setLevel(logging.DEBUG if verbose else logging.INFO)
 
     return logger
+
+
+def round_to_n(x, n):
+    #if isinstance(x, tuple):
+    #    return '[%s]' % ', '.join(map(str, map(partial(round_to_n, n=n), x)))
+
+    if isinstance(x, str) or not math.isfinite(x) or not x:
+        return x
+
+    try:
+        return round(x, -int(math.floor(math.log10(abs(x)))) + (n - 1))
+    except ValueError as e:
+        print('error', x, n, e)
+        raise e
