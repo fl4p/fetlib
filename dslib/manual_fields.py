@@ -6,7 +6,7 @@ from dslib.field import Field
 def fallback_specs(mfr, mpn):
     from dslib import mfr_tag
     if mfr_tag(mfr) == 'epc':
-        return dict(tRise=4, tFall=4)
+        return dict(tRise=2, tFall=2)
     return dict()
 
 infineon = {
