@@ -29,9 +29,10 @@ from dslib.spec_models import DcDcSpecs, MosfetSpecs
 
 
 class SwitchPowerLoss():
-    def __init__(self, P_on, P_gd, P_sw=math.nan, P_rr=math.nan, P_dt=math.nan):
+    def __init__(self, P_on, P_gd, P_sw=math.nan, P_coss=math.nan, P_rr=math.nan, P_dt=math.nan):
         self.P_on = P_on
         self.P_sw = P_sw
+        self.P_coss = P_coss
         self.P_rr = P_rr
         self.P_gd = P_gd
         self.P_dt = P_dt
@@ -51,21 +52,28 @@ class SwitchPowerLoss():
         :return:
         """
         return SwitchPowerLoss(
-            P_on=self.P_on / n,
+            P_on=self.P_on / n * 0.9,  # one switch takes most of the dynamic load, the rest stay cooler
             P_sw=self.P_sw,
             P_rr=n * self.P_rr,
             P_gd=n * self.P_gd,
             P_dt=self.P_dt,  # Vsd body diode voltage drop
+            P_coss=n * self.P_coss,
+            # TODO n**2? or n+1 ? # because P_coss depends on load capacity and in a half-bridge
+            # on fets in the load of the other
         )
 
     def buck_hs(self):
         p = self.P_sw + self.P_on + self.P_gd
+        if not math.isnan(self.P_coss):
+            p += self.P_coss
         # assert not math.isnan(p), (self.P_sw , self.P_on , self.P_gd)
         return p
 
     def buck_ls(self):
         # P_rr is induced but not self loss !
         p = self.P_rr + self.P_on + self.P_gd + self.P_dt
+        if not math.isnan(self.P_coss):
+            p += self.P_coss
         # assert not math.isnan(p)
         return p
 
@@ -79,7 +87,7 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs):
     assert mf.tRise is not None and mf.tFall is not None, 'tRise and tFall must be set ' + mf.__repr__()
     assert mf.Qg is not None, 'Qg must be set ' + mf.__repr__()
     assert mf.Qrr is not None, 'Qrr must be set ' + mf.__repr__()
-    assert math.isnan(dc.dIl) or dc.dIl > 0
+    assert math.isnan(dc.Iripple) or dc.Iripple > 0
 
     tr = mf.tRise
     tf = mf.tFall
@@ -90,18 +98,20 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs):
         warnings.warn('tFall nan, assuming 1.5*tRise')
         tf = tr * 1.5
 
-    if math.isfinite(dc.dIl):
-        assert dc.dIl < 2 * dc.Io, 'CCM required, DCM not supported TODO'
-        P_sw = 0.5 * dc.Vi * dc.f * (tr * (dc.Io - dc.dIl / 2) + tf * (dc.Io + dc.dIl / 2))
+    if math.isfinite(dc.Iripple):
+        assert 0 <= dc.Iripple < 2 * dc.Io, 'CCM required, DCM not supported TODO'
+        hrp = dc.Iripple / 2
+        P_sw = 0.5 * dc.Vi * dc.f * (tr * (dc.Io - hrp) + tf * (dc.Io + hrp))
     else:
         P_sw = 0.5 * dc.Vi * dc.Io * dc.f * (tr + tf)
 
     return SwitchPowerLoss(
-        P_on=dc.Io ** 2 * mf.Rds_on * dc.Vo / dc.Vi,
+        P_on=dc.Io ** 2 * mf.Rds_on * dc.D_buck,
         P_sw=P_sw,
         P_rr=0,  # body diode never conducts
         # P_rr=dc.Vi * dc.f * mf.Qrr, # P_rr is caused by LS but dissipated by HS
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
+        P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss,
     )
 
 
@@ -126,6 +136,7 @@ def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs):
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,
         P_rr=dc.Vi * dc.f * mf.Qrr,  # this is dissipated in HS
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
+        P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss,
     )
 
 
@@ -153,12 +164,12 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     :return:
     """
 
-    assert math.isnan(dc.dIl) or dc.dIl > 0
+    assert math.isnan(dc.Iripple) or dc.Iripple > 0
 
-    if math.isfinite(dc.dIl):
-        assert dc.dIl < 2 * dc.Io, 'CCM required, DCM not supported TODO'
-        ip = (dc.Io + dc.dIl / 2)
-        iv = (dc.Io - dc.dIl / 2)
+    if math.isfinite(dc.Iripple):
+        assert dc.Iripple < 2 * dc.Io, 'CCM required, DCM not supported TODO'
+        ip = (dc.Io + dc.Iripple / 2)
+        iv = (dc.Io - dc.Iripple / 2)
         P_dcr = (dc.Io ** 2 + ((ip - iv) ** 2 / 12)) * coil.Rdc
     else:
         P_dcr = dc.Io ** 2 * coil.Rdc
@@ -166,6 +177,25 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     return dict(
         P_dcr=P_dcr,
     )
+
+
+def mosfet_switching_hs(dc: DcDcSpecs, hs: MosfetSpecs, ls: MosfetSpecs):
+    # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf
+    Lcsi = 2e-9 #math.nan
+    Qgs2 = math.nan
+    Vlcsi_t2 = math.nan
+    ig1_on = (dc.Vgs - hs.V_pl) / (hs.Rg + dc.Rdrv + Lcsi * (dc.Io - dc.Iripple / 2) / Qgs2)
+    a = Lcsi * ls.Qoss / hs.Qgd ** 2
+    b = hs.Rg + dc.Rdrv
+    c = -(dc.Vgs - hs.V_pl)
+    ig2_on = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
+
+    Psw_on = 0.5 * dc.Vi * ((dc.Io - dc.Iripple) / 2) * dc.f * (Qgs2 / ig1_on + hs.Qgd / ig2_on)
+    # Psw_on = 0.5 *
+    # Psw_off
+
+    # (dc.Vgs - mf.V_pl - Vlcsi_t2) / (mf.Rg + dc.Rdrv)
+    pass
 
 
 def tests():
