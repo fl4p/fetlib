@@ -1,15 +1,64 @@
+import math
 import sys
 
-from dslib.pdf2txt.parse import tabula_read, parse_datasheet
+from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_row_value
 
 
-def tests():
-    # TODO
+def parse_line_tests():
+    #raise NotImplemented()
+    n = math.nan
+    cases = [
+        ("/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC", 'Q' ,(n,35,n)),
+        ("Output Capacitance Coss VDS = 50V,--,3042,--,pF", 'C' ,(n,3042,n)),
+        # "Output capacitance,C oss,nan,-,523.0,696,nan"
+        # "Output Capacitance,Coss,--,392,--,nan,nan"
+        # "2000.0,Coss"
+        # "Coss Output Capacitance,VGS = 0 V, VDS = 50 V, ƒ = 1 MHz,nan,560,728,pF"
+        # C oss output capacitance,Tj = 25 °C; see Figure 16,-,700,-,pF
+        # "Output Capacitance,COSS,nan,1690.0,nan"
+
+        #datasheets/diotec/DIT095N08.pdf error parsing field with col_idx {'min': 2, 'max': 4, 'unit': 0} all nan Field("Coss", min=nan, typ=nan, max=nan, unit="None", cond={0: 'Output Capacitance – Ausgangskapazität'})
+#['Output Capacitance – Ausgangskapazität' nan nan nan nan] Output Capacitance - Ausgangskapazität,nan,nan,nan,nan Output Capacitance - Ausgangskapazität,Ciss,-,6800 pF,- Output Capacitance - Ausgangskapazität,Coss,-,350 pF,-
+#datasheets/diotec/DIT095N08.pdf tRise no value match in  "Turn-On Delay & Rise Time - Einschaltverzögerung und Anstiegszeit,nan,nan,nan,nan"
+
+        # "Coss,Output Capacitance,---,340,---,nan,nan,nan"
+        # "Coss eff. (ER),Effective Output Capacitance (Energy Related),---,420,---,VGS = 0V, VDS = 0V to 80V,  See Fig.11,nan,nan"
+        # "Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan"
+        # "Output Capacitance Coss VDS = 50V, --,2730,--,pF"
+    ]
+
+    for rl, dim,(min,typ, max) in cases:
+        f = parse_row_value(rl, dim, field_sym=dim)
+        assert math.isnan(min) or min == f.min
+        assert math.isnan(typ) or typ == f.typ
+        assert math.isnan(max) or max == f.max
+    # "Coss output capacitance,nan,VDS = 50 V; VGS = 0 V; f = 1 MHz;,-,380,-,pF"
+
+def parse_pdf_tests():
+    # TODOå
+
+    d = parse_datasheet('datasheets/goford/GT023N10TL.pdf')
+#    assert d['Coss'] == 2730
+
+    d = parse_datasheet('datasheets/vishay/SUD70090E-GE3.pdf')
+    assert d['Coss'].typ == 845
+
+    d = parse_datasheet('datasheets/goford/GT52N10D5.pdf')
+    assert d['Coss'].typ == 380
+    assert d['Qrr'].typ == 87
+
+    d = parse_datasheet('datasheets/vishay/SIR622DP-T1-RE3.pdf')
+    assert d['Qrr'].typ == 350 and d['Qrr'].max == 680
+
     # datasheets/onsemi/NTBLS1D1N08H.pdf
+    # d = parse_datasheet('../datasheets/infineon/IPA050N10NM5SXKSA1.pdf')
+    #assert d['Rdson'].max == 5.0
 
     d = parse_datasheet('datasheets/infineon/IRF100B202.pdf')
     assert d['tRise'].typ == 56
     assert d['tFall'].typ == 58
+    assert d['Coss'].typ == 319
+    # assert d['Qrr'].typ == 105 # or 133 TODO
     # TODO qrr
 
     #GT016N10TL
@@ -161,4 +210,6 @@ def tests():
 
 
 if __name__ == '__main__':
-    tests()
+    parse_line_tests()
+    parse_pdf_tests()
+    #tests()
