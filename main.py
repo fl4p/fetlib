@@ -130,11 +130,18 @@ def read_digikey_results(csv_path, dcdc):
         result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs))
 
     df = pd.DataFrame(result_rows)
-    df.to_csv('digikey-01.csv', index=False)
+
+    df.sort_values(by=['Vds', 'mfr', 'mpn'], inplace=True, kind='mergesort')
+    df = df.applymap(lambda v: round_to_n(v, 5) if isinstance(v, float) else v)
+
+    out_fn = f'fets-buck{dcdc.fn_str("buck")}'
+    df.to_csv(out_fn, index=False)
 
     dslib.store.add_parts(result_parts, overwrite=True)
 
+    print('stored', len(result_parts), 'parts')
+
 
 if __name__ == '__main__':
-    tests()
+    parse_pdf_tests()
     main()
