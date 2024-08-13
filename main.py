@@ -5,22 +5,23 @@ import os.path
 import pandas as pd
 
 import dslib.manual_fields
-from dslib import mfr_tag
-from dslib.field import Field
+from dslib import mfr_tag, round_to_n
 from dslib.fetch import fetch_datasheet
+from dslib.field import Field
 from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
 from dslib.store import Part
-from dslib.tests import tests
+from dslib.tests import parse_pdf_tests
 
 
 def main():
     dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
+    print(dcdc.Io)
     read_digikey_results(csv_path='digikey-results/*.csv', dcdc=dcdc)
 
 
-def read_digikey_results(csv_path, dcdc):
+def read_digikey_results(csv_path, dcdc:DcDcSpecs):
     df = pd.concat([pd.read_csv(fn) for fn in sorted(glob.glob(csv_path))], axis=0, ignore_index=True)
     # df = pd.read_csv(csv_path)
 
@@ -83,6 +84,7 @@ def read_digikey_results(csv_path, dcdc):
             )
         except:
             print(mfr, mpn, 'error creating mosfetspecs')
+            print(row)
             raise
 
         # compute power loss
@@ -114,6 +116,7 @@ def read_digikey_results(csv_path, dcdc):
             Id=row['Current - Continuous Drain (Id) @ 25°C'],
             # Idp='',
             Qg_max=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
+            C_oss=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
             Qrr_typ=ds.get('Qrr') and ds.get('Qrr').typ,
             Qrr_max=ds.get('Qrr') and ds.get('Qrr').max,
             tRise_ns=round(fet_specs.tRise * 1e9, 1),
