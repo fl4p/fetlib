@@ -9,6 +9,7 @@ def fallback_specs(mfr, mpn):
         return dict(tRise=2, tFall=2)
     return dict()
 
+
 infineon = {
     'BSZ070N08LS5ATMA1': [  # need OCR
         Field('Qrr', min=math.nan, typ=27, max=54, unit='nC'),
@@ -44,6 +45,15 @@ infineon = {
         Field('tRise', min=math.nan, typ=29, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=10, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=66, max=math.nan, unit='nC'),
+    ],
+
+    'IPA050N10NM5SXKSA1': [
+        Field('Qgd', min=math.nan, typ=10, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=16, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=11, max=math.nan, unit='nC'),
+        Field('Qsw', min=math.nan, typ=16, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=67, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
     ],
 }
 
@@ -124,7 +134,7 @@ diodes = {
 }
 
 rohm = {
-    'RS6N120BHTB1':  [
+    'RS6N120BHTB1': [
         Field('tRise', min=math.nan, typ=47, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=35, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=115, max=math.nan, unit='nC'),
@@ -136,9 +146,16 @@ ao = {
         Field('tRise', min=math.nan, typ=16, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=21, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=233, max=math.nan, unit='nC'),
+    ],
+
+    'AOT66811L': [
+        Field('Qgd', min=math.nan, typ=15, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=21, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=17, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=112, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
     ]
 }
-
 
 vishay = {
     'SUM70042E-GE3': [
@@ -148,4 +165,30 @@ vishay = {
     'SUP70042E-GE3': [
         Field('Qrr', min=math.nan, typ=126, max=189, unit='nC'),
     ]
+}
+
+ti = {
+    'CSD19503KCS': [
+        Field('Qgd', min=math.nan, typ=5.4, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=9.8, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=6.1, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=71, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+    ],
+
+    'CSD19506KCS': [
+        Field('Qgd', min=math.nan, typ=20, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=37, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=25, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=345, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+    ],
+
+    'CSD19536KCS': [
+        Field('Qgd', min=math.nan, typ=17, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=37, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=24, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=335, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+    ],
 }

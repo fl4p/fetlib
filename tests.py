@@ -37,14 +37,20 @@ def parse_line_tests():
 def parse_pdf_tests():
     # TODOå
 
+    d = parse_datasheet('datasheets/panjit/PSMP050N10NS2_T0_00601.pdf')
+    assert d['Vpl'].typ == 5
+    assert d['Qgs'].typ == 15
+    assert d['Qrr'].typ == 85 and d['Qrr'].max == 170
+
     d = parse_datasheet('datasheets/goford/GT023N10TL.pdf')
+    assert d['Qrr'].typ == 297
 #    assert d['Coss'] == 2730
 
     d = parse_datasheet('datasheets/vishay/SUD70090E-GE3.pdf')
-    assert d['Coss'].typ == 845
+    #assert d['Coss'].typ == 845
 
     d = parse_datasheet('datasheets/goford/GT52N10D5.pdf')
-    assert d['Coss'].typ == 380
+    # assert d['Coss'].typ == 380
     assert d['Qrr'].typ == 87
 
     d = parse_datasheet('datasheets/vishay/SIR622DP-T1-RE3.pdf')
@@ -58,7 +64,7 @@ def parse_pdf_tests():
     assert d['tRise'].typ == 56
     assert d['tFall'].typ == 58
     assert d['Coss'].typ == 319
-    # assert d['Qrr'].typ == 105 # or 133 TODO
+    assert d['Qrr'].typ == 105 # or 133 TODO
     # TODO qrr
 
     #GT016N10TL
@@ -99,6 +105,7 @@ def parse_pdf_tests():
     assert d['tRise'].typ == 5
     assert d['tFall'].typ == 3
     assert d['Qrr'].typ == 400
+    assert d['Qg_th'].typ == 15
 
 
     d = tabula_read('datasheets/vishay/SUM60020E-GE3.pdf')

@@ -74,6 +74,11 @@ def read_digikey_results(csv_path, dcdc:DcDcSpecs):
 
         # create specification for DC-DC loss model
         try:
+            mf_fields = [
+                'Qrr', 'Vsd',  # body diode
+                'Qgd', 'Qgs', 'Qg_th',  # gate charges
+                'Coss',
+            ]
             fet_specs = MosfetSpecs(
                 Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
                 Rds_on=row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip(),
@@ -81,6 +86,7 @@ def read_digikey_results(csv_path, dcdc:DcDcSpecs):
                 tRise=ds.get('tRise') and (ds.get('tRise').typ_or_max_or_min * 1e-9),
                 tFall=ds.get('tFall') and (ds.get('tFall').typ_or_max_or_min * 1e-9),
                 Qrr=ds.get('Qrr') and (ds.get('Qrr').typ_or_max_or_min * 1e-9),
+                **{k: ds.get(k) and (ds.get(k).typ_or_max_or_min * 1e-9) for k in mf_fields},
             )
         except:
             print(mfr, mpn, 'error creating mosfetspecs')

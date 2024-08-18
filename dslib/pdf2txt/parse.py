@@ -9,12 +9,9 @@ from dslib.field import Field
 from dslib.pdf2txt import expr, normalize_dash
 
 
-def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
+@disk_cache(ttl='30d', file_dependencies=True)
+def extract_text(pdf_path):
     import fitz  # PyMuPDF
-
-    if not pdf_path:
-        pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
-
     pdf_document = fitz.open(pdf_path)
 
     pdf_text = ""
@@ -23,7 +20,14 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
         pdf_text += page.get_text()
 
     pdf_document.close()
+    return pdf_text
 
+
+def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
+    if not pdf_path:
+        pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
+
+    pdf_text = extract_text(pdf_path)
     if not pdf_text:
         print(pdf_path, 'no text extracted')
 
@@ -68,7 +72,8 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
                                     vds=qrr_d.get('vds')),
                                 unit=qrr_d.get('unit')))  # vgs
     else:
-        print('no Qrr pattern for ', mfr)
+        if mfr:
+            print('no Qrr pattern for ', mfr)
 
     try:
         tab_fields = tabula_read(pdf_path)
@@ -256,7 +261,9 @@ def get_dimensional_regular_expressions():
 
               # datasheets/vishay/SIR622DP-T1-RE3.pdf Qrr no value match Body diode reverse recovery charge Qrr -,350,680,nan,nC
           ] + field_value_regex_variations(r'(charge|Q[\s_]?[a-z]{1,3})', r'[uμnp]C'),
-        C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F')
+
+        C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
+        V=field_value_regex_variations(r'(voltage|V[\s_]?[a-z]{1,8})', r'[m]?V')
     )
     return dim_regs
 
@@ -276,28 +283,33 @@ def tabula_read(ds_path):
         Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
                        re.IGNORECASE),
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
+        Qgs=re.compile(r'(gate[\s-]+source[\s-]+charge|^Q[ _]?gs$)', re.IGNORECASE),
+        Qgd=re.compile(r'(gate[\s-]+drain[\s-]+charge|^Q[ _]?gd$)', re.IGNORECASE),
+        Qg_th=re.compile(r'(gate[\s-]+charge\s+at\s+V[ _]?th|^Q[ _]?g\(?th\)?$)', re.IGNORECASE),
+
+        Vpl=re.compile(r'(gate\s+plateau\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
+
         # Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
 
     )
 
-    dim_regs = get_dimensional_regular_expressions()
+    # dim_regs = get_dimensional_regular_expressions()
 
     dim_units = dict(
         t={'us', 'ns', 'μs'},
         Q={'uC', 'nC', 'μC'},
         C={'uF', 'nF', 'μF'},
+        V={'mV', 'V'},
     )
 
     all_units = set(sum(map(list, dim_units.values()), []))
 
     values = []
 
-    col_typ = 0
     from collections import defaultdict
     col_idx = defaultdict(lambda: 0)
     other_cols = ['min', 'max', 'unit']
-    unit = None
 
     for df in dfs:
         col_idx.clear()
@@ -387,7 +399,7 @@ def tabula_read(ds_path):
                                                 mul=1, cond=dict(row.dropna()), unit=unit),
                                           )
                         except Exception as e:
-                            print(ds_path, 'error parsing field with col_idx', dict(col_idx), e)
+                            print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
                             print(row.values, rl, rl_ff, rl_bf)
                             # raise
                     else:

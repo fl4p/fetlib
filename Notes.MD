@@ -222,6 +222,10 @@ possible.
 
 * 'PSMN4R2-80YSEX': Qrr timing plot
 * UM1575 User manual spice models
+* PSMP050N10NS2_T0_00601: Vplateau
+* IPA050N10NM5S : Vplateau
+## Qg_th
+- csd19506
 
 # Acquiring Parts Lists from Suppliers (Search Results)
 

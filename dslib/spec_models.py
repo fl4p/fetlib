@@ -4,7 +4,7 @@ from typing import Literal
 
 class MosfetSpecs:
 
-    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Vsd=None, Coss=None):
+    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qg_th=None, Vpl=None, Vsd=None, Coss=None):
         self.Vds = Vds_max
 
         if isinstance(Rds_on, str):
@@ -18,7 +18,16 @@ class MosfetSpecs:
                 raise ValueError('Qg must be either nC: %s' % Qg)
 
         self.Rds_on = Rds_on
+
         self.Qg = Qg
+        self.Qgd = Qgd or math.nan
+        self.Qgs = Qgs or math.nan
+        self.Qg_th = Qg_th or math.nan
+        assert not Qg_th or Qg_th < Qgs
+
+        self._Vpl = Vpl or math.nan
+        assert not Vpl or (3 < Vpl < 10)
+
         self.Coss = Coss or math.nan
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
@@ -47,8 +56,21 @@ class MosfetSpecs:
         # better to read from datasheet curves
         # return (self.Qgs + self.Qgd) - self.Qg_th
         # Qg_th = Qgs - Q_pl
-        return 4
-        raise NotImplemented
+        if not math.isnan(self._Vpl):
+            return self._Vpl
+        else:
+            raise NotImplemented()
+            # return (self.Qgs + self.Qgd) - self.Qg_th
+        #return 4.2
+        #raise NotImplemented
+
+    @property
+    def Qgs2(self):
+        return self.Qgs - self.Qg_th
+
+    @property
+    def Qsw(self):
+        return self.Qgs + self.Qgd - self.Qg_th
 
     def __str__(self):
         return f'MosfetSpecs({self.Vds}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
@@ -104,11 +126,17 @@ class DcDcSpecs:
     def D_buck(self):
         return self.Vo / self.Vi
 
+    @property
+    def Io_mean_squared_on(self):
+        dc = self
+        hrp = (self.Iripple * .5) if math.isfinite(dc.Iripple) else 0
+        return ((dc.Io + hrp) ** 2 + (dc.Io + hrp) * (dc.Io - hrp) + (dc.Io - hrp) ** 2) / 3
+
     def __str__(self):
         return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW)' % (
             self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout)
 
-    def fn_str(self, topo:Literal['buck']):
+    def fn_str(self, topo: Literal['buck']):
         if topo == 'buck':
-            return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f/1000)
+            return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f / 1000)
         raise ValueError(topo)
