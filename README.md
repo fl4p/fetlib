@@ -140,9 +140,8 @@ LS:
 * Low r_g
 * Low Vsd
 
-The LS low Vsd problem can be tackled with a short dead time or by placing with a Schottky diode parallel to the LS.
-Take
-care about parasitic inductances between the LS and the Schottky diode. This might even lower reverse recovery loss,
+The LS low Vsd problem can be tackled with a short dead time or by placing  a Schottky diode parallel to the LS.
+Take care about parasitic inductances between the LS and the Schottky diode. This might even lower reverse recovery loss,
 because the LS body diode never powers up.
 See [Toshiba Product Guide 2009](https://www.mouser.com/datasheet/2/408/toshiba%20america%20electronic%20components,%20inc._bce008-1209380.pdf#page=18)
 on page 18.
