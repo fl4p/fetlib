@@ -12,7 +12,7 @@ from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
 from dslib.store import Part
-from dslib.tests import parse_pdf_tests
+from tests import parse_pdf_tests
 
 
 def main():
@@ -21,7 +21,7 @@ def main():
     read_digikey_results(csv_path='digikey-results/*.csv', dcdc=dcdc)
 
 
-def read_digikey_results(csv_path, dcdc:DcDcSpecs):
+def read_digikey_results(csv_path, dcdc: DcDcSpecs):
     df = pd.concat([pd.read_csv(fn) for fn in sorted(glob.glob(csv_path))], axis=0, ignore_index=True)
     # df = pd.read_csv(csv_path)
 
