@@ -4,7 +4,24 @@ from typing import Literal
 
 class MosfetSpecs:
 
-    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qg_th=None, Vpl=None, Vsd=None, Coss=None):
+    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
+                 Vpl=None, Vsd=None, Coss=None):
+        """
+
+        :param Vds_max:
+        :param Rds_on:
+        :param Qg: total gate charge
+        :param tRise:
+        :param tFall:
+        :param Qrr: reverse recovery charge (german: Sperrverzugsladung)
+        :param Qgd: charge across miller plateau
+        :param Qgs: charge until the start of miller plateau (toshiba: before and after MP)
+        :param Qgs2: charge between Qg_th and start of MP (toshiba: charger after MP)
+        :param Qg_th: charge until V_th (Qg_th + Qgs2 = Qgs)
+        :param Vpl: miller plateau voltage
+        :param Vsd: body diode forward voltage
+        :param Coss: output capacity (eff. energy related)
+        """
         self.Vds = Vds_max
 
         if isinstance(Rds_on, str):
@@ -19,14 +36,23 @@ class MosfetSpecs:
 
         self.Rds_on = Rds_on
 
+        if not Qgs2 and Qsw:
+            assert Qsw > Qgd
+            Qgs2 = Qsw - Qgd
+
+        if not Qg_th and Qgs2:
+            Qg_th = Qgs - Qgs2
+
         self.Qg = Qg
         self.Qgd = Qgd or math.nan
         self.Qgs = Qgs or math.nan
+        self._Qgs2 = Qgs2 or math.nan
         self.Qg_th = Qg_th or math.nan
-        assert not Qg_th or Qg_th < Qgs
+
+        assert not Qg_th or Qg_th < Qgs, (Qgs, Qg_th,)
 
         self._Vpl = Vpl or math.nan
-        assert not Vpl or (3 < Vpl < 10)
+        assert not Vpl or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
 
         self.Coss = Coss or math.nan
         self.tRise = tRise or math.nan
@@ -59,18 +85,23 @@ class MosfetSpecs:
         if not math.isnan(self._Vpl):
             return self._Vpl
         else:
+            return math.nan
             raise NotImplemented()
             # return (self.Qgs + self.Qgd) - self.Qg_th
-        #return 4.2
-        #raise NotImplemented
+        # return 4.2
+        # raise NotImplemented
 
     @property
     def Qgs2(self):
-        return self.Qgs - self.Qg_th
+        if not math.isnan(self._Qgs2):
+            return self._Qgs2
+        if not math.isnan(self.Qg_th):
+            return self.Qgs - self.Qg_th
+        return self.Qgs * 0.5  # TODO estimate
 
     @property
     def Qsw(self):
-        return self.Qgs + self.Qgd - self.Qg_th
+        return self.Qgd + self.Qgs2
 
     def __str__(self):
         return f'MosfetSpecs({self.Vds}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
@@ -125,6 +156,14 @@ class DcDcSpecs:
     @property
     def D_buck(self):
         return self.Vo / self.Vi
+
+    @property
+    def Io_min(self):
+        return self.Io - (self.Iripple / 2)
+
+    @property
+    def Io_max(self):
+        return self.Io + (self.Iripple / 2)
 
     @property
     def Io_mean_squared_on(self):
