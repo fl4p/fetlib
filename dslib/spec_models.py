@@ -14,10 +14,11 @@ class MosfetSpecs:
         :param tRise:
         :param tFall:
         :param Qrr: reverse recovery charge (german: Sperrverzugsladung)
-        :param Qgd: charge across miller plateau
-        :param Qgs: charge until the start of miller plateau (toshiba: before and after MP)
+        :param Qgd: gate-drain charge across miller plateau
+        :param Qgs: gate-source charge until the start of miller plateau (toshiba: before and after MP)
         :param Qgs2: charge between Qg_th and start of MP (toshiba: charger after MP)
         :param Qg_th: charge until V_th (Qg_th + Qgs2 = Qgs)
+        :param Qsw: Qgs2 + Qgd
         :param Vpl: miller plateau voltage
         :param Vsd: body diode forward voltage
         :param Coss: output capacity (eff. energy related)
@@ -120,6 +121,7 @@ class DcDcSpecs:
         :param ii:
         :param pin:
         :param dil: coil ripple current il_ton - il_0. CCM if dil<2*il. see https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
+        :param ripple_factor: peak-2-peak
         """
         self.Vi = vi
         self.Vo = vo
@@ -151,25 +153,48 @@ class DcDcSpecs:
 
     @property
     def Pout(self):
+        """
+        :return: Output power
+        """
         return self.Io * self.Vo
 
     @property
     def D_buck(self):
+        """
+        :return: Duty cycle of HS switch
+        """
         return self.Vo / self.Vi
 
     @property
     def Io_min(self):
+        """
+        :return: Bottom ripple current
+        """
         return self.Io - (self.Iripple / 2)
 
     @property
     def Io_max(self):
+        """
+        :return: Peak ripple current
+        """
         return self.Io + (self.Iripple / 2)
 
     @property
+    def is_ccm(self) -> bool:
+        """
+        :return: Whether the DC-DC converter operates in continuous conduction mode (coil current does not touch zero)
+        """
+        assert self.Iripple >= 0
+        return self.Iripple < 2 * self.Io
+
+    @property
     def Io_mean_squared_on(self):
+        """
+        :return: Mean squared output current
+        """
+        assert self.is_ccm
         dc = self
-        hrp = (self.Iripple * .5) if math.isfinite(dc.Iripple) else 0
-        return ((dc.Io + hrp) ** 2 + (dc.Io + hrp) * (dc.Io - hrp) + (dc.Io - hrp) ** 2) / 3
+        return (dc.Io_max ** 2 + dc.Io_max * dc.Io_min + dc.Io_min ** 2) / 3
 
     def __str__(self):
         return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW)' % (
@@ -179,3 +204,19 @@ class DcDcSpecs:
         if topo == 'buck':
             return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f / 1000)
         raise ValueError(topo)
+
+
+def tests():
+    io = 10
+    d1 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=0.001)
+    assert abs(d1.Io_mean_squared_on - io ** 2) / io ** 2 < 1e-3
+
+    d2 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=1)
+    assert d2.Io_mean_squared_on > d1.Io_mean_squared_on * 1.05
+
+    d2 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=1.99)
+    assert d2.Io_mean_squared_on > d1.Io_mean_squared_on * 1.10
+
+
+if __name__ == '__main__':
+    tests()

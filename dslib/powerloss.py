@@ -30,6 +30,14 @@ from dslib.spec_models import DcDcSpecs, MosfetSpecs
 
 class SwitchPowerLoss():
     def __init__(self, P_on, P_gd, P_sw=math.nan, P_coss=math.nan, P_rr=math.nan, P_dt=math.nan):
+        """
+        :param P_on: conduction loss
+        :param P_gd: gate drive loss
+        :param P_sw:  switching loss
+        :param P_coss: output capacitance loss
+        :param P_rr:  reverse recovery loss
+        :param P_dt:  dead-time loss during body diode conduction
+        """
         self.P_on = P_on
         self.P_sw = P_sw
         self.P_coss = P_coss
@@ -58,8 +66,6 @@ class SwitchPowerLoss():
             P_gd=n * self.P_gd,
             P_dt=self.P_dt,  # Vsd body diode voltage drop
             P_coss=n * self.P_coss,
-            # TODO n**2? or n+1 ? # because P_coss depends on load capacity and in a half-bridge
-            # on fets in the load of the other
         )
 
     def buck_hs(self):
