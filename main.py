@@ -12,7 +12,6 @@ from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
 from dslib.store import Part
-from tests import parse_pdf_tests
 
 
 def main():
@@ -76,8 +75,8 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         try:
             mf_fields = [
                 'Qrr', 'Vsd',  # body diode
-                'Qgd', 'Qgs', 'Qg_th',  # gate charges
-                'Coss',
+                'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
+                'Coss', 'Qsw',
             ]
             fet_specs = MosfetSpecs(
                 Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
@@ -85,17 +84,20 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
                 Qg=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
                 tRise=ds.get('tRise') and (ds.get('tRise').typ_or_max_or_min * 1e-9),
                 tFall=ds.get('tFall') and (ds.get('tFall').typ_or_max_or_min * 1e-9),
-                Qrr=ds.get('Qrr') and (ds.get('Qrr').typ_or_max_or_min * 1e-9),
                 **{k: ds.get(k) and (ds.get(k).typ_or_max_or_min * 1e-9) for k in mf_fields},
+                Vpl=ds.get('Vpl') and ds.get('Vpl').typ_or_max_or_min,
             )
         except:
-            print(mfr, mpn, 'error creating mosfetspecs')
+            print(mfr, mpn, 'error creating mosfet specs')
             print(row)
+            print('\n'.join(map(str, ds.items())))
+            parse_datasheet.invalidate(datasheet_path, mfr=mfr, mpn=mpn)
+
             raise
 
         # compute power loss
         if 1:
-            loss_spec = dcdc_buck_hs(dcdc, fet_specs)
+            loss_spec = dcdc_buck_hs(dcdc, fet_specs, rg_total=6, fallback_V_pl=4.5)
             ploss = loss_spec.__dict__.copy()
             del ploss['P_dt']
             ploss['P_hs'] = loss_spec.buck_hs()
@@ -122,7 +124,11 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
             Id=row['Current - Continuous Drain (Id) @ 25°C'],
             # Idp='',
             Qg_max=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
-            C_oss=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
+            Qgs=ds.get('Qgs') and ds.get('Qgs').typ_or_max_or_min,
+            Qgd=ds.get('Qgd') and ds.get('Qgd').typ_or_max_or_min,
+            Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+            Vpl=fet_specs and fet_specs.V_pl,
+            C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
             Qrr_typ=ds.get('Qrr') and ds.get('Qrr').typ,
             Qrr_max=ds.get('Qrr') and ds.get('Qrr').max,
             tRise_ns=round(fet_specs.tRise * 1e9, 1),
@@ -142,10 +148,14 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
     df = pd.DataFrame(result_rows)
 
     df.sort_values(by=['Vds', 'mfr', 'mpn'], inplace=True, kind='mergesort')
-    df = df.applymap(lambda v: round_to_n(v, 5) if isinstance(v, float) else v)
 
-    out_fn = f'fets-buck{dcdc.fn_str("buck")}'
-    df.to_csv(out_fn, index=False)
+    for col in df.columns:
+        if col.startswith('P_') or col.startswith('FoM'):
+            df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
+
+    out_fn = f'fets-{dcdc.fn_str("buck")}.csv'
+    df.to_csv(out_fn, index=False, float_format=lambda f: round_to_n(f, 4))
+    print('written', out_fn)
 
     dslib.store.add_parts(result_parts, overwrite=True)
 
@@ -153,5 +163,5 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
 
 
 if __name__ == '__main__':
-    parse_pdf_tests()
+    # parse_pdf_tests()
     main()
