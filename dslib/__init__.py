@@ -70,3 +70,17 @@ def round_to_n(x, n):
     except ValueError as e:
         print('error', x, n, e)
         raise e
+
+
+class dotdict(dict):
+    def __getattr__(self, attr):
+        try:
+            return self[attr]
+        except KeyError as e:
+            raise AttributeError(str(e))  # from e
+
+    __setattr__ = dict.__setitem__
+    __delattr__ = dict.__delitem__
+    # __getstate__ == dict.__getstate__
+
+    # __hasattr__ = dict.__contains__
