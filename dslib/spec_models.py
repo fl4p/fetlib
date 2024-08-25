@@ -98,7 +98,7 @@ class MosfetSpecs:
             return self._Qgs2
         if not math.isnan(self.Qg_th):
             return self.Qgs - self.Qg_th
-        return self.Qgs * 0.5  # TODO estimate
+        return self.Qgs * 0.6  # TODO estimate
 
     @property
     def Qsw(self):
