@@ -131,6 +131,7 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
 
             FoM=fet_specs.Rds_on * 1000 * (fet_specs.Qg * 1e9),
             FoMrr=fet_specs.Rds_on * 1000 * (fet_specs.Qrr * 1e9),
+            FoMsw=fet_specs.Rds_on * 1000 * (fet_specs.Qsw * 1e9),
 
             **ploss,
         )
