@@ -6,6 +6,7 @@ from dslib.field import Field
 def fallback_specs(mfr, mpn):
     from dslib import mfr_tag
     if mfr_tag(mfr) == 'epc':
+        assert mpn.startswith('EPC')
         return dict(tRise=2, tFall=2)
     return dict()
 
@@ -54,6 +55,14 @@ infineon = {
         Field('Qsw', min=math.nan, typ=16, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=67, max=math.nan, unit='nC'),
         Field('V_pl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
+    ],
+
+    'IPB019N08N3GATMA1': [
+        Field('Qgd', min=math.nan, typ=30, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=50, max=math.nan, unit='nC'),
+        Field('Qsw', min=math.nan, typ=50, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=210, max=279, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.6, max=math.nan, unit='V'),
     ],
 }
 
@@ -108,7 +117,19 @@ onsemi = {
         Field('tRise', min=math.nan, typ=11, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=7, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=139, max=222, unit='nC'),
-    ]
+    ],
+
+    'NVMTS6D0N15MC': [
+        # the datasheet has a different definition of Qg_th?
+        # here Qg_th = Qgs + Qgd (charge until the end of miller plateau)
+        Field('Qg_th', min=math.nan, typ=18, max=math.nan, unit='nC'),
+    ],
+
+    'NTMTS6D0N15MC': [
+        # the datasheet has a different definition of Qg_th?
+        # here Qg_th = Qgs + Qgd (charge until the end of miller plateau)
+        Field('Qg_th', min=math.nan, typ=18, max=math.nan, unit='nC'),
+    ],
 
 }
 
@@ -173,7 +194,7 @@ ti = {
         Field('Qgs', min=math.nan, typ=9.8, max=math.nan, unit='nC'),
         Field('Qg_th', min=math.nan, typ=6.1, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=71, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+        Field('V_pl', min=math.nan, typ=4.8, max=math.nan, unit='V'),
     ],
 
     'CSD19506KCS': [
@@ -181,7 +202,7 @@ ti = {
         Field('Qgs', min=math.nan, typ=37, max=math.nan, unit='nC'),
         Field('Qg_th', min=math.nan, typ=25, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=345, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+        Field('V_pl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
     ],
 
     'CSD19536KCS': [
