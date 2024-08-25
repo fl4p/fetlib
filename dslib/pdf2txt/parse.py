@@ -1,9 +1,11 @@
 import math
+import os.path
 import re
 from typing import List
 
 import pandas as pd
 
+from dslib import dotdict, mfr_tag
 from dslib.cache import disk_cache
 from dslib.field import Field
 from dslib.pdf2txt import expr, normalize_dash
@@ -23,6 +25,7 @@ def extract_text(pdf_path):
     return pdf_text
 
 
+@disk_cache(ttl='30d', file_dependencies=[0], salt='v02')
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
     if not pdf_path:
         pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
@@ -83,7 +86,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
         raise
 
     # build dict taking first symbol
-    d = dict()
+    d = dotdict()
     for f in fields:
         if f.symbol not in d:
             d[f.symbol] = f
@@ -105,12 +108,22 @@ def tabula_pdf_dataframes(pdf_path=None):
              'datasheets/onsemi/FDD86367-F085.pdf', 'datasheets/onsemi/NVMFWS6D2N08XT1G.pdf',
              'datasheets/onsemi/FDD86369-F085.pdf', 'datasheets/onsemi/NVMFWS1D9N08XT1G.pdf',
              'datasheets/ao/AOTL66811.pdf',
+             'datasheets/littelfuse/IXTA160N10T7.pdf',
+             'datasheets/goford/GT023N10Q.pdf',
+             'datasheets/onsemi/FDB047N10.pdf',
+             'datasheets/onsemi/FDP047N10.pdf',
+             'datasheets/infineon/IPB033N10N5LFATMA1.pdf',
 
              'datasheets/diodes/DMT10H9M9SCT.pdf',  # unsupported operation
+             'datasheets/diodes/DMT10H9M9LCT.pdf',
+             'datasheets/good_ark/GSFT3R110.pdf',
+             'datasheets/diodes/DMTH10H005SCT.pdf',
              }
     if pdf_path in fails:
         raise Exception(f'PDF {pdf_path} known to fail')
     dfs = tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None})
+
+    # pd.concat(dfs, ignore_index=True, axis=0).to_csv(pdf_path+'.csv', index=False)
 
     """
      from subprocess import check_output
@@ -137,7 +150,18 @@ def find_dim_match(csv_line, regexs):
     return None
 
 
+def check_range(v, range):
+    return math.isnan(v) or (v >= range[0] and v <= range[1])
+
+
+valid_range = dict(
+    Vpl=(1, 10),
+)
+
+
 def parse_row_value(csv_line, dim, field_sym, cond=None):
+    range = valid_range.get(field_sym)
+    err = []
     for r in dim_regs[dim]:
         m = next(r.finditer(csv_line), None)
         if m is None:
@@ -145,16 +169,22 @@ def parse_row_value(csv_line, dim, field_sym, cond=None):
 
         vd = m.groupdict()
         try:
-            return Field(symbol=field_sym,
-                         min=vd.get('min', '').rstrip('-'),
-                         typ=vd.get('typ', '').rstrip('-'),
-                         max=vd.get('max'),
-                         mul=1,
-                         cond=cond,
-                         unit=vd.get('unit'))
+            f = Field(symbol=field_sym,
+                      min=vd.get('min', '').rstrip('-'),
+                      typ=vd.get('typ', '').rstrip('-'),
+                      max=vd.get('max'),
+                      mul=1,
+                      cond=cond,
+                      unit=vd.get('unit'))
+            if range and not (check_range(f.min, range) and check_range(f.typ, range) and check_range(f.max, range)):
+                err.append((field_sym, 'field out of range', f, range))
+                continue
+
+            return f
         except:
-            print(field_sym, 'error parsing field row', csv_line, 'dim=', dim)
+            err.append((field_sym, 'error parsing field row', csv_line, 'dim=', dim))
             continue
+    for e in err: print(*e)
     return None
 
 
@@ -171,35 +201,39 @@ def field_value_regex_variations(head, unit):
      Qrr no value match Reverse Recovery Charge Qrr nCIF = 50A, VGS = 0V--,87,--,nan
     "/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC"
 
+    TODO
+    tFall no value match in  "tf fall time,nan,nan,- 49.5 - ns"
+
     :param head:
     :param unit:
     :return:
     """
 
-    test_cond_broad = r'[-\s=/a-z0-9.,;μ°]+,'
+    test_cond_broad = r'[-\s=≈/a-z0-9äöü.,;:μΩ°()"\']+'  # parameter lab testing conditions (temperature, I, U, didit,...)
 
     field = r'[0-9]+(\.[0-9]+)?'
-    field_nan = r'-*|nan|' + field
+    nan = r'-*|nan'
+    field_nan = nan + r'|' + field
 
     return [
         re.compile(  # min typ max
-            head + r',(?P<min>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<typ>([0-9]+(\.[0-9]+)?)),(?P<max>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<unit>' + unit + r')(,|$)',
+            head + r',(?P<min>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<typ>([0-9]+(\.[0-9]+)?)),(?P<max>(nan|-*|[0-9]+(\.[0-9]+)?)),I?(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         re.compile(  # typ surrounded by nan/-
-            head + r',((-*|nan),){0,4}(?P<typ>[-0-9]+(\.[0-9]+)?),((-*|nan),){0,2}(?P<unit>' + unit + r')(,|$)',
+            head + r',((-*|nan),){0,4}(?P<typ>[-0-9]+(\.[0-9]+)?),((-*|nan),){0,4}(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         re.compile(  # min,typ,max with (scrambled) testing conditions and unit
-            rf'{head}({test_cond_broad})?(?P<min>{field_nan}),(?P<typ>{field}),(?P<max>{field_nan}),(?P<unit>{unit})(,|$)',
+            rf'{head}({test_cond_broad},)?(?P<min>{field_nan}),(?P<typ>{field}),(?P<max>{field_nan}),(?P<unit>{unit})(,|$)',
             re.IGNORECASE),
 
         re.compile(  # typ only with (scrambled) testing conditions
-            rf'{head},({test_cond_broad})?(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>' + unit + r')(,|$)',
+            rf'{head},({test_cond_broad},)?(?P<typ>[0-9]+(\.[0-9]+)?),(nan,)?(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
-        # typ surrounded by nan/-  and no unit
-        re.compile(head + r'[-\s]*,(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
+        # typ surrounded by nan/- or max  and no unit
+        re.compile(head + rf'[-\s]*,(-|nan|),(-,)?(?P<typ>{field}),(?P<max>{field_nan}),nan',
                    re.IGNORECASE),
 
         re.compile(
@@ -207,8 +241,33 @@ def field_value_regex_variations(head, unit):
             re.IGNORECASE),
 
         re.compile(
-            r'(charge|Q[\s_]?[a-z]{1,3})([\s=/a-z0-9.,μ]+)?(?P<min>-*|nan|[0-9]+(\.[0-9]+)?),(?P<typ>-*|nan|[0-9]+(\.[0-9]+)?),(?P<max>-*|nan|[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
+            head + r'([\s=/a-z0-9.,μ]+)?(?P<min>-*|nan|[0-9]+(\.[0-9]+)?),(?P<typ>-*|nan|[0-9]+(\.[0-9]+)?),(?P<max>-*|nan|[0-9]+(\.[0-9]+)?),(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
+
+        # QgsGate charge gate to source,17,nC,nan,nan,nan,nan,nan
+        re.compile(
+            head + r'([\s/a-z0-9."]+)?,(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>' + unit + r')(,|$)',
+            re.IGNORECASE),
+
+        # "tf fall time,nan,nan,- 49.5 - ns"
+        re.compile(
+            head + rf'(,({nan}))*,-\s+(?P<typ>{field})\s+-[,\s](?P<unit>{unit})(,|$)',
+            re.IGNORECASE),
+
+        # "Coss Output Capacitance,---,319,---,VDS = 50V,nan"
+        # "Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan"
+        re.compile(
+            head + rf'({test_cond_broad})?,?-+,(?P<typ>{field}),-+(,|$)',
+            re.IGNORECASE),
+
+        # 'nan,Coss,nan,7.0,nan'
+        re.compile(head + rf',nan,(?P<typ>{field}),nan$', re.IGNORECASE),
+
+        # 'COSS(ER),Effective Output Capacitance, Energy Related (Note 1),VDS = 0 to 50 V, VGS = 0 V,nan,1300,nan,nan', 'C'
+        re.compile(head + rf'({test_cond_broad})?,nan,(?P<typ>{field}),nan,nan$', re.IGNORECASE),
+
+        # 'Gate plateau voltage,Vplateau,nan,nan,4.7,nan,
+        re.compile(head + rf',nan,nan,(?P<typ>{field}),nan(,|$)', re.IGNORECASE),
     ]
 
 
@@ -217,22 +276,22 @@ def get_dimensional_regular_expressions():
     # noinspection RegExpEmptyAlternationBranch
     dim_regs = dict(
         t=[
-            re.compile(r'(time|t\s?[rf]),([ =/a-z,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)',
-                       re.IGNORECASE),
-            re.compile(
-                r'[, ](?P<min>nan|-+||[-0-9]+(\.[0-9]+)?),(?P<typ>nan|-*|[-0-9.]+)[, ](?P<max>nan|-+||[-0-9.]+),(nan,)?(?P<unit>[uμn]s)(,|$)',
-                re.IGNORECASE),
-            re.compile(r'(time|t\s?[rf]),([\s=/a-z0-9.,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)',
-                       re.IGNORECASE),
+              re.compile(r'(time|t\s?[rf]),([ =/a-z,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)',
+                         re.IGNORECASE),
+              re.compile(
+                  r'[, ](?P<min>nan|-+||[-0-9]+(\.[0-9]+)?),(?P<typ>nan|-*|[-0-9.]+)[, ](?P<max>nan|-+||[-0-9.]+),(nan,)?(?P<unit>[uμn]s)(,|$)',
+                  re.IGNORECASE),
+              re.compile(r'(time|t\s?[rf]),([\s=/a-z0-9.,]+,)?(?P<typ>[-0-9]+(\.[0-9]+)?),(?P<unit>[uμn]s)(,|$)',
+                         re.IGNORECASE),
 
-            re.compile(r'(time|t\s?[rf]),(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
-                       re.IGNORECASE),
+              re.compile(r'(time|t\s?[rf]),(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
+                         re.IGNORECASE),
 
-            re.compile(
-                r'(time|t[_\s]?[rf])\s*,?\s*(?P<min>nan|-*|[-0-9.]+)\s*,?\s*(?P<typ>nan|-*|[-0-9.]+)\s*,?\s*(?P<max>nan|-*|[-0-9.]+)\s*,?\s*(?P<unit>[uμn]s)(,|$)',
-                re.IGNORECASE),
+              re.compile(
+                  r'(time|t[_\s]?[rf])\s*,?\s*(?P<min>nan|-*|[-0-9.]+)\s*,?\s*(?P<typ>nan|-*|[-0-9.]+)\s*,?\s*(?P<max>nan|-*|[-0-9.]+)\s*,?\s*(?P<unit>[uμn]s)(,|$)',
+                  re.IGNORECASE),
 
-        ],
+          ] + field_value_regex_variations(r'(time|t[_\s]?[rf])', r'[uμn]s'),
         # Q=
         Q=[
 
@@ -244,9 +303,9 @@ def get_dimensional_regular_expressions():
                   r'(charge|Q[\s_]?[a-z]{1,3}),((-|nan|),){0,4}(?P<typ>[-0-9]+(\.[0-9]+)?),((-|nan|),){0,2}(?P<unit>[uμnp]C)(,|$)',
                   re.IGNORECASE),
 
-              re.compile(
-                  r'(charge|Q[ _]?[a-z]{1,3}),([\s=/a-z0-9.,μ]+,)?(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
-                  re.IGNORECASE),
+              # re.compile(
+              #    r'(charge|Q[ _]?[a-z]{1,3}),([\s=/a-z0-9.,μ]+,)?(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>[uμnp]C)(,|$)',
+              #    re.IGNORECASE),
 
               re.compile(r'(charge|Q[\s_]?[a-z]{1,3})[-\s]*,(-|nan|),(?P<typ>[-0-9]+(\.[0-9]+)?),(-|nan|),nan',
                          re.IGNORECASE),
@@ -260,7 +319,9 @@ def get_dimensional_regular_expressions():
                   re.IGNORECASE),
 
               # datasheets/vishay/SIR622DP-T1-RE3.pdf Qrr no value match Body diode reverse recovery charge Qrr -,350,680,nan,nC
-          ] + field_value_regex_variations(r'(charge|Q[\s_]?[a-z]{1,3})', r'[uμnp]C'),
+          ] + field_value_regex_variations(
+            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|Q[\s_]?[a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
+            r'[uμnp]C'),
 
         C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
         V=field_value_regex_variations(r'(voltage|V[\s_]?[a-z]{1,8})', r'[m]?V')
@@ -268,13 +329,14 @@ def get_dimensional_regular_expressions():
     return dim_regs
 
 
-def tabula_read(ds_path):
-    try:
-        dfs = tabula_pdf_dataframes(ds_path)
-    except Exception as e:
-        print(ds_path, e)
-        dfs = []
-        return {}
+def get_field_detect_regex(mfr):
+    mfr = mfr_tag(mfr, raise_unknown=False)
+
+    qgs = r'Q[ _]?gs'
+    if mfr == 'toshiba':
+        # toshiba: Qgs1 = charge from 0 to miller plateau start
+        # others: Qgs1 = charge from Qg_th to miller plateau start
+        qgs += '1?'
 
     # regex matched on cell contents
     fields_detect = dict(
@@ -283,16 +345,37 @@ def tabula_read(ds_path):
         Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
                        re.IGNORECASE),
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
-        Qgs=re.compile(r'(gate[\s-]+source[\s-]+charge|^Q[ _]?gs$)', re.IGNORECASE),
-        Qgd=re.compile(r'(gate[\s-]+drain[\s-]+charge|^Q[ _]?gd$)', re.IGNORECASE),
+        Qgs=re.compile(
+            rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
+            re.IGNORECASE),
+        Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$)', re.IGNORECASE),
+        Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+("?miller"?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
         Qg_th=re.compile(r'(gate[\s-]+charge\s+at\s+V[ _]?th|^Q[ _]?g\(?th\)?$)', re.IGNORECASE),
+        Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
 
-        Vpl=re.compile(r'(gate\s+plateau\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
+        Vpl=re.compile(r'(gate\s+plate\s*au\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
 
+        Vsd=re.compile(r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(sd)$)', re.IGNORECASE),
+        # plate au
         # Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
 
     )
+    return fields_detect
+
+
+def tabula_read(ds_path):
+    try:
+        dfs = tabula_pdf_dataframes(ds_path)
+        if not os.path.isfile(ds_path + '.csv'):
+            pd.concat(dfs, ignore_index=True, axis=0).applymap(
+                lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.csv', header=False)
+    except Exception as e:
+        print(ds_path, e)
+        return {}
+
+    mfr = ds_path.split('/')[-2]
+    fields_detect = get_field_detect_regex(mfr)
 
     # dim_regs = get_dimensional_regular_expressions()
 
@@ -346,8 +429,8 @@ def tabula_read(ds_path):
                         col_idx[col] = is_h.idxmax()
 
             for field_sym, field_re in fields_detect.items():
-                detect_field = lambda s: (len(str(s)) < 80) and field_re.search(str(s).strip(' -'))
-                m = next(filter(detect_field, row.iloc[:3]), None)
+                detect_field = lambda s: (len(str(s)) < 80) and field_re.search(normalize_dash(str(s)).strip(' -'))
+                m = next(filter(detect_field, row.iloc[:4]), None)
 
                 def _empty(s):
                     return not s or str(s).lower() == 'nan'
@@ -390,30 +473,37 @@ def tabula_read(ds_path):
                         values.append(field)
 
                     elif col_typ:
-                        v_typ = row[col_typ]
-                        try:
-                            values.append(Field(symbol=field_sym,
-                                                min=row[col_idx['min']] if col_idx['min'] else math.nan,
-                                                typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
-                                                max=row[col_idx['max']] if col_idx['max'] else math.nan,
-                                                mul=1, cond=dict(row.dropna()), unit=unit),
-                                          )
-                        except Exception as e:
-                            print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
-                            print(row.values, rl, rl_ff, rl_bf)
-                            # raise
+                        for row_ in [row, df_bfill.iloc[i], df_ffill.iloc[i]]:
+                            v_typ = row_[col_typ]
+                            try:
+                                values.append(Field(
+                                    symbol=field_sym,
+                                    min=row_[col_idx['min']] if col_idx['min'] else math.nan,
+                                    typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
+                                    max=row_[col_idx['max']] if col_idx['max'] else math.nan,
+                                    mul=1, cond=dict(row_.dropna()), unit=unit
+                                ))
+                                break
+                            except Exception as e:
+                                print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
+                                print(row.values)
+                                print(rl)
+                                print(rl_ff)
+                                print(rl_bf)
+                                # raise
                     else:
                         print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
 
     # build dict taking first symbol
-    d = dict()
+    d = dotdict()
     for f in values:
         if f.symbol not in d:
             d[f.symbol] = f
 
     for s in fields_detect.keys():
         if s not in d and not is_gan(ds_path):
-            print(ds_path, 'no value detected for field', s)
+            # print(ds_path, 'no value detected for field', s)
+            pass
 
     return d
 
