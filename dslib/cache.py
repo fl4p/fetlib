@@ -23,8 +23,8 @@ try:
 except ImportError:
     print('failed to import streamz module')
 
-#from lib.data.util import concat, random_str
-#from lib.util import to_closed_time_range, setup_custom_logger, to_iso, timedelta_to_str
+# from lib.data.util import concat, random_str
+# from lib.util import to_closed_time_range, setup_custom_logger, to_iso, timedelta_to_str
 
 home = expanduser("~")
 data_dir = os.path.dirname(__file__) + "/../data"
@@ -44,10 +44,12 @@ def get_parquet_engine():
 
 parquet_engine = get_parquet_engine()
 
-
 import pytz
+
+
 def now():
     return datetime.datetime.utcnow().replace(tzinfo=pytz.utc)
+
 
 def random_str(n=12):
     return ''.join(random.choice(string.ascii_letters + string.digits) for _ in range(n))
@@ -243,12 +245,17 @@ class PickleFileStore:
 
     # noinspection PyMethodMayBeStatic
     def write(self, key, df):
+        assert isinstance(key, str)
         fn = _get_fn(key, ext='pickle')
         s = f'.{random_str(6)}.tmp'
         with open(fn + s, 'wb') as fh:
             pickle.dump(df, fh, pickle.HIGHEST_PROTOCOL)
         os.replace(fn + s, fn)
         # _set_df_file_store_mtime(fn, df)
+
+    def delete(self, key):
+        fn = _get_fn(key, ext='pickle')
+        os.path.exists(fn) and os.unlink(fn)
 
 
 class NoDataException(Exception):
@@ -257,8 +264,6 @@ class NoDataException(Exception):
 
 def hashable_to_sha224(obj):
     return hashlib.sha224(bytes(str(obj), 'utf-8')).hexdigest()
-
-
 
 
 def to_hashable(obj):
@@ -463,7 +468,6 @@ def fallback_cache(exception=None, ignore_kwargs=None):
     return decorate
 
 
-
 # noinspection PyShadowingNames
 def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=None, ignore_rc=False,
               cache_storage: CacheStorage = shared_managed_mem_cache(),
@@ -547,22 +551,38 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, salt=None):
         import inspect
         mod = inspect.getmodule(target)
 
-        # noinspection PyBroadException
-        @wraps(target)
-        def _disk_cache_wrapper(*args, **kwargs):
+        def _cache_key(*args, **kwargs):
             mtimes = {}
             if file_dependencies:
                 fd_arg_names = file_dependencies
                 if isinstance(fd_arg_names, bool) and fd_arg_names == True:
                     fd_arg_names = [0]
                 for arg_name in fd_arg_names:
-                    arg_val = args[arg_name] if isinstance(arg_name, int) else kwargs[arg_name]
+                    if isinstance(arg_name, int):
+                        arg_val = args[arg_name] if arg_name < len(args) else None
+                    else:
+                        arg_val = kwargs.get(arg_name)
+                    if arg_val is None:
+                        return None
                     arg_val = os.path.realpath(arg_val)
                     mtimes['__mtime:' + arg_val] = os.path.getmtime(arg_val)
             if salt is not None:
                 mtimes['__salt__'] = salt
-            cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs={**kwargs,**mtimes})
+            cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs={**kwargs, **mtimes})
+            return cache_key_str
 
+        def _invalidate(*args, **kwargs):
+            cache_key_str = _cache_key(*args, **kwargs)
+            if cache_key_str is None:
+                return
+            disk_cache_store.delete(cache_key_str)
+
+        # noinspection PyBroadException
+        @wraps(target)
+        def _disk_cache_wrapper(*args, **kwargs):
+            cache_key_str = _cache_key(*args, **kwargs)
+            if cache_key_str is None:
+                return target(*args, **kwargs)
             try:
                 cache_val = disk_cache_store.read(cache_key_str)
                 if cache_val is not None:
@@ -581,6 +601,7 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, salt=None):
 
             return ret
 
+        _disk_cache_wrapper.invalidate = _invalidate
         return _disk_cache_wrapper
 
     return decorate

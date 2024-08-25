@@ -9,32 +9,44 @@ def get_datasheets_path(mfr=None, mpn=None):
     return os.path.join(p, mfr, mpn + '.pdf')
 
 
-def mfr_tag(mnf: str):
-    mnf = mnf.lower()
-    for tag, prefix in dict(
-            infineon=('infineon', 'international rectifier'),
-            ti='texas instruments', ao='alpha & omega', nxp=('nxp', 'nexperia'),
-            st='stmicroelectronics', toshiba='toshiba', vishay='vishay', diodes='diodes inc',
-            diotec='diotec', rohm='rohm', fairchild='fairchild', good_ark='good-ark',
-            mcc=('micro commercial', 'mcc')
-            , renesas='renesas',
-            ts='taiwan semiconductor',
-            panjit='panjit',
-            apm='a power microelectronics',
-            jscj='jiangsu changjing',
-            slkor='slkor',
-            wuxi='wuxi unigroup micro',
-            winsok='winsok',
-            epc_space='epc space',
-            goford='goford',
-            littelfuse='littelfuse',
+mfrs = dict(
+    infineon=('infineon', 'international rectifier'),
+    ti='texas instruments', ao='alpha & omega', nxp=('nxp', 'nexperia'),
+    st='stmicroelectronics', toshiba='toshiba', vishay='vishay', diodes='diodes inc',
+    diotec='diotec', rohm='rohm', fairchild='fairchild', good_ark='good-ark',
+    mcc=('micro commercial', 'mcc')
+    , renesas='renesas',
+    ts='taiwan semiconductor',
+    panjit='panjit',
+    apm='a power microelectronics',
+    jscj='jiangsu changjing',
+    slkor='slkor',
+    wuxi='wuxi unigroup micro',
+    winsok='winsok',
+    epc_space='epc space',
+    goford='goford',
+    littelfuse='littelfuse',
+    onsemi='onsemi',
+    analog_power='analog power',
+    yageo_xsemi='yageo_xsemi',
 
-    ).items():
+)
+
+
+def mfr_tag(mnf: str, raise_unknown=False):
+    mnf = mnf.lower()
+    for tag, prefix in mfrs.items():
         if not isinstance(prefix, tuple):
             prefix = (prefix,)
         for p in prefix:
             if mnf.startswith(p):
                 return tag
+    if mnf in mfrs:
+        return mnf
+
+    if raise_unknown:
+        raise ValueError(f'unknown mfr: {mnf}')
+
     return mnf.replace(' ', '_')
 
 
