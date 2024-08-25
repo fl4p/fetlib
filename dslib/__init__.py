@@ -56,14 +56,17 @@ def get_logger(verbose: bool = False):
 
 
 def round_to_n(x, n):
-    #if isinstance(x, tuple):
+    # if isinstance(x, tuple):
     #    return '[%s]' % ', '.join(map(str, map(partial(round_to_n, n=n), x)))
 
     if isinstance(x, str) or not math.isfinite(x) or not x:
         return x
 
     try:
-        return round(x, -int(math.floor(math.log10(abs(x)))) + (n - 1))
+        f = round(x, -int(math.floor(math.log10(abs(x)))) + (n - 1))
+        if isinstance(f, float) and f.is_integer():
+            return int(f)
+        return f
     except ValueError as e:
         print('error', x, n, e)
         raise e
