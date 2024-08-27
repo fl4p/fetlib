@@ -1,4 +1,5 @@
 import math
+from enum import Enum
 
 from dslib.field import Field
 
@@ -11,17 +12,39 @@ def fallback_specs(mfr, mpn):
     return dict()
 
 
+class FetCharSymbols(Enum):
+    Qg = 'Qg'
+    Qgd = 'Qgd'
+    Qgs = 'Qgs'
+    Qgs2 = 'Qgs2'
+
+
+FCS = FetCharSymbols
+
 infineon = {
     'BSZ070N08LS5ATMA1': [  # need OCR
         Field('Qrr', min=math.nan, typ=27, max=54, unit='nC'),
         Field('tRise', min=math.nan, typ=4.8, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=5.8, max=math.nan, unit='ns'),
+
+        Field('Qgs', min=math.nan, typ=5, max=math.nan, unit='nC'),
+        Field('Qgd', min=math.nan, typ=5, max=7, unit='nC'),
+        Field('Qsw', min=math.nan, typ=6.9, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=29, max=39, unit='nC'),
+        Field('V_pl', min=math.nan, typ=2.9, max=math.nan, unit='nC'),
     ],
 
     'BSC019N08NS5ATMA1': [  # tabula failure
         Field('tRise', min=math.nan, typ=17, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=20, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=80, max=160, unit='nC'),
+
+        Field('Qgd', min=math.nan, typ=20, max=29, unit='nC'),
+        Field('Qgs', min=math.nan, typ=29, max=math.nan, unit='nC'),
+
+        Field('Qsw', min=math.nan, typ=29, max=math.nan, unit='nC'),
+        Field('Qoss', min=math.nan, typ=110, max=147, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.4, max=math.nan, unit='nC'),
     ],
 
     'IAUA250N08S5N018AUMA1': [  # tabula failure
@@ -151,6 +174,19 @@ diodes = {
         Field('tRise', min=math.nan, typ=15, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=21, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=49, max=math.nan, unit='nC'),
+
+        Field('Qgd', min=math.nan, typ=12, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=6, max=math.nan, unit='nC'),
+        Field('Qsw', min=math.nan, typ=15, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+    ],
+
+    'DMT10H9M9SCT': [
+        Field('Qgd', min=math.nan, typ=7.3, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=9.5, max=math.nan, unit='nC'),
+        Field('Qsw', min=math.nan, typ=12.5, max=math.nan, unit='nC'),
+        Field('Qrr', min=math.nan, typ=68, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=5.2, max=math.nan, unit='V'),
     ],
 }
 
@@ -159,6 +195,12 @@ rohm = {
         Field('tRise', min=math.nan, typ=47, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=35, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=115, max=math.nan, unit='nC'),
+    ],
+
+    'RX3P07BBHC16': [
+        Field('Qsw', min=math.nan, typ=15, max=math.nan, unit='nC'),
+        Field('Qgd', min=math.nan, typ=9.8, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=8.5, max=math.nan, unit='nC'),
     ],
 }
 
