@@ -144,7 +144,7 @@ def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs):
         vsd = mf.Vsd
 
     return SwitchPowerLoss(
-        P_on=(1 - dc.D_buck) * dc.Io_mean_squared_on * mf.Rds_on * (1 - dc.D_buck),
+        P_on=(1 - dc.D_buck) * dc.Io_mean_squared_on * mf.Rds_on,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,
         P_rr=dc.Vi * dc.f * mf.Qrr,  # this is dissipated in HS
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
@@ -204,11 +204,12 @@ def mosfet_switching_hs(dc: DcDcSpecs, hs: MosfetSpecs, rg_total: float, fallbac
     :return:
     """
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=3  3.1.1
+    assert  math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
     vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     ig_on = (dc.Vgs - vpl) / rg_total
     ig_off = (vpl) / rg_total
-    t_on = hs.Qsw * 1e-9 / ig_on
-    t_off = hs.Qsw * 1e-9 / ig_off
+    t_on = hs.Qsw  / ig_on
+    t_off = hs.Qsw  / ig_off
     tr = max(t_on, hs.tRise)
     tf = max(t_off, hs.tFall)
     Psw_on = 0.5 * dc.Vi * dc.f * dc.Io_min * tr
@@ -222,27 +223,27 @@ def mosfet_switching_hs_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls: MosfetSpecs, rg
     Qgs2 = hs.Qgs2
 
     # pw on
-    ig1_on = (dc.Vgs - hs.V_pl) / (rg_total + (Lcsi * dc.Io_min / Qgs2 * 1e9))
-    a = (Lcsi * ls.Qoss / hs.Qgd ** 2 * 1e9) if Lcsi else 0
+    ig1_on = (dc.Vgs - hs.V_pl) / (rg_total + (Lcsi * dc.Io_min / Qgs2))
+    a = (Lcsi * ls.Qoss / hs.Qgd ** 2) if Lcsi else 0
     b = rg_total
     c = -(dc.Vgs - hs.V_pl)
     ig2_on = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
-    Psw_on = 0.5 * dc.Vi * dc.Io_min * dc.f * (Qgs2 / ig1_on + hs.Qgd / ig2_on) * 1e-9
+    Psw_on = 0.5 * dc.Vi * dc.Io_min * dc.f * (Qgs2 / ig1_on + hs.Qgd / ig2_on)
 
     # pw off
-    ig1_off = hs.V_pl / (rg_total + Lcsi * dc.Io_max / Qgs2 * 1e9)
+    ig1_off = hs.V_pl / (rg_total + Lcsi * dc.Io_max / Qgs2)
     c = - hs.V_pl
     ig2_off = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
-    Psw_off = 0.5 * dc.Vi * dc.Io_max * dc.f * (Qgs2 / ig1_off + hs.Qgd / ig2_off) * 1e-9
+    Psw_off = 0.5 * dc.Vi * dc.Io_max * dc.f * (Qgs2 / ig1_off + hs.Qgd / ig2_off)
 
     return Psw_on, Psw_off
 
 
 def tests():
-    dcdc = DcDcSpecs(24, 12, 40_000, 12, 500e-9, 10)
-    mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 1)
+    dcdc = DcDcSpecs(24, 12, 40_000, 12, 500e-9, 10, iripple=1e-9)
+    mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 1e-9, Qsw=2e-9, Qgs=2e-9)
 
-    loss = dcdc_buck_hs(dcdc, mf)
+    loss = dcdc_buck_hs(dcdc, mf, rg_total=1e-6, fallback_V_pl=4)
     assert loss.P_on == (10 ** 2) * 10e-3 * .5
     assert loss.P_sw == 24 * 10 * 40e3 * 40e-9
     assert loss.P_gd == (12 * 40e3 * 2 * 100e-9)
@@ -257,15 +258,21 @@ def tests():
     assert math.isnan(loss.P_sw)
     assert loss.buck_ls() == loss.P_rr + loss.P_on + loss.P_gd + loss.P_dt
 
+    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
+    mf = MosfetSpecs.from_mpn('DMT10H9M9SCT', 'diodes')
+    l = mosfet_switching_hs(dcdc, mf, 6, 4.5)
+    assert abs(l[0] - 0.3) < 0.1
+    assert abs(l[1] - 0.7) < 0.1
+
 
 def tests_lcsi():
     dcdc = DcDcSpecs(70, 35, 40_000, 10, 500e-9, 33, ripple_factor=0.01)
     hs = MosfetSpecs.from_mpn('CSD19503KCS', mfr='ti')
     # ls = MosfetSpecs.from_mpn('CSD19503KCS', mfr='ti')
-    hs.Qg_th = 6.1
-    hs.Qgs = 9.8
-    hs.Qoss = 71
-    hs.Qgd = 5.4
+    hs.Qg_th = 6.1e-9
+    hs.Qgs = 9.8e-9
+    hs.Qoss = 71e-9
+    hs.Qgd = 5.4e-9
     hs._Vpl = 4.2
     hs._Qgs2 = math.nan
 
@@ -278,7 +285,7 @@ def tests_lcsi():
 
     Pon, Poff = mosfet_switching_hs(dcdc, hs, rg_total=6)
     assert abs(Pon) < abs(Poff)
-    assert 0.6 < (Pon / Poff)
+    assert 0.6 < (Pon / Poff) < 0.9
 
     ls = hs
     Pon_lcsi0, Poff_lcsi0 = mosfet_switching_hs_lcsi(dcdc, hs, ls, rg_total=6, Lcsi=.01e-9)
@@ -312,5 +319,5 @@ def plot_vpl_curve():
 
 
 if __name__ == '__main__':
-    # tests()
+    tests()
     tests_lcsi()

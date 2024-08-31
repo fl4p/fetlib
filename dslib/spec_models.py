@@ -43,6 +43,7 @@ class MosfetSpecs:
 
         if not Qg_th and Qgs2:
             Qg_th = Qgs - Qgs2
+            assert Qg_th > 0
 
         self.Qg = Qg
         self.Qgd = Qgd or math.nan
