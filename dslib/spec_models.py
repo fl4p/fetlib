@@ -111,18 +111,19 @@ class MosfetSpecs:
 
 class DcDcSpecs:
 
-    def __init__(self, vi, vo, f, Vgs, tDead=None, io=None, ii=None, pin=None, dil=None, ripple_factor=None):
+    def __init__(self, vi, vo, f, Vgs, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None):
         """
 
-        :param vi:
-        :param vo:
-        :param f:
-        :param Vgs:
-        :param io:
-        :param ii:
-        :param pin:
-        :param dil: coil ripple current il_ton - il_0. CCM if dil<2*il. see https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
-        :param ripple_factor: peak-2-peak
+        :param vi: input voltage
+        :param vo: output voltage
+        :param f: switching frequency
+        :param Vgs: gate drive voltage
+        :param tDead: gate driver dead-time
+        :param io: output current
+        :param ii: input current
+        :param pin: input power
+        :param iripple: peak-2-peak coil ripple current il(ton) - il(0). CCM if dil<2*il
+        :param ripple_factor: peak-2-peak see https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
         """
         self.Vi = vi
         self.Vo = vo
@@ -139,13 +140,12 @@ class DcDcSpecs:
         self.Io = io
 
         if ripple_factor is not None:
-            assert dil is None
-            dil = io * ripple_factor
+            assert iripple is None
+            iripple = io * ripple_factor
 
-        self.Iripple = dil if not dil is None else math.nan
+        self.Iripple = iripple if not iripple is None else math.nan
 
         self.f = f
-        # self.Ir = Ir # ripple current
         self.Vgs = Vgs
         self.tDead = tDead
 
@@ -162,7 +162,7 @@ class DcDcSpecs:
     @property
     def D_buck(self):
         """
-        :return: Duty cycle of HS switch
+        :return: Buck duty cycle of HS switch
         """
         return self.Vo / self.Vi
 
@@ -185,7 +185,9 @@ class DcDcSpecs:
         """
         :return: Whether the DC-DC converter operates in continuous conduction mode (coil current does not touch zero)
         """
-        assert self.Iripple >= 0
+        #if math.isnan(self.Iripple):
+        #    return True
+        assert self.Iripple >= 0, self.Iripple
         return self.Iripple < 2 * self.Io
 
     @property
