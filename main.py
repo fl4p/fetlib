@@ -78,13 +78,15 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
                 'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
                 'Coss', 'Qsw',
             ]
+            field_mul = lambda sym: 1 if sym[0] == 'V' else 1e-9
+
             fet_specs = MosfetSpecs(
                 Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
                 Rds_on=row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip(),
                 Qg=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
                 tRise=ds.get('tRise') and (ds.get('tRise').typ_or_max_or_min * 1e-9),
                 tFall=ds.get('tFall') and (ds.get('tFall').typ_or_max_or_min * 1e-9),
-                **{k: ds.get(k) and (ds.get(k).typ_or_max_or_min * 1e-9) for k in mf_fields},
+                **{k: ds.get(k) and (ds.get(k).typ_or_max_or_min * field_mul(k)) for k in mf_fields},
                 Vpl=ds.get('Vpl') and ds.get('Vpl').typ_or_max_or_min,
             )
         except:
@@ -119,21 +121,24 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
             housing=row['Package / Case'],
 
             Vds=row['Drain to Source Voltage (Vdss)'].strip('V '),
-            # Rds='',
             Rds_max=fet_specs.Rds_on * 1000,
             Id=row['Current - Continuous Drain (Id) @ 25°C'],
-            # Idp='',
+
             Qg_max=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
             Qgs=ds.get('Qgs') and ds.get('Qgs').typ_or_max_or_min,
             Qgd=ds.get('Qgd') and ds.get('Qgd').typ_or_max_or_min,
             Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-            Vpl=fet_specs and fet_specs.V_pl,
+
             C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
+
             Qrr_typ=ds.get('Qrr') and ds.get('Qrr').typ,
             Qrr_max=ds.get('Qrr') and ds.get('Qrr').max,
+
             tRise_ns=round(fet_specs.tRise * 1e9, 1),
             tFall_ns=round(fet_specs.tFall * 1e9, 1),
+
             Vth=row['Vgs(th) (Max) @ Id'].split('@')[0].strip('V '),
+            Vpl=fet_specs and fet_specs.V_pl,
 
             FoM=fet_specs.Rds_on * 1000 * (fet_specs.Qg * 1e9),
             FoMrr=fet_specs.Rds_on * 1000 * (fet_specs.Qrr * 1e9),
