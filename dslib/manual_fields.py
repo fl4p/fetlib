@@ -94,6 +94,10 @@ onsemi = {
         Field('tRise', min=math.nan, typ=10, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=6, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=189, max=math.nan, unit='nC'),
+        Field('Qgd', min=math.nan, typ=8, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=18, max=math.nan, unit='nC'),
+        Field('V_pl', min=math.nan, typ=4.7, max=math.nan, unit='V'),
+        Field('Qg_th', min=math.nan, typ=12, max=math.nan, unit='V'),
     ],
 
     'NVMFWS6D2N08XT1G': [  # tabula failure

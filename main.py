@@ -150,6 +150,12 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         result_rows.append(row)
         result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs))
 
+    print('no P_sw')
+    for row in result_rows:
+        if math.isnan(row.get('P_sw') or math.nan):
+            #no_psw.append((mfr, mpn))
+            print(os.path.join('datasheets', row['mfr'], row['mpn'] + '.pdf'))
+
     df = pd.DataFrame(result_rows)
 
     df.sort_values(by=['Vds', 'mfr', 'mpn'], inplace=True, kind='mergesort')
