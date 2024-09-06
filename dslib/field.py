@@ -13,6 +13,16 @@ class Field():
             mul = 1000
             unit = 'nC'
 
+        if unit in {'nF', 'μF'}:
+            assert mul == 1
+            mul = 1e3
+            unit = 'pF'
+
+        if unit in {'uF', 'μF'}:
+            assert mul == 1
+            mul = 1e6
+            unit = 'pF'
+
         min = parse_field_value(min) * mul
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul

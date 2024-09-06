@@ -15,3 +15,5 @@ test.pdf
 *.pickle
 
 /*.csv
+
+parts-lib.pkl

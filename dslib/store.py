@@ -16,10 +16,13 @@ class Part:
         from dslib.spec_models import MosfetSpecs
         return isinstance(self.specs, MosfetSpecs)
 
+
 def lib_file_path():
     return os.path.realpath(os.path.dirname(__file__) + '/../parts-lib.pkl')
 
+
 _lib_mem = None
+
 
 def load_parts(reload=False):
     global _lib_mem
@@ -31,10 +34,12 @@ def load_parts(reload=False):
             return _lib_mem.copy()
     return {}
 
-def load_part(mpn, mfr) ->Part:
+
+def load_part(mpn, mfr) -> Part:
     if not _lib_mem:
         load_parts()
     return copy(_lib_mem.get((mfr, mpn)))
+
 
 def add_parts(new_arts: Iterable[Part], overwrite=True):
     load_parts()
