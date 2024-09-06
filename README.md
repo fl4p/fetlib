@@ -14,20 +14,29 @@ What it does:
 - Store gathered parts specifications in a database or CSV file
 - Compute power Loss estimation for a given DC-DC converter
 
+It builds a parts table with additional fields to those you will usually find in parametric search:
+
+* `Qgs`, `Qgd`, `Qgs2`, `Qg_th`, `Q_sw`
+* `V_pl` (miller plateau voltage)
+* `C_oss`
+* `Qrr`
+* rise and fall times
+
 # How to use
 
-1. acquire a parts list from digikey. go
-   to [digikey.com](https://www.digikey.de/en/products/filter/transistors/fets-mosfets/single-fets-mosfets/278)
+```
+git clone --recurse-submodules https://github.com/fl4p/fetlib
+cd fetlib
+pip install -r requirements.txt
+git clone https://github.com/open-pe/fet-datasheets # fetch set of data-sheets (80,100,150V power mosfets)
+```
+
+1. acquire a parts list from Digikey. go to [digikey.com](https://www.digikey.de/en/products/filter/transistors/fets-mosfets/single-fets-mosfets/278)
 2. narrow down the search filters so your have 500 or less results.
-3. download the CSV files (click *Download Table* / *First 500 Results*)
+3. download the CSV file (click *Download Table* / *First 500 Results*)
+4. save the CSV file under `digikey-results/` folder
 
-4. Open `main.py` and adjust the path to the downloaded csv file:
-
-```
-read_digikey_results(csv_path='digikey-results/80V 26A 10mOhm 250nC.csv')
-```
-
-5. Adjust the DCDC operating point:
+5. Open `main.py` and adjust adjust the DCDC operating point:
 
 ```
 # buck converter
@@ -40,20 +49,31 @@ vo              output voltage
 pin             input power, alternatively you can set `io` (I_out) or `ii` (I_in).
 f               switching frequency
 Vgs             gate drive voltage for both HS and LS
-ripple_factor   the difference between the min and max coil current divided by mean coil current (assuming CCM)
+ripple_factor   peak-to-peak coil current divided by mean coil current (assuming CCM)
 tDead           gate driver dead-time (happens 2 times per period)
 ```
 
 6. Run `python3 main.py` and it will download all datasheets (if not already found), extract values and compose a CSV
    file with loss estimations for the given DC-DC converter.
 
+   The process will finish with an output like this:
+
 ```
-P_on        HS conduction loss ~ D
-P_on_ls     LS conduction loss ~ (1 - D)
-P_sw        HS switching loss ~ (tRise+tOff)
+written fets-buck-62V-27V-30A-40kHz.csv
+stored 1259 parts
+```
+
+The CSV file includes these power loss values:
+
+```
+P_on        HS conduction loss ~ (D * I² * Rds)
+P_on_ls     LS conduction loss ~ ((1 - D) * I² * Rds)
+P_sw        HS switching loss ~ max(tRise + tOff, 2 * Qsw / (Vgs / rg) )
 P_rr        reverse recovery loss when used as LS (sync fet) ~ Qrr
 P_dt_ls     LS dead time loss ~ (tDead * Vsd)
 ```
+
+And these aggregated power values for the 2 slots HS, LS and for the 2p case each:
 
 ```
 P_hs        total loss caused by HS switch
@@ -80,18 +100,22 @@ The program collects part specification values from different sources:
     - Tabula
         - Table header aware iteration
         - Row regex iteration
+    - LLMs (TODO)
+      - OpenAI´s ChatGPT
+      - Anthropic´s Claude 3.5 Sonnet
 
 Values for Rds_on and Qgd are usually shown in the search results (Digikey, LCSC).
 Nexar API doesn't show the Qrr, and (tRise+tFall) only for some parts (especially values for newer chips are missing
 here).
 So I found the only way is to extract Qrr from the Datasheet.
-We use 2 techniques:
+We use 3 techniques:
 
 1. Convert the PDF to txt and find the values with regular expressions. this can be tedious work, as table structure is
    not homogenous across manufacturers and some manufacturers use different formats across product series and release
    date. each extracted field usually requires its own regex since tables include testing conditions or design notes.
 2. use tabula (or another pdf2table program) to read the tables from the PDF. there is a python binding available that
    produces pandas DataFrames. find values by iterating the rows.
+3. LLM Apis https://github.com/piotrdelikat/fet-data-extractor
 
 ## Datasheet download
 
@@ -169,6 +193,7 @@ DS of IQD016N08NM5 includes one for dif/dt=100A/us and dif/dt=1000A/us
   symbols
   correctly.
 * Mouser, API?
+* Winsource
 * Extract more fields
     * Qgd/Qgs (self turn on)
     * Vsd (body diode forward voltage)
