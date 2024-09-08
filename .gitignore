@@ -24,3 +24,5 @@ out/
 
 
 *.pdf
+
+*_downloads/
