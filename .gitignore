@@ -17,3 +17,10 @@ test.pdf
 /*.csv
 
 parts-lib.pkl
+
+*.xlsx
+
+out/
+
+
+*.pdf
