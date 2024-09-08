@@ -1,13 +1,18 @@
-import glob
+import math
+import asyncio
 import math
 import os.path
+from typing import List
 
+import numpy as np
 import pandas as pd
 
 import dslib.manual_fields
-from dslib import mfr_tag, round_to_n
+from discover_parts import discover_mosfets
+from dslib import round_to_n
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field
+from dslib.parts_discovery import DiscoveredPart
 from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
@@ -16,14 +21,14 @@ from dslib.store import Part
 
 def main():
     dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
-    print(dcdc.Io)
-    read_digikey_results(csv_path='parts-lists/digikey/*.csv', dcdc=dcdc)
+    print('DC-DC:', dcdc)
+
+    parts = asyncio.run(discover_mosfets())
+    parts = [p for p in parts if p.specs.Vds_max >= (dcdc.Vi * 1.25) and p.specs.Vds_max <= (dcdc.Vi * 4) and p.specs.ID_25 > dcdc.Io_max * 1.2]
+    generate_parts_power_loss_csv(parts, dcdc=dcdc)
 
 
-def read_digikey_results(csv_path, dcdc: DcDcSpecs):
-    df = pd.concat([pd.read_csv(fn) for fn in sorted(glob.glob(csv_path))], axis=0, ignore_index=True)
-    # df = pd.read_csv(csv_path)
-
+def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     result_rows = []  # csv
     result_parts = []  # db storage
     all_mpn = set()
@@ -35,14 +40,14 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         except Exception as e:
             print('git clone error:', e)
 
-    for i, row in df.iterrows():
-        mfr = mfr_tag(row.Mfr)
-        mpn = str(row['Mfr Part #'])
-        ds_url = row.Datasheet
+    for part in parts:
+        mfr = part.mfr
+        mpn = part.mpn
+        ds_url = part.ds_url
+        ds_path = part.get_ds_path()
 
-        datasheet_path = os.path.join('datasheets', mfr, mpn + '.pdf')
-        if not os.path.exists(datasheet_path):
-            fetch_datasheet(ds_url, datasheet_path, mfr=mfr, mpn=mpn)
+        if not os.path.exists(ds_path):
+            fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn)
 
         ds = {}
 
@@ -54,14 +59,14 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
                     ds[mf.symbol] = mf
 
         # parse datasheet (tabula and pdf2txt):
-        if os.path.isfile(datasheet_path):
+        if os.path.isfile(ds_path):
 
             k = (mfr, mpn)
             if k in all_mpn:
                 continue
             all_mpn.add(k)
 
-            dsp = parse_datasheet(datasheet_path, mfr=mfr, mpn=mpn)
+            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
             for k, f in dsp.items():
                 if k not in ds:
                     ds[k] = f
@@ -69,7 +74,7 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         # try nexar api:
         try:
             from dslib.nexar.api import get_part_specs_cached
-            specs = get_part_specs_cached(mpn, mfr) or {}
+            specs = {} # get_part_specs_cached(mpn, mfr) or {}
         except Exception as e:
             print(mfr, mpn, 'get_part_specs_cached', e)
             specs = {}
@@ -85,6 +90,8 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
             if sym not in ds:
                 ds[sym] = Field(sym, min=math.nan, typ=typ, max=math.nan)
 
+        def first(a): return next((x for x in a if x and not math.isnan(x)), math.nan)
+
         # create specification for DC-DC loss model
         try:
             mf_fields = [
@@ -95,9 +102,9 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
             field_mul = lambda sym: 1 if sym[0] == 'V' else 1e-9
 
             fet_specs = MosfetSpecs(
-                Vds_max=row['Drain to Source Voltage (Vdss)'].strip(' V'),
-                Rds_on=row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip(),
-                Qg=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
+                Vds_max=part.specs.Vds_max,
+                Rds_on=part.specs.Rds_on_10v_max,
+                Qg=first((ds.get('Qg') and ds.get('Qg').typ_or_max_or_min, part.specs.Qg_max_or_typ_nC)) * 1e-9,
                 tRise=ds.get('tRise') and (ds.get('tRise').typ_or_max_or_min * 1e-9),
                 tFall=ds.get('tFall') and (ds.get('tFall').typ_or_max_or_min * 1e-9),
                 **{k: ds.get(k) and (ds.get(k).typ_or_max_or_min * field_mul(k)) for k in mf_fields},
@@ -105,9 +112,9 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
             )
         except:
             print(mfr, mpn, 'error creating mosfet specs')
-            print(row)
+            print(part, part.specs.__dict__)
             print('\n'.join(map(str, ds.items())))
-            parse_datasheet.invalidate(datasheet_path, mfr=mfr, mpn=mpn)
+            parse_datasheet.invalidate(ds_path, mfr=mfr, mpn=mpn)
 
             raise
 
@@ -132,13 +139,13 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         row = dict(
             mfr=mfr,
             mpn=mpn,
-            housing=row['Package / Case'],
+            housing=part.package,
 
-            Vds=row['Drain to Source Voltage (Vdss)'].strip('V '),
+            Vds=part.specs.Vds_max,
             Rds_max=fet_specs.Rds_on * 1000,
-            Id=row['Current - Continuous Drain (Id) @ 25°C'],
+            Id=part.specs.ID_25,
 
-            Qg_max=row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip(),
+            Qg_max=fet_specs.Qg * 1e9,
             Qgs=ds.get('Qgs') and ds.get('Qgs').typ_or_max_or_min,
             Qgd=ds.get('Qgd') and ds.get('Qgd').typ_or_max_or_min,
             Qsw=fet_specs and (fet_specs.Qsw * 1e9),
@@ -151,7 +158,7 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
             tRise_ns=round(fet_specs.tRise * 1e9, 1),
             tFall_ns=round(fet_specs.tFall * 1e9, 1),
 
-            Vth=row['Vgs(th) (Max) @ Id'].split('@')[0].strip('V '),
+            Vth=part.specs.Vgs_th_max,
             Vpl=fet_specs and fet_specs.V_pl,
 
             FoM=fet_specs.Rds_on * 1000 * (fet_specs.Qg * 1e9),
