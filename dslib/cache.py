@@ -572,8 +572,11 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, salt=None):
             return cache_key_str
 
         def _invalidate(*args, **kwargs):
-            cache_key_str = _cache_key(*args, **kwargs)
-            if cache_key_str is None:
+            try:
+                cache_key_str = _cache_key(*args, **kwargs)
+                if cache_key_str is None:
+                    return
+            except:
                 return
             disk_cache_store.delete(cache_key_str)
 
