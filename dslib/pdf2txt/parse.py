@@ -113,6 +113,7 @@ def tabula_pdf_dataframes(pdf_path=None):
              'datasheets/onsemi/FDB047N10.pdf',
              'datasheets/onsemi/FDP047N10.pdf',
              'datasheets/infineon/IPB033N10N5LFATMA1.pdf',
+             'datasheets/infineon/ISC030N10NM6ATMA1.pdf',
 
              'datasheets/diodes/DMT10H9M9SCT.pdf',  # unsupported operation
              'datasheets/diodes/DMT10H9M9LCT.pdf',
@@ -239,16 +240,16 @@ def field_value_regex_variations(head, unit, signed=False):
                    re.IGNORECASE),
 
         re.compile(
-            head + r'[-\s]{,2}\s*,?\s*(?P<min>'+field_nan+r')\s*,?\s*(?P<typ>'+field_nan+r')\s*,?\s*(?P<max>'+field_nan+r')\s*,?\s*(?P<unit>' + unit + r')(,|$)',
+            head + r'[-\s]{,2}\s*,?\s*(?P<min>' + field_nan + r')\s*,?\s*(?P<typ>' + field_nan + r')\s*,?\s*(?P<max>' + field_nan + r')\s*,?\s*(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         re.compile(
-            head + r'([\s=/a-z0-9.,μ]+)?(?P<min>'+field_nan+r'),(?P<typ>'+field_nan+r'),(?P<max>'+field_nan+r'),(?P<unit>' + unit + r')(,|$)',
+            head + r'([\s=/a-z0-9.,μ]+)?(?P<min>' + field_nan + r'),(?P<typ>' + field_nan + r'),(?P<max>' + field_nan + r'),(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         # QgsGate charge gate to source,17,nC,nan,nan,nan,nan,nan
         re.compile(
-            head + r'([\s/a-z0-9."]+)?,(?P<typ>'+field+r'),(?P<unit>' + unit + r')(,|$)',
+            head + r'([\s/a-z0-9."]+)?,(?P<typ>' + field + r'),(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         # "tf fall time,nan,nan,- 49.5 - ns"
@@ -322,7 +323,7 @@ def get_dimensional_regular_expressions():
 
               # datasheets/vishay/SIR622DP-T1-RE3.pdf Qrr no value match Body diode reverse recovery charge Qrr -,350,680,nan,nC
           ] + field_value_regex_variations(
-            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|Q[\s_]?[a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
+            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
             r'[uμnp]C'),
 
         C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
@@ -347,11 +348,12 @@ def get_field_detect_regex(mfr):
         Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
                        re.IGNORECASE),
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
+        Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Qg([\s_]?\(?tota?l?\)?)?$)', re.IGNORECASE),
         Qgs=re.compile(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE),
         Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$)', re.IGNORECASE),
-        Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+("?miller"?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
+        Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"?miller"?\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
         Qg_th=re.compile(r'(gate[\s-]+charge\s+at\s+V[ _]?th|^Q[ _]?g\(?th\)?$)', re.IGNORECASE),
         Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
 
