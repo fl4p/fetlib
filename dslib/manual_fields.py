@@ -31,7 +31,7 @@ infineon = {
         Field('Qgd', min=math.nan, typ=5, max=7, unit='nC'),
         Field('Qsw', min=math.nan, typ=6.9, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=29, max=39, unit='nC'),
-        Field('V_pl', min=math.nan, typ=2.9, max=math.nan, unit='nC'),
+        Field('Vpl', min=math.nan, typ=2.9, max=math.nan, unit='nC'),
     ],
 
     'BSC019N08NS5ATMA1': [  # tabula failure
@@ -44,7 +44,7 @@ infineon = {
 
         Field('Qsw', min=math.nan, typ=29, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=110, max=147, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.4, max=math.nan, unit='nC'),
+        Field('Vpl', min=math.nan, typ=4.4, max=math.nan, unit='nC'),
     ],
 
     'IAUA250N08S5N018AUMA1': [  # tabula failure
@@ -77,7 +77,7 @@ infineon = {
         Field('Qg_th', min=math.nan, typ=11, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=16, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=67, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
     ],
 
     'IPB019N08N3GATMA1': [ # scrambled text
@@ -85,8 +85,13 @@ infineon = {
         Field('Qgs', min=math.nan, typ=50, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=50, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=210, max=279, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.6, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.6, max=math.nan, unit='V'),
     ],
+
+    'BSB056N10NN3GXUMA2': [ # Qgd label mistake
+        Field('Qgd', min=math.nan, typ=9.7, max=math.nan, unit='nC'),
+        Field('Qsw', min=math.nan, typ=20, max=math.nan, unit='nC'),
+    ]
 }
 
 onsemi = {
@@ -96,7 +101,7 @@ onsemi = {
         Field('Qrr', min=math.nan, typ=189, max=math.nan, unit='nC'),
         Field('Qgd', min=math.nan, typ=8, max=math.nan, unit='nC'),
         Field('Qgs', min=math.nan, typ=18, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.7, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.7, max=math.nan, unit='V'),
         Field('Qg_th', min=math.nan, typ=12, max=math.nan, unit='V'),
     ],
 
@@ -104,17 +109,35 @@ onsemi = {
         Field('tRise', min=math.nan, typ=6, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=5, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=88, max=math.nan, unit='nC'),
+
+        Field('Qg', min=math.nan, typ=19, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=4, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=6, max=math.nan, unit='nC'),
+        Field('Qgd', min=math.nan, typ=3, max=math.nan, unit='nC'),
+        Field('Vpl', min=math.nan, typ=4.7, max=math.nan, unit='V'),
     ],
     'NTMFWS1D5N08XT1G': [  # tabula failure
         Field('tRise', min=math.nan, typ=9, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=9, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=224, max=math.nan, unit='nC'),
+
+        Field('Qg', min=math.nan, typ=83, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=18, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=27, max=math.nan, unit='nC'),
+        Field('Qgd', min=math.nan, typ=13, max=math.nan, unit='nC'),
+        Field('Vpl', min=math.nan, typ=4.6, max=math.nan, unit='V'),
     ],
 
     'NVMFWS1D9N08XT1G': [  # tabula failure
         Field('tRise', min=math.nan, typ=12, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=7, max=math.nan, unit='ns'),
         Field('Qrr', min=math.nan, typ=211, max=math.nan, unit='nC'),
+
+        Field('Qg', min=math.nan, typ=39, max=math.nan, unit='nC'),
+        Field('Qg_th', min=math.nan, typ=14, max=math.nan, unit='nC'),
+        Field('Qgs', min=math.nan, typ=21, max=math.nan, unit='nC'),
+        Field('Qgd', min=math.nan, typ=10, max=math.nan, unit='nC'),
+        Field('Vpl', min=math.nan, typ=4.7, max=math.nan, unit='V'),
     ],
     'NVMFS6H800NT1G': [  # tabula failure
         Field('tRise', min=math.nan, typ=89, max=math.nan, unit='ns'),
@@ -182,7 +205,7 @@ diodes = {
         Field('Qgd', min=math.nan, typ=12, max=math.nan, unit='nC'),
         Field('Qgs', min=math.nan, typ=6, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=15, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
     ],
 
     'DMT10H9M9SCT': [
@@ -190,7 +213,7 @@ diodes = {
         Field('Qgs', min=math.nan, typ=9.5, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=12.5, max=math.nan, unit='nC'),
         Field('Qrr', min=math.nan, typ=68, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=5.2, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=5.2, max=math.nan, unit='V'),
     ],
 }
 
@@ -220,7 +243,7 @@ ao = {
         Field('Qgs', min=math.nan, typ=21, max=math.nan, unit='nC'),
         Field('Qg_th', min=math.nan, typ=17, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=112, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
     ]
 }
 
@@ -240,7 +263,7 @@ ti = {
         Field('Qgs', min=math.nan, typ=9.8, max=math.nan, unit='nC'),
         Field('Qg_th', min=math.nan, typ=6.1, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=71, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.8, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.8, max=math.nan, unit='V'),
     ],
 
     'CSD19506KCS': [
@@ -248,7 +271,7 @@ ti = {
         Field('Qgs', min=math.nan, typ=37, max=math.nan, unit='nC'),
         Field('Qg_th', min=math.nan, typ=25, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=345, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
     ],
 
     'CSD19536KCS': [
@@ -256,6 +279,6 @@ ti = {
         Field('Qgs', min=math.nan, typ=37, max=math.nan, unit='nC'),
         Field('Qg_th', min=math.nan, typ=24, max=math.nan, unit='nC'),
         Field('Qoss', min=math.nan, typ=335, max=math.nan, unit='nC'),
-        Field('V_pl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
+        Field('Vpl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
     ],
 }
