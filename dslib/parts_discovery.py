@@ -1,30 +1,97 @@
 import datetime
+import glob
 import math
 import os.path
 from typing import Literal
 
+import numpy as np
 import pandas as pd
 
+from dslib import mfr_tag
 from dslib.fetch import download_with_chromium
+from dslib.field import parse_field_value
+
+
+def ensure_nC(s, min, max, abs):
+    if isinstance(s, str):
+        if s.endswith('nC'):
+            s = float(s[:-2].strip()) * 1
+        elif s.endswith('uC') or s.endswith('μC'):
+            s = float(s[:-2].strip()) * 1e3
+        elif s.isnumeric():
+            s = float(s)
+        else:
+            raise ValueError(s)
+        s = float(s)
+    if abs and s < 0:
+        s *= -1
+    assert not (s < min or s > max), (min, s, max)
+    return s
+
+
+def ensure_ohm(s, min, max):
+    if isinstance(s, str):
+        if s.endswith('mOhm') or s.endswith('mΩ')  or s.endswith('mO'):
+            s = float(s[:s.index('m')].strip()) * 1e-3
+        s = float(s)
+    assert not (s < min or s > max), (min, s, max)
+    return s
 
 
 class MosfetBasicSpecs():
     def __init__(self, Vds_max, Rds_on_10v_max, ID_25, Vgs_th_max, Qg_typ, Qg_max):
         self.Vds_max = Vds_max
-        self.Rds_on_10v_max = Rds_on_10v_max
+        self.Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 500)
         self.ID_25 = ID_25
         self.Vgs_th_max = Vgs_th_max
-        self.Qg_typ = Qg_typ
-        self.Qg_max = Qg_max
+        self.Qg_typ_nC = ensure_nC(Qg_typ, .2, 2000, True)
+        self.Qg_max_nC = ensure_nC(Qg_max, .2, 2000, True)
 
+        assert not (self.Vgs_th_max > 15)
+
+        f = 1000 * self.Rds_on_10v_max / abs(self.Vds_max)
+        assert not (0.002 > f or f > 1000), (f, Vds_max, self.Rds_on_10v_max)
+
+        if Vds_max < 0:
+            # p-ch
+            assert math.isnan(f * ID_25) or 1 < abs(f * ID_25) < 60, (f*ID_25, f, ID_25 )
+        else:
+            assert math.isnan(f * ID_25) or 0.1 < abs(f * ID_25) < 60, (f * ID_25, f, ID_25)
+
+    @property
+    def Qg_max_or_typ_nC(self):
+        # assert not self.Qg_max or not isinstance(self.Qg_max, str), self.Qg_max
+        if self.Qg_max_nC and not math.isnan(self.Qg_max_nC):
+            return self.Qg_max_nC
+        return self.Qg_typ_nC
+
+    def update(self, specs:'MosfetBasicSpecs'):
+        assert self.Vds_max == specs.Vds_max
+        def mean_chk_std(t, std, fn=np.nanmean):
+            assert not (np.nanstd(t)/np.nanmean(t)>std), (t, np.nanstd(t)/np.nanmean(t))
+            return fn(t)
+
+        mean_chk_std((self.Rds_on_10v_max, specs.Rds_on_10v_max), 0.2)
+        if math.isnan(self.Rds_on_10v_max):
+            self.Rds_on_10v_max = specs.Rds_on_10v_max
+        self.ID_25 = mean_chk_std((self.ID_25, specs.ID_25), 0.4, fn=np.nanmin)
+        self.Vgs_th_max = mean_chk_std((self.Vgs_th_max, specs.Vgs_th_max), 0.3, fn=np.nanmax)
+        self.Qg_typ_nC = mean_chk_std((self.Qg_typ_nC, specs.Qg_typ_nC), 0.01)
+        self.Qg_max_nC = mean_chk_std((self.Qg_max_nC, specs.Qg_max_nC), 0.2, fn=np.nanmax)
+        
+
+
+def is_nan(v):
+    return isinstance(v, float) and math.isnan(v)
 
 class DiscoveredPart():
-    def __init__(self, mfr, mpn, ds_url, specs: MosfetBasicSpecs, mpn2=None):
+    def __init__(self, mfr, mpn, ds_url, package, specs: MosfetBasicSpecs, mpn2=None):
         self.mfr = mfr
         self.mpn = mpn
         self.ds_url = ds_url
         self.specs: MosfetBasicSpecs = specs
         self.mpn2 = mpn2
+        self.package = package if not is_nan(package) else None  # aka case, housing
 
     def get_ds_path(self):
         return os.path.join('datasheets', self.mfr, self.mpn + '.pdf')
@@ -71,12 +138,12 @@ async def ti_mosfets():
             ds_url=link_reg.match(row['PDF data sheet']).groupdict().get('url'),
             specs=MosfetBasicSpecs(
                 Vds_max=row['VDS (V)'],
-                Rds_on_10v_max=row['Rds(on) at VGS=10 V (max) (mΩ)'],
+                Rds_on_10v_max=row['Rds(on) at VGS=10 V (max) (mΩ)'] * 1e-3,
                 ID_25=row['ID - continuous drain current at TA=25°C (A)'],
-                Vgs_th_max=row['VGS (V)'],
+                Vgs_th_max=math.nan,
                 Qg_typ=math.nan,
                 Qg_max=math.nan,
-            )
+            ), package=row['Package type']
         ))
     return parts
 
@@ -93,6 +160,14 @@ async def infineon_mosfets():
     df = pd.read_excel(fn)
     df.to_csv(fn.replace('.xlsx', '.csv'), index=False)
 
+    def parse_field(v, t):
+        if isinstance(v, str):
+            return t(v.split('_x000d_')[0])
+        elif isinstance(v, float):
+            if t == str and math.isnan(v):
+                return ''
+        return t(v)
+
     parts = []
     for i, row in df.iterrows():
         vds = row['VDS max [V]']
@@ -100,17 +175,17 @@ async def infineon_mosfets():
             vds = float(vds.split('_')[0])
         parts.append(DiscoveredPart(
             mfr='infineon',
-            mpn=row['OPN'],
-            mpn2=row['Product'],
+            mpn=row['OPN'].split('_x000d_')[0],
+            mpn2=row['Product'].split('_x000d_')[0],
             ds_url=row['Data Sheet'],
             specs=MosfetBasicSpecs(
                 Vds_max=vds,
-                Rds_on_10v_max=row['RDS (on) @10V max [Ω]'],
-                ID_25=row['ID  @25°C max [A]'],
-                Vgs_th_max=row['VGS(th) max [V]'],
-                Qg_typ=row['QG typ @10V [C]'],
-                Qg_max=row['QG typ @10V max [C]'],
-            )
+                Rds_on_10v_max=parse_field(row['RDS (on) @10V max [Ω]'], float) * 1e-3,
+                ID_25=parse_field(row['ID  @25°C max [A]'], float),
+                Vgs_th_max=parse_field(row['VGS(th) max [V]'], float),
+                Qg_typ=parse_field(row['QG typ @10V [C]'], float),
+                Qg_max=parse_field(row['QG typ @10V max [C]'], float),
+            ), package=parse_field(row['Standard Package name'], str),
         ))
 
     return parts
@@ -148,12 +223,12 @@ async def toshiba_mosfets():
             ds_url=cols['Datasheet'][i].hyperlink and cols['Datasheet'][i].hyperlink.target,
             specs=MosfetBasicSpecs(
                 Vds_max=float(cols['VDSS(V)'][i].value or 'nan'),
-                Rds_on_10v_max=float(cols['RDS(ON)Max(Ω)|VGS|=10V'][i].value or 'nan'),
-                ID_25=float(cols['RDS(ON)Max(Ω)|VGS|=10V'][i].value or 'nan'),
+                Rds_on_10v_max=float(cols['RDS(ON)Max(Ω)|VGS|=10V'][i].value or 'nan'),  # ohm
+                ID_25=float(cols['ID(A)'][i].value or 'nan'),
                 Vgs_th_max=math.nan,
-                Qg_typ=float(cols['RDS(ON)Max(Ω)|VGS|=10V'][i].value or 'nan'),
+                Qg_typ=float(cols['Qg(nC)'][i].value or 'nan'),  # nC
                 Qg_max=math.nan,
-            )
+            ), package=cols['Toshiba Package Name'][i].value,
         ))
 
     return parts
@@ -172,10 +247,37 @@ async def onsemi_mosfets():
 
     df = pd.read_csv(fn)
 
+    #     # https://www.onsemi.com/download/data-sheet/pdf/ech8667-d.pdf
+
     return []
 
 
-    # https://www.onsemi.com/download/data-sheet/pdf/ech8667-d.pdf
+def digikey(csv_glob_path):
+    df = pd.concat([pd.read_csv(fn) for fn in sorted(glob.glob(csv_glob_path))], axis=0, ignore_index=True)
+
+    parts = []
+
+    for i, row in df.iterrows():
+        mfr = mfr_tag(row.Mfr)
+        mpn = str(row['Mfr Part #'])
+        ds_url = row.Datasheet
+        parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+            Vds_max=float(row['Drain to Source Voltage (Vdss)'].strip(' V')),
+            Rds_on_10v_max=(row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip()),
+            Qg_max=(row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip()),
+            Qg_typ=math.nan,
+            ID_25=float(row['Current - Continuous Drain (Id) @ 25°C'].strip(' ,').split(',')[-1].strip().split(' ')[0].strip(' A')),
+            Vgs_th_max=parse_field_value(row['Vgs(th) (Max) @ Id'].split('@')[0].strip(' V')),
+        ), package=row['Package / Case']))
+
+    return parts
+
+
+def benchmark_mpns():
+    return {
+        ('infineon', 'IPP65R420CFDXKSA2'),
+        ('infineon', 'IMT40R036M2HXTMA1')
+    }
 
 
 if __name__ == '__main__':
