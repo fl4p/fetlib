@@ -188,7 +188,7 @@ def parse_row_value(csv_line, dim, field_sym, cond=None):
     return None
 
 
-def field_value_regex_variations(head, unit):
+def field_value_regex_variations(head, unit, signed=False):
     """
     Output Capacitance Coss VDS = 50V, --,3042,--,pF
     Output Capacitance Coss VDS = 50V, --,2730,--,pF
@@ -212,16 +212,18 @@ def field_value_regex_variations(head, unit):
     test_cond_broad = r'[-\s=≈/a-z0-9äöü.,;:μΩ°()"\']+'  # parameter lab testing conditions (temperature, I, U, didit,...)
 
     field = r'[0-9]+(\.[0-9]+)?'
+    if signed:
+        field = r'-?' + field
     nan = r'-*|nan'
     field_nan = nan + r'|' + field
 
     return [
         re.compile(  # min typ max
-            head + r',(?P<min>(nan|-*|[0-9]+(\.[0-9]+)?)),(?P<typ>([0-9]+(\.[0-9]+)?)),(?P<max>(nan|-*|[0-9]+(\.[0-9]+)?)),I?(?P<unit>' + unit + r')(,|$)',
+            head + rf',(?P<min>({field_nan})),(?P<typ>({field})),(?P<max>({field_nan})),I?(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         re.compile(  # typ surrounded by nan/-
-            head + r',((-*|nan),){0,4}(?P<typ>[-0-9]+(\.[0-9]+)?),((-*|nan),){0,4}(?P<unit>' + unit + r')(,|$)',
+            head + r',((-*|nan),){0,4}(?P<typ>(' + field + r')),((-*|nan),){0,4}(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         re.compile(  # min,typ,max with (scrambled) testing conditions and unit
@@ -229,7 +231,7 @@ def field_value_regex_variations(head, unit):
             re.IGNORECASE),
 
         re.compile(  # typ only with (scrambled) testing conditions
-            rf'{head},({test_cond_broad},)?(?P<typ>[0-9]+(\.[0-9]+)?),(nan,)?(?P<unit>' + unit + r')(,|$)',
+            rf'{head},({test_cond_broad},)?(?P<typ>{field}),(nan,)?(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         # typ surrounded by nan/- or max  and no unit
@@ -237,16 +239,16 @@ def field_value_regex_variations(head, unit):
                    re.IGNORECASE),
 
         re.compile(
-            head + r'[-\s]{,2}\s*,?\s*(?P<min>nan|-*|[0-9.]+)\s*,?\s*(?P<typ>nan|-*|[0-9.]+)\s*,?\s*(?P<max>nan|-*|[0-9.]+)\s*,?\s*(?P<unit>' + unit + r')(,|$)',
+            head + r'[-\s]{,2}\s*,?\s*(?P<min>'+field_nan+r')\s*,?\s*(?P<typ>'+field_nan+r')\s*,?\s*(?P<max>'+field_nan+r')\s*,?\s*(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         re.compile(
-            head + r'([\s=/a-z0-9.,μ]+)?(?P<min>-*|nan|[0-9]+(\.[0-9]+)?),(?P<typ>-*|nan|[0-9]+(\.[0-9]+)?),(?P<max>-*|nan|[0-9]+(\.[0-9]+)?),(?P<unit>' + unit + r')(,|$)',
+            head + r'([\s=/a-z0-9.,μ]+)?(?P<min>'+field_nan+r'),(?P<typ>'+field_nan+r'),(?P<max>'+field_nan+r'),(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         # QgsGate charge gate to source,17,nC,nan,nan,nan,nan,nan
         re.compile(
-            head + r'([\s/a-z0-9."]+)?,(?P<typ>[0-9]+(\.[0-9]+)?),(?P<unit>' + unit + r')(,|$)',
+            head + r'([\s/a-z0-9."]+)?,(?P<typ>'+field+r'),(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
         # "tf fall time,nan,nan,- 49.5 - ns"
@@ -324,7 +326,7 @@ def get_dimensional_regular_expressions():
             r'[uμnp]C'),
 
         C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
-        V=field_value_regex_variations(r'(voltage|V[\s_]?[a-z]{1,8})', r'[m]?V')
+        V=field_value_regex_variations(r'(voltage|V[\s_]?[a-z]{1,8})', r'[m]?V', signed=True)
     )
     return dim_regs
 
