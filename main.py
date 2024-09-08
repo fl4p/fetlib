@@ -26,6 +26,14 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
 
     result_rows = []  # csv
     result_parts = []  # db storage
+    all_mpn = set()
+
+    if not os.path.isdir('datasheets'):
+        try:
+            import subprocess
+            subprocess.run(['git', 'clone', 'https://github.com/open-pe/fet-datasheets', 'datasheets'])
+        except Exception as e:
+            print('git clone error:', e)
 
     for i, row in df.iterrows():
         mfr = mfr_tag(row.Mfr)
@@ -47,6 +55,12 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
 
         # parse datasheet (tabula and pdf2txt):
         if os.path.isfile(datasheet_path):
+
+            k = (mfr, mpn)
+            if k in all_mpn:
+                continue
+            all_mpn.add(k)
+
             dsp = parse_datasheet(datasheet_path, mfr=mfr, mpn=mpn)
             for k, f in dsp.items():
                 if k not in ds:

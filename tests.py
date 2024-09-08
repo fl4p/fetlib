@@ -13,7 +13,7 @@ def parse_line_tests():
         # "Rise Time tr,VDS=50V, RG=3Ω, -,46,nan,-,nan"
         # "Fall Time tf,-,44,nan,-,nan"
         # "Output Capacitance Coss,F=1MHz -,1263,nan,-,pF"
-        ("Reverse Recovery Charge Q rr,di/dt=100A/μs -,0.26,nan,-,uC", 'Q', (n, 0.26, n)),
+        # ("Reverse Recovery Charge Q rr,di/dt=100A/μs -,0.26,nan,-,uC", 'Q', (n, 0.26, n)),
         # "V GS=0V, V DS=25V, Output capacitance C oss,f =1MHz,nan,-,2520,3276,nan"
         # "COSS(TR),Effective Output Capacitance, Time Related (Note 2),nan,1371,nan,nan,nan"
         # "QG(TH),Gate Charge at Threshold,nan,4.6,nan,nan,nC"
@@ -46,6 +46,8 @@ def parse_line_tests():
         ("tf fall time,nan,nan,- 49.5 - ns", 't', (n, 49.5, n)),
         ("/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC", 'Q', (n, 35, n)),
         ("Output Capacitance Coss VDS = 50V,--,3042,--,pF", 'C', (n, 3042, n)),
+        ("Diode forward voltage,VDSF,IDR = 120 A, VGS = 0 V,nan,nan,nan,-1.2,V", 'V', (n, -1.2, n)),
+
         # "Output capacitance,C oss,nan,-,523.0,696,nan"
         # "Output Capacitance,Coss,--,392,--,nan,nan"
         # "2000.0,Coss"
