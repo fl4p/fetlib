@@ -85,7 +85,7 @@ def get_part_specs(mpn, mfr):
             return {s['attribute']['shortname']: s['displayValue'] for s in p['specs']}
 
 def get_part_specs_cached(mpn, mfr):
-    dn = os.path.join('specs', mfr)
+    dn = os.path.join('data', 'nexar-specs', mfr)
     fn = os.path.join(dn, mpn + '.json')
     os.path.isdir(dn) or os.makedirs(dn)
     if os.path.exists(fn):
