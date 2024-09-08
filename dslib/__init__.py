@@ -13,7 +13,8 @@ mfrs = dict(
     infineon=('infineon', 'international rectifier'),
     ti='texas instruments', ao='alpha & omega', nxp=('nxp', 'nexperia'),
     st='stmicroelectronics', toshiba='toshiba', vishay='vishay', diodes='diodes inc',
-    diotec='diotec', rohm='rohm', fairchild='fairchild', good_ark='good-ark',
+    diotec='diotec', rohm='rohm',
+    good_ark='good-ark',
     mcc=('micro commercial', 'mcc')
     , renesas='renesas',
     ts='taiwan semiconductor',
@@ -26,7 +27,7 @@ mfrs = dict(
     epc_space='epc space',
     goford='goford',
     littelfuse='littelfuse',
-    onsemi='onsemi',
+    onsemi=('onsemi', 'fairchild'),
     analog_power='analog power',
     yageo_xsemi='yageo_xsemi',
 
