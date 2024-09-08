@@ -43,9 +43,9 @@ class MosfetSpecs:
 
         if not Qg_th and Qgs2:
             Qg_th = Qgs - Qgs2
-            assert Qg_th > 0
+            assert Qg_th > 0, Qg_th
 
-        self.Qg = Qg
+        self.Qg = Qg  or math.nan
         self.Qgd = Qgd or math.nan
         self.Qgs = Qgs or math.nan
         self._Qgs2 = Qgs2 or math.nan
@@ -62,11 +62,14 @@ class MosfetSpecs:
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
         self.Vsd = Vsd  # body diode forward
 
-        assert 1e-9 < Qg < 1000e-9, Qg
+        assert math.isnan(Qg) or .5e-9 < Qg < 1000e-9, (Qg, Rds_on, Qg * Rds_on)
         assert math.isnan(self.Qrr) or 0 <= self.Qrr < 4000e-9, self.Qrr  # GaN have 0 qrr
         assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
-        assert math.isnan(self.tFall) or 1e-9 < self.tFall < 1000e-9, self.tFall
-        assert Vsd is None or 0.2 < Vsd < 2, Vsd
+        assert math.isnan(self.tFall) or .5e-9 < self.tFall < 1000e-9, self.tFall
+        if Vsd: Vsd = abs(Vsd)
+        assert Vsd is None or 0.2 < Vsd < 3, Vsd # FBG10N30BC: 2.5V
+
+        assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 1e-08, (Qg, Rds_on, Qg * Rds_on)
 
     @staticmethod
     def from_mpn(mpn, mfr) -> 'MosfetSpecs':
