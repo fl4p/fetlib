@@ -8,6 +8,10 @@ def parse_line_tests():
     n = math.nan
     cases = [
         # (CSV_ROW, DIM, (MIN,TYP,MAX))
+        # datasheets/toshiba/XPN1300ANC.pdf Qgs no value match in  "Gate-source charge 1,Qgs1,nan,7,nan,nan,nC"
+        # "Output capacitance C oss,nan,nan,-,1152.0,1498,nan"
+        # "nan,nan,Coss,nan,102"
+        ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qgs1', (n,7,n)), # XPN1300ANC
         ('Gate plateau voltage,Vplateau,nan,nan,4.7,nan,"VDD 40 V, ID= 20 A , VGS = 0 toV",10 V,,,', 'Vpl', (n, 4.7, n)),
         # "Output capacitance,C oss,f= 1 MHz,nan,2890.0,3840,nan"
         # "Rise Time tr,VDS=50V, RG=3Ω, -,46,nan,-,nan"
@@ -82,6 +86,18 @@ def parse_line_tests():
 
 def parse_pdf_tests():
     # TODOå
+
+    d = parse_datasheet('datasheets/infineon/IQDH88N06LM5CGSCATMA1.pdf')
+    assert d
+
+    d = tabula_read('datasheets/infineon/IRFB4110PBF.pdf')
+    assert d.Qgd.typ == 43
+
+    d = tabula_read('datasheets/infineon/ISC030N10NM6ATMA1.pdf')
+    # assert d
+
+    d = tabula_read('datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
+    assert d.Qgd.typ == 20 # datasheet mistake! 9.7
 
     d = tabula_read('datasheets/infineon/BSC025N08LS5ATMA1.pdf')
     assert d.Vpl.typ == 2.8
