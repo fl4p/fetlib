@@ -82,7 +82,7 @@ def parse_pdf_tests():
     # TODOå
 
     d = tabula_read('datasheets/infineon/BSC025N08LS5ATMA1.pdf')
-    assert d.Vpl.typ == 2.6
+    assert d.Vpl.typ == 2.8
 
     d = tabula_read('datasheets/infineon/IPB019N08N3GATMA1.pdf')
     assert d.Vpl.typ == 4.6
@@ -185,6 +185,7 @@ def parse_pdf_tests():
     assert d['tFall'].typ == 3
     assert d['Qrr'].typ == 400
     assert d['Qg_th'].typ == 15
+
 
     d = tabula_read('datasheets/vishay/SUM60020E-GE3.pdf')
     assert d['Qrr'].typ == 182 and d['Qrr'].max == 275

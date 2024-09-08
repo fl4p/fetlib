@@ -80,7 +80,7 @@ infineon = {
         Field('V_pl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
     ],
 
-    'IPB019N08N3GATMA1': [
+    'IPB019N08N3GATMA1': [ # scrambled text
         Field('Qgd', min=math.nan, typ=30, max=math.nan, unit='nC'),
         Field('Qgs', min=math.nan, typ=50, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=50, max=math.nan, unit='nC'),

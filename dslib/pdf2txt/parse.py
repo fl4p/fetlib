@@ -25,7 +25,7 @@ def extract_text(pdf_path):
     return pdf_text
 
 
-@disk_cache(ttl='30d', file_dependencies=[0], salt='v02')
+@disk_cache(ttl='90d', file_dependencies=[0], salt='v02')
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
     if not pdf_path:
         pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
@@ -368,7 +368,7 @@ def tabula_read(ds_path):
     try:
         dfs = tabula_pdf_dataframes(ds_path)
         if not os.path.isfile(ds_path + '.csv'):
-            pd.concat(dfs, ignore_index=True, axis=0).applymap(
+            pd.concat(dfs, ignore_index=True, axis=0).map(
                 lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.csv', header=False)
     except Exception as e:
         print(ds_path, e)

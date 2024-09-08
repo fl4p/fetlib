@@ -17,7 +17,7 @@ from dslib.store import Part
 def main():
     dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
     print(dcdc.Io)
-    read_digikey_results(csv_path='digikey-results/*.csv', dcdc=dcdc)
+    read_digikey_results(csv_path='parts-lists/digikey/*.csv', dcdc=dcdc)
 
 
 def read_digikey_results(csv_path, dcdc: DcDcSpecs):
@@ -150,11 +150,11 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         result_rows.append(row)
         result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs))
 
-    print('no P_sw')
-    for row in result_rows:
-        if math.isnan(row.get('P_sw') or math.nan):
-            #no_psw.append((mfr, mpn))
-            print(os.path.join('datasheets', row['mfr'], row['mpn'] + '.pdf'))
+    # print('no P_sw')
+    # for row in result_rows:
+    #    if math.isnan(row.get('P_sw') or math.nan):
+    ##        #no_psw.append((mfr, mpn))
+    #        #print(os.path.join('datasheets', row['mfr'], row['mpn'] + '.pdf'))
 
     df = pd.DataFrame(result_rows)
 
@@ -164,7 +164,8 @@ def read_digikey_results(csv_path, dcdc: DcDcSpecs):
         if col.startswith('P_') or col.startswith('FoM'):
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
 
-    out_fn = f'fets-{dcdc.fn_str("buck")}.csv'
+    os.path.exists('out') or os.makedirs('out', exist_ok=True)
+    out_fn = f'out/fets-{dcdc.fn_str("buck")}.csv'
     df.to_csv(out_fn, index=False, float_format=lambda f: round_to_n(f, 4))
     print('written', out_fn)
 
