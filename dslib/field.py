@@ -27,10 +27,15 @@ class Field():
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
 
-        if symbol == 'Qrr' and math.isnan(max) and not math.isnan(min) and not math.isnan(typ):
+        if symbol[0] == 'Q' and math.isnan(max) and not math.isnan(min) and not math.isnan(typ):
             max = typ
             typ = min
             min = math.nan
+
+        if symbol[0] == 'Q' and math.isnan(max) and not math.isnan(min) and math.isnan(typ):
+            typ = min
+            min = math.nan
+            max = math.nan
 
         self.min = min
         self.typ = typ
