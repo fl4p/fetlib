@@ -345,8 +345,8 @@ def get_field_detect_regex(mfr):
     fields_detect = dict(
         tRise=re.compile(r'(rise\s+time|^t\s?r$)', re.IGNORECASE),
         tFall=re.compile(r'(fall\s+time|^t\s?f$)', re.IGNORECASE),
-        Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
-                       re.IGNORECASE),
+        Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
+                       re.IGNORECASE), # QRM
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
         Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Qg([\s_]?\(?tota?l?\)?)?$)', re.IGNORECASE),
         Qgs=re.compile(
