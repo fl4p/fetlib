@@ -1,9 +1,7 @@
-
 pymupdf
 pyppeteer
-
 pyquery
-
 tabula-py
-#tabula-py[jpype]
-# macos: install https://www.azul.com/downloads/?package=jdk#zulu
+streamlit
+pandas
+numpy
