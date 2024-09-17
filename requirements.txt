@@ -5,3 +5,4 @@ tabula-py
 streamlit
 pandas
 numpy
+dotenv
