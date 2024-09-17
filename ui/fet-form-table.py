@@ -9,10 +9,92 @@ import pickle
 from dslib.spec_models import DcDcSpecs, MosfetSpecs
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.store import load_parts as _load_parts
+from dslib.digikey.partsSearch import search_digikey_parts
+from dslib.parts_discovery import digikey
 
 @st.cache_resource
 def load_parts():
     return _load_parts()
+
+
+@st.cache_data
+def fetch_digikey_parts(search_params):
+    """
+    Fetch MOSFET parts from DigiKey API based on search parameters.
+    
+    :param search_params: Dictionary containing search parameters
+    :return: DataFrame of DigiKey part results
+    """
+    return search_digikey_parts(search_params)
+
+@st.cache_data
+def process_csv_data(csv_file):
+    """
+    Process uploaded CSV file containing MOSFET data.
+    
+    :param csv_file: Uploaded CSV file
+    :return: Processed DataFrame
+    """
+    df = pd.read_csv(csv_file)
+    # Add any necessary processing steps here
+    return df
+
+def combine_mosfet_data(api_data, csv_data):
+    """
+    Combine MOSFET data from DigiKey API and uploaded CSV.
+    
+    :param api_data: List of DigiKey part results
+    :param csv_data: DataFrame of CSV data
+    :return: Combined DataFrame of MOSFET data
+    """
+    # Convert api_data to DataFrame if it's not already
+    if not isinstance(api_data, pd.DataFrame):
+        api_df = pd.DataFrame(api_data)
+    else:
+        api_df = api_data
+    
+    # Combine the DataFrames
+    combined_df = pd.concat([api_df, csv_data], ignore_index=True)
+    
+    # Remove duplicates if any
+    combined_df.drop_duplicates(subset=['Mfr Part #'], keep='first', inplace=True)
+    
+    return combined_df
+
+@st.cache_data
+def analyze_mosfets(_dcdc_specs, mosfet_data):
+    """
+    Perform MOSFET analysis based on DC-DC converter specifications and MOSFET data.
+    
+    :param _dcdc_specs: DcDcSpecs object containing converter specifications
+    :param mosfet_data: DataFrame containing MOSFET data
+    :return: DataFrame with analysis results
+    """
+    results = []
+    for _, row in mosfet_data.iterrows():
+        part = digikey([row])  # Assuming digikey function can handle a single row
+        if part:
+            part = part[0]  # digikey function returns a list, we take the first item
+            hs_loss = dcdc_buck_hs(_dcdc_specs, part.specs, rg_total=6)
+            ls_loss = dcdc_buck_ls(_dcdc_specs, part.specs)
+            results.append({
+                "Part Number": part.mpn,
+                "Manufacturer": part.mfr,
+                "VDS (V)": part.specs.Vds_max,
+                "ID (A)": part.specs.ID_25,
+                "RDS(on) (mΩ)": part.specs.Rds_on * 1000,
+                "Qg (nC)": part.specs.Qg * 1e9,
+                "Qrr (nC)": part.specs.Qrr * 1e9,
+                "tRise (ns)": part.specs.tRise * 1e9,
+                "tFall (ns)": part.specs.tFall * 1e9,
+                "FOM": part.specs.Rds_on * part.specs.Qg * 1e9,
+                "FOMrr": part.specs.Rds_on * part.specs.Qrr * 1e9,
+                "P_on (W)": hs_loss.P_on,
+                "P_sw (W)": hs_loss.P_sw,
+                "P_rr (W)": ls_loss.P_rr,
+                "Total Loss (W)": hs_loss.buck_hs() + ls_loss.buck_ls()
+            })
+    return pd.DataFrame(results)
 
 # Set page config to dark mode
 st.set_page_config(page_title="MOSFET Component Selector", layout="wide", initial_sidebar_state="expanded")
@@ -87,11 +169,33 @@ def analyze_mosfets(_dcdc_specs):
         })
     return pd.DataFrame(results)
 
+# Add file uploader for CSV
+uploaded_file = st.sidebar.file_uploader("Upload CSV file with MOSFET data", type="csv")
+
 if st.sidebar.button('Find Components'):
-    with st.spinner('Analyzing MOSFETs...'):
+    with st.spinner('Fetching and Analyzing MOSFETs...'):
         try:
+            # Fetch DigiKey parts
+            search_params = {
+                "keywords": "mosfet",
+                "voltage_min": vi,
+                "voltage_max": vi * 1.5,  # Adjust as needed
+                "current_min": pin / vo,
+                "current_max": (pin / vo) * 1.5  # Adjust as needed
+            }
+            digikey_parts = fetch_digikey_parts(search_params)
+            
+            # Process uploaded CSV if available
+            csv_data = pd.DataFrame()
+            if uploaded_file is not None:
+                csv_data = process_csv_data(uploaded_file)
+            
+            # Combine data
+            combined_data = combine_mosfet_data(digikey_parts, csv_data)
+            
+            # Perform analysis
             _dcdc_specs = DcDcSpecs(vi=vi, vo=vo, pin=pin, f=f, Vgs=vgs, ripple_factor=ripple_factor, tDead=tDead)
-            df = analyze_mosfets(_dcdc_specs)
+            df = analyze_mosfets(_dcdc_specs, combined_data)
             
             # Sort the dataframe by Total Loss
             df = df.sort_values('Total Loss (W)')
@@ -138,13 +242,30 @@ crucial aspects and providing a comprehensive comparison of MOSFET options.
 # Add a brief tutorial or guide for first-time users
 with st.expander("How to use this tool"):
     st.write("""
-    1. Enter the DC-DC converter parameters in the sidebar.
-    2. Click 'Find Components' to analyze suitable MOSFETs.
-    3. The results table shows various MOSFET options with their specifications and estimated power losses.
-    4. You can sort the table by clicking on column headers.
-    5. Color coding helps identify better performing MOSFETs (green is better, red is worse).
-    6. Use the download button to save results as a CSV file for further analysis.
-    7. You can save your inputs for future sessions using the 'Save Inputs' button.
+    Welcome to the MOSFET Component Selector for DC-DC Converters! Here's a quick guide to get you started:
+
+    1. Enter Parameters: Use the sidebar on the left to input your DC-DC converter parameters.
+       - Input Voltage (V): The input voltage of your DC-DC converter.
+       - Output Voltage (V): The desired output voltage.
+       - Input Power (W): The input power of your converter.
+       - Switching Frequency (Hz): The switching frequency of your converter.
+       - Gate Drive Voltage (V): The gate drive voltage for both high-side and low-side MOSFETs.
+       - Ripple Factor: The peak-to-peak coil current divided by mean coil current.
+       - Dead Time (s): The gate driver dead-time.
+
+    2. Find Components: Click the 'Find Components' button to analyze suitable MOSFETs based on your inputs.
+
+    3. View Results: The results table will show various MOSFET options with their specifications and estimated power losses.
+       - You can sort the table by clicking on column headers.
+       - Color coding helps identify better performing MOSFETs (green is better, red is worse).
+
+    4. Download Results: Use the 'Download results as CSV' button to save the analysis for further review.
+
+    5. Save Inputs: You can save your inputs for future sessions using the 'Save Inputs' button in the sidebar.
+
+    6. Clear Inputs: To start fresh, use the 'Clear Saved Inputs' button in the sidebar.
+
+    Remember, finding the right switches for your DC-DC converter involves considering various factors. This tool aims to assist you in making an informed selection by providing a comprehensive comparison of MOSFET options.
     """)
 
 # Add tooltips for headers

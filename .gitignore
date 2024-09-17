@@ -26,3 +26,7 @@ out/
 *.pdf
 
 *_downloads/
+.aider*
+
+.env
+__pycache__
