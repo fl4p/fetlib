@@ -17,6 +17,7 @@ WORKDIR /app
 
 # Copy from builder stage
 COPY --from=builder /usr/local/lib/python3.9/site-packages /usr/local/lib/python3.9/site-packages
+COPY --from=builder /usr/local/bin/streamlit /usr/local/bin/streamlit
 COPY --from=builder /app .
 
 # Set the command to run the Streamlit app
