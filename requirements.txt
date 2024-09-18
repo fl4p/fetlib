@@ -6,4 +6,4 @@ streamlit
 pandas
 numpy
 python-dotenv
-digikey
+digikey-api
