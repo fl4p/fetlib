@@ -20,17 +20,31 @@ from dslib.store import Part
 
 
 def main():
+    # set DC-DC operating point:
     dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
     print('DC-DC:', dcdc)
 
+    # discover available MOSFETS:
     parts = asyncio.run(discover_mosfets())
-    parts = [p for p in parts if p.specs.Vds_max >= (dcdc.Vi * 1.25) and p.specs.Vds_max <= (dcdc.Vi * 4) and p.specs.ID_25 > dcdc.Io_max * 1.2]
-    generate_parts_power_loss_csv(parts, dcdc=dcdc)
+
+    # pre-select mosfets by voltage and current
+    parts = [p for p in parts if (
+            p.specs.Vds_max >= (dcdc.Vi * 1.25) and p.specs.Vds_max <= (dcdc.Vi * 4)
+            and p.specs.ID_25 > dcdc.Io_max * 1.2)]
+
+    # do all the magic: download datasheets, read them and compute power loss:
+    parts = generate_parts_power_loss_csv(parts, dcdc=dcdc)
+
+    # show parts missing Qsw, no switching loss estimation is possible:
+    no_qsw = [p for p in parts if math.isnan(p.specs.Qsw)]
+    print('Parts missing Qsw:', len(no_qsw))
+    for p in no_qsw:
+        print(p.discovered.get_ds_path())
 
 
 def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     result_rows = []  # csv
-    result_parts = []  # db storage
+    result_parts: List[Part] = []  # db storage
     all_mpn = set()
 
     if not os.path.isdir('datasheets'):
@@ -74,7 +88,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         # try nexar api:
         try:
             from dslib.nexar.api import get_part_specs_cached
-            specs = {} # get_part_specs_cached(mpn, mfr) or {}
+            specs = {}  # get_part_specs_cached(mpn, mfr) or {}
         except Exception as e:
             print(mfr, mpn, 'get_part_specs_cached', e)
             specs = {}
@@ -90,7 +104,8 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
             if sym not in ds:
                 ds[sym] = Field(sym, min=math.nan, typ=typ, max=math.nan)
 
-        def first(a): return next((x for x in a if x and not math.isnan(x)), math.nan)
+        def first(a):
+            return next((x for x in a if x and not math.isnan(x)), math.nan)
 
         # create specification for DC-DC loss model
         try:
@@ -169,7 +184,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         )
 
         result_rows.append(row)
-        result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs))
+        result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs, discovered=part))
 
     # print('no P_sw')
     # for row in result_rows:
@@ -193,6 +208,8 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     dslib.store.add_parts(result_parts, overwrite=True)
 
     print('stored', len(result_parts), 'parts')
+
+    return result_parts
 
 
 if __name__ == '__main__':

@@ -27,12 +27,12 @@ def unique_parts(parts: List[DiscoveredPart]):
 async def discover_mosfets():
     parts: List[DiscoveredPart] = []
 
-    # parts += await parts_discovery.onsemi_mosfets()
-    #parts += await parts_discovery.toshiba_mosfets()
-    #parts += await parts_discovery.ti_mosfets()
+    #parts += await parts_discovery.onsemi_mosfets()
+    parts += await parts_discovery.toshiba_mosfets()
+    parts += await parts_discovery.ti_mosfets()
     parts += await parts_discovery.infineon_mosfets()
 
-    #parts += parts_discovery.digikey('parts-lists/digikey/*.csv')
+    parts += parts_discovery.digikey('parts-lists/digikey/*.csv')
 
     parts = unique_parts(parts)
 

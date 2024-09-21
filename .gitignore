@@ -28,3 +28,7 @@ out/
 *_downloads/
 /*-datasheets
 /data/nexar-specs
+/benchmark
+*.pkl
+
+*.zip

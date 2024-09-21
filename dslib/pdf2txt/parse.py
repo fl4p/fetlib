@@ -39,7 +39,11 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
     pdf_text = pdf_text.replace('\0x03', '\x03')
     pdf_text = pdf_text.replace('', '\x03')
     pdf_text = normalize_dash(pdf_text)
-
+    # S19-0181-Rev. A, 25-Feb-2019, "S16-0163-Rev. A, 01-Feb-16"
+    # "November 2021", "2021-01"
+    # Rev.2.1,2022-03-28
+    # "SLPS553 -OCTOBER 2015", "July 21,2022", " S23-1102-Rev. B, 11-Dec-2023
+    #Submit Datasheet Feedback                   August 18, 2014
     fields: List[Field] = []
 
     pat = expr.QRR.get(mfr)

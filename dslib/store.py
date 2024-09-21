@@ -1,14 +1,18 @@
 import os
 import pickle
 from copy import copy
-from typing import Iterable
+from typing import Iterable, Tuple, Dict, Optional
+
+from dslib.parts_discovery import DiscoveredPart
+from dslib.spec_models import MosfetSpecs
 
 
 class Part:
-    def __init__(self, mpn, mfr, specs):
+    def __init__(self, mpn, mfr, specs, discovered: 'DiscoveredPart'):
         self.mpn = mpn
         self.mfr = mfr
-        self.specs = specs
+        self.specs: 'MosfetSpecs' = specs
+        self.discovered = discovered
 
     @property
     def is_fet(self):
@@ -21,7 +25,10 @@ def lib_file_path():
     return os.path.realpath(os.path.dirname(__file__) + '/../parts-lib.pkl')
 
 
-_lib_mem = None
+Mfr = str
+Mpn = str
+
+_lib_mem: Optional[Dict[Tuple[Mfr, Mpn], Part]] = None
 
 
 def load_parts(reload=False):

@@ -246,3 +246,4 @@ mosfetlib
 fetfinder
 findfet
 mosdb
+magic mosfet

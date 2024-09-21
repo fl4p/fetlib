@@ -63,7 +63,8 @@ def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         if not du:
             continue
         try:
-            asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
+            #asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
+            asyncio.run(download_with_chromium(du, datasheet_path))
         except Exception as e:
             print('ERROR', du, e)
 
