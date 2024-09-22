@@ -16,6 +16,8 @@ test.pdf
 
 /*.csv
 
+
+# DONT REMOVE THIS: (dont add binary files to source control)
 parts-lib.pkl
 
 *.xlsx
