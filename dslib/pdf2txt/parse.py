@@ -1,14 +1,18 @@
 import math
 import os.path
 import re
-from typing import List
+from typing import Iterable
 
 import pandas as pd
 
-from dslib import dotdict, mfr_tag
-from dslib.cache import disk_cache
-from dslib.field import Field
+from dslib import mfr_tag
+from dslib.cache import disk_cache, mem_cache
+from dslib.field import Field, DatasheetFields
 from dslib.pdf2txt import expr, normalize_dash
+
+
+def _empty(s):
+    return not s or str(s).lower() == 'nan'
 
 
 @disk_cache(ttl='30d', file_dependencies=True)
@@ -25,8 +29,8 @@ def extract_text(pdf_path):
     return pdf_text
 
 
-@disk_cache(ttl='90d', file_dependencies=[0], salt='v02')
-def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
+@disk_cache(ttl='90d', file_dependencies=[0], salt='v08')
+def parse_datasheet(pdf_path=None, mfr=None, mpn=None) -> DatasheetFields:
     if not pdf_path:
         pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
 
@@ -43,8 +47,9 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
     # "November 2021", "2021-01"
     # Rev.2.1,2022-03-28
     # "SLPS553 -OCTOBER 2015", "July 21,2022", " S23-1102-Rev. B, 11-Dec-2023
-    #Submit Datasheet Feedback                   August 18, 2014
-    fields: List[Field] = []
+    # Submit Datasheet Feedback                   August 18, 2014
+
+    ds = DatasheetFields(mfr, mpn)
 
     pat = expr.QRR.get(mfr)
 
@@ -70,32 +75,30 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None):
                     qrr_d[k[:-1]] = v
                     del qrr_d[k]
 
-            fields.append(Field('Qrr',
-                                min=qrr_d.get('min'), typ=qrr_d.get('typ'), max=qrr_d.get('max'),
-                                mul=1,
-                                cond=dict(
-                                    i_f=qrr_d.get('if'),
-                                    didt=qrr_d.get('didt'),
-                                    vds=qrr_d.get('vds')),
-                                unit=qrr_d.get('unit')))  # vgs
+            ds.add(Field('Qrr',
+                         min=qrr_d.get('min'), typ=qrr_d.get('typ'), max=qrr_d.get('max'),
+                         mul=1,
+                         cond=dict(
+                             i_f=qrr_d.get('if'),
+                             didt=qrr_d.get('didt'),
+                             vds=qrr_d.get('vds')),
+                         unit=qrr_d.get('unit')))  # vgs
     else:
         if mfr:
             print('no Qrr pattern for ', mfr)
 
     try:
-        tab_fields = tabula_read(pdf_path)
-        fields.extend(tab_fields.values())
+        tabular_ds = tabula_read(pdf_path)
+        if isinstance(tabular_ds, DatasheetFields):
+            ds.add_multiple(tabular_ds.all_fields())
+        else:
+            assert isinstance(tabular_ds, dict), 'not a dict'
+            ds.add_multiple(tabular_ds.values())
     except Exception as e:
         print(pdf_path, 'tabula error', e)
         raise
 
-    # build dict taking first symbol
-    d = dotdict()
-    for f in fields:
-        if f.symbol not in d:
-            d[f.symbol] = f
-
-    return d
+    return ds
 
 
 @disk_cache(ttl='99d', file_dependencies=True)
@@ -164,7 +167,7 @@ valid_range = dict(
 )
 
 
-def parse_row_value(csv_line, dim, field_sym, cond=None):
+def parse_field_csv(csv_line, dim, field_sym, cond=None) -> Field:
     range = valid_range.get(field_sym)
     err = []
     for r in dim_regs[dim]:
@@ -336,6 +339,33 @@ def get_dimensional_regular_expressions():
     return dim_regs
 
 
+def detect_fields(mfr, strings: Iterable[str]):
+    fields_detect = get_field_detect_regex(mfr)
+    for field_sym, field_re in fields_detect.items():
+        if isinstance(field_re, tuple):
+            stop_words = field_re[1]
+            field_re = field_re[0]
+        else:
+            stop_words = []
+
+        def detect_field(s):
+            s = normalize_dash(str(s)).strip(' -')
+            if len(s) > 80:
+                return False
+            if not field_re.search(s):
+                return False
+            if stop_words and max(map(lambda sw: sw in s, stop_words)):
+                return False
+            return True
+
+        m = next(filter(detect_field, strings), None)
+        if m is not None:
+            return m, field_sym
+
+    return None, None
+
+
+@mem_cache(ttl='1min')
 def get_field_detect_regex(mfr):
     mfr = mfr_tag(mfr, raise_unknown=False)
 
@@ -347,10 +377,11 @@ def get_field_detect_regex(mfr):
 
     # regex matched on cell contents
     fields_detect = dict(
-        tRise=re.compile(r'(rise\s+time|^t\s?r$)', re.IGNORECASE),
-        tFall=re.compile(r'(fall\s+time|^t\s?f$)', re.IGNORECASE),
-        Qrr=re.compile(r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
-                       re.IGNORECASE), # QRM
+        tRise=(re.compile(r'(rise\s+time|^t\s?r$)', re.IGNORECASE), ('reverse', 'recover')),
+        tFall=(re.compile(r'(fall\s+time|^t\s?f$)', re.IGNORECASE), ('reverse', 'recover')),
+        Qrr=re.compile(
+            r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
+            re.IGNORECASE),  # QRM
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
         Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Qg([\s_]?\(?tota?l?\)?)?$)', re.IGNORECASE),
         Qgs=re.compile(
@@ -372,7 +403,7 @@ def get_field_detect_regex(mfr):
     return fields_detect
 
 
-def tabula_read(ds_path):
+def tabula_read(ds_path) -> DatasheetFields:
     try:
         dfs = tabula_pdf_dataframes(ds_path)
         if not os.path.isfile(ds_path + '.csv'):
@@ -396,7 +427,7 @@ def tabula_read(ds_path):
 
     all_units = set(sum(map(list, dim_units.values()), []))
 
-    values = []
+    fields = DatasheetFields()
 
     from collections import defaultdict
     col_idx = defaultdict(lambda: 0)
@@ -436,84 +467,73 @@ def tabula_read(ds_path):
                         assert is_h.sum() == 1
                         col_idx[col] = is_h.idxmax()
 
-            for field_sym, field_re in fields_detect.items():
-                detect_field = lambda s: (len(str(s)) < 80) and field_re.search(normalize_dash(str(s)).strip(' -'))
-                m = next(filter(detect_field, row.iloc[:4]), None)
+            m, field_sym = detect_fields(mfr, row.iloc[:4])
 
-                def _empty(s):
-                    return not s or str(s).lower() == 'nan'
+            if m:
 
-                if m:
+                dim = field_sym[0]
 
-                    dim = field_sym[0]
+                def _fill_unit(row, columns, fill_row, units):
+                    if len(row) < 2: columns.remove(-2)
+                    if len(row) < 3: columns.remove(-3)
+                    assert len(row) == len(fill_row)
 
-                    def _fill_unit(row, columns, fill_row, units):
-                        if len(row) < 2: columns.remove(-2)
-                        if len(row) < 3: columns.remove(-3)
-                        assert len(row) == len(fill_row)
+                    for col in columns:
+                        fv = fill_row.iloc[col]
+                        if (_empty(row.iloc[col]) and not _empty(fv) and not fv in row.values
+                                and isinstance(fv, str) and fv.strip() in units):
+                            row.iloc[col] = fv
+                            return fv
 
-                        for col in columns:
-                            fv = fill_row.iloc[col]
-                            if (_empty(row.iloc[col]) and not _empty(fv) and not fv in row.values
-                                    and isinstance(fv, str) and fv.strip() in units):
-                                row.iloc[col] = fv
-                                return fv
+                row = row.copy()
+                # ffill or bfill unit in case of vertically merged cells
+                if col_idx['unit'] and _empty(
+                        row[col_idx['unit']]) and unit not in row.values and unit in dim_units[dim]:
+                    row[col_idx['unit']] = unit
+                else:
+                    (_fill_unit(row, [-1, -2, -3], df_ffill.iloc[i], dim_units[dim]) or
+                     _fill_unit(row, [-1, -2, -3], df_bfill.iloc[i], dim_units[dim]))
 
-                    row = row.copy()
-                    # ffill or bfill unit in case of vertically merged cells
-                    if col_idx['unit'] and _empty(
-                            row[col_idx['unit']]) and unit not in row.values and unit in dim_units[dim]:
-                        row[col_idx['unit']] = unit
-                    else:
-                        (_fill_unit(row, [-1, -2, -3], df_ffill.iloc[i], dim_units[dim]) or
-                         _fill_unit(row, [-1, -2, -3], df_bfill.iloc[i], dim_units[dim]))
+                rl = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), row)))
+                rl_bf = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_bfill.iloc[i])))
+                rl_ff = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_ffill.iloc[i])))
 
-                    rl = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), row)))
-                    rl_bf = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_bfill.iloc[i])))
-                    rl_ff = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_ffill.iloc[i])))
+                field = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()))
 
-                    field = parse_row_value(rl, dim, field_sym=field_sym, cond=dict(row.dropna()))
+                if not field:
+                    print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
 
-                    if not field:
-                        print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
+                if field:
+                    fields.add(field)
 
-                    if field:
-                        values.append(field)
-
-                    elif col_typ:
-                        for row_ in [row, df_bfill.iloc[i], df_ffill.iloc[i]]:
-                            v_typ = row_[col_typ]
-                            try:
-                                values.append(Field(
-                                    symbol=field_sym,
-                                    min=row_[col_idx['min']] if col_idx['min'] else math.nan,
-                                    typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
-                                    max=row_[col_idx['max']] if col_idx['max'] else math.nan,
-                                    mul=1, cond=dict(row_.dropna()), unit=unit
-                                ))
-                                break
-                            except Exception as e:
-                                print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
-                                print(row.values)
-                                print(rl)
-                                print(rl_ff)
-                                print(rl_bf)
-                                # raise
-                    else:
-                        print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
-
-    # build dict taking first symbol
-    d = dotdict()
-    for f in values:
-        if f.symbol not in d:
-            d[f.symbol] = f
+                elif col_typ:
+                    for row_ in [row, df_bfill.iloc[i], df_ffill.iloc[i]]:
+                        v_typ = row_[col_typ]
+                        try:
+                            fields.add(Field(
+                                symbol=field_sym,
+                                min=row_[col_idx['min']] if col_idx['min'] else math.nan,
+                                typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
+                                max=row_[col_idx['max']] if col_idx['max'] else math.nan,
+                                mul=1, cond=dict(row_.dropna()), unit=unit
+                            ))
+                            break
+                        except Exception as e:
+                            print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
+                            print(row.values)
+                            print(rl)
+                            print(rl_ff)
+                            print(rl_bf)
+                            # raise
+                else:
+                    print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
 
     for s in fields_detect.keys():
-        if s not in d and not is_gan(ds_path):
+        if s not in fields and not is_gan(ds_path):
             # print(ds_path, 'no value detected for field', s)
             pass
 
-    return d
+    return fields
 
 
 def find_value(pdf_text, label, unit):

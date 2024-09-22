@@ -9,7 +9,7 @@ import pandas as pd
 
 from dslib import mfr_tag
 from dslib.fetch import download_with_chromium
-from dslib.field import parse_field_value
+from dslib.field import parse_field_value, Field
 
 
 def ensure_nC(s, min, max, abs):
@@ -78,7 +78,16 @@ class MosfetBasicSpecs():
         self.Vgs_th_max = mean_chk_std((self.Vgs_th_max, specs.Vgs_th_max), 0.3, fn=np.nanmax)
         self.Qg_typ_nC = mean_chk_std((self.Qg_typ_nC, specs.Qg_typ_nC), 0.01)
         self.Qg_max_nC = mean_chk_std((self.Qg_max_nC, specs.Qg_max_nC), 0.2, fn=np.nanmax)
-        
+
+    def fields(self):
+        n = math.nan
+        return [
+            Field('Vds', n, n, self.Vds_max ),
+            Field('Rds_on_10v', n, n, self.Rds_on_10v_max ),
+            Field('ID_25', n, self.ID_25, n ),
+            Field('Vgs_th', n, n,self.Vgs_th_max),
+            Field('Qg', n, self.Qg_typ_nC, self.Qg_max_nC, unit='nC')
+        ]
 
 
 def is_nan(v):

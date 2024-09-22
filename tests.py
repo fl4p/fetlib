@@ -1,6 +1,6 @@
 import math
 
-from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_row_value, dim_regs
+from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs
 
 
 def parse_line_tests():
@@ -74,7 +74,7 @@ def parse_line_tests():
 
     for rl, sym, (min, typ, max) in cases:
         dim = sym[:1]
-        f = parse_row_value(rl, dim, field_sym=sym)
+        f = parse_field_csv(rl, dim, field_sym=sym)
         if not f:
             print('\n'.join(map(str, dim_regs[dim])))
         assert f, (rl, dim)
@@ -206,6 +206,8 @@ def parse_pdf_tests():
 
 
     d = tabula_read('datasheets/vishay/SUM60020E-GE3.pdf')
+    # ref= Field("tRise", min=nan, typ=36.0, max=nan, unit="ns", cond={0: 'Reverse recovery rise time tb', 1: '-', 2: '36', 3: '-', 4: 'ns'})
+    assert False
     assert d['Qrr'].typ == 182 and d['Qrr'].max == 275
     assert d['tRise'].typ == 13
     assert d['tFall'].typ == 15

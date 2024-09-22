@@ -2,7 +2,7 @@ import math
 import asyncio
 import math
 import os.path
-from typing import List
+from typing import List, Dict
 
 import numpy as np
 import pandas as pd
@@ -11,12 +11,12 @@ import dslib.manual_fields
 from discover_parts import discover_mosfets
 from dslib import round_to_n
 from dslib.fetch import fetch_datasheet
-from dslib.field import Field
+from dslib.field import Field, DatasheetFields
 from dslib.parts_discovery import DiscoveredPart
 from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import MosfetSpecs, DcDcSpecs
-from dslib.store import Part
+from dslib.store import Part, Mfr, Mpn
 
 
 def main():
@@ -63,14 +63,11 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         if not os.path.exists(ds_path):
             fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn)
 
-        ds = {}
+        ds = DatasheetFields()
 
         # place manual fields:
-        man_fields = dslib.manual_fields.__dict__
-        if mfr in man_fields:
-            for mf in man_fields[mfr].get(mpn, []):
-                if mf.symbol not in ds:
-                    ds[mf.symbol] = mf
+        man_fields = dslib.manual_fields.get_fields()
+        ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []))
 
         # parse datasheet (tabula and pdf2txt):
         if os.path.isfile(ds_path):
@@ -81,50 +78,35 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
             all_mpn.add(k)
 
             dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
-            for k, f in dsp.items():
-                if k not in ds:
-                    ds[k] = f
+            ds.add_multiple(dsp.all_fields())
 
         # try nexar api:
-        try:
-            from dslib.nexar.api import get_part_specs_cached
-            specs = {}  # get_part_specs_cached(mpn, mfr) or {}
-        except Exception as e:
-            print(mfr, mpn, 'get_part_specs_cached', e)
-            specs = {}
+        if 1:
+            try:
+                from dslib.nexar.api import get_part_specs_cached
+                specs = get_part_specs_cached(mpn, mfr) or {}
+            except Exception as e:
+                print(mfr, mpn, 'get_part_specs_cached', e)
+                specs = {}
 
-        for sym, sn in dict(tRise='risetime', tFall='falltime').items():
-            sv = specs.get(sn) and pd.to_timedelta(specs[sn]).nanoseconds
-            if sv and sym not in ds:
-                ds[sym] = Field(sym, min=math.nan, typ=sv, max=math.nan)
+            for sym, sn in dict(tRise='risetime', tFall='falltime').items():
+                sv = specs.get(sn) and pd.to_timedelta(specs[sn]).nanoseconds
+                if sv and sym not in ds:
+                    ds.add(Field(sym, min=math.nan, typ=sv, max=math.nan))
+
+
+        ds.add_multiple(part.specs.fields())
 
         # fallback specs for GaN etc (EPC tRise and tFall)
         fs = dslib.manual_fields.fallback_specs(mfr, mpn)
         for sym, typ in fs.items():
-            if sym not in ds:
-                ds[sym] = Field(sym, min=math.nan, typ=typ, max=math.nan)
+            ds.add(Field(sym, min=math.nan, typ=typ, max=math.nan))
 
-        def first(a):
-            return next((x for x in a if x and not math.isnan(x)), math.nan)
 
-        # create specification for DC-DC loss model
+
+        # parse specification for DC-DC loss model
         try:
-            mf_fields = [
-                'Qrr', 'Vsd',  # body diode
-                'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
-                'Coss', 'Qsw',
-            ]
-            field_mul = lambda sym: 1 if sym[0] == 'V' else 1e-9
-
-            fet_specs = MosfetSpecs(
-                Vds_max=part.specs.Vds_max,
-                Rds_on=part.specs.Rds_on_10v_max,
-                Qg=first((ds.get('Qg') and ds.get('Qg').typ_or_max_or_min, part.specs.Qg_max_or_typ_nC)) * 1e-9,
-                tRise=ds.get('tRise') and (ds.get('tRise').typ_or_max_or_min * 1e-9),
-                tFall=ds.get('tFall') and (ds.get('tFall').typ_or_max_or_min * 1e-9),
-                **{k: ds.get(k) and (ds.get(k).typ_or_max_or_min * field_mul(k)) for k in mf_fields},
-                Vpl=ds.get('Vpl') and ds.get('Vpl').typ_or_max_or_min,
-            )
+            fet_specs = ds.get_mosfet_specs()
         except:
             print(mfr, mpn, 'error creating mosfet specs')
             print(part, part.specs.__dict__)
@@ -156,19 +138,19 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
             mpn=mpn,
             housing=part.package,
 
-            Vds=part.specs.Vds_max,
-            Rds_max=fet_specs.Rds_on * 1000,
-            Id=part.specs.ID_25,
+            Vds_max=ds.get_max('Vds', True),
+            Rds_max=ds.get_max('Rds_on_10v', True)* 1000,
+            Id=ds.get_typ_or_max_or_min('ID_25', True),
 
-            Qg_max=fet_specs.Qg * 1e9,
-            Qgs=ds.get('Qgs') and ds.get('Qgs').typ_or_max_or_min,
-            Qgd=ds.get('Qgd') and ds.get('Qgd').typ_or_max_or_min,
+            Qg_max=ds.get_max('Qg') * 1e9, # TODO this is Qgtyp
+            Qgs=ds.get_typ_or_max_or_min('Qgs'),
+            Qgd=ds.get_typ_or_max_or_min('Qgd'),
             Qsw=fet_specs and (fet_specs.Qsw * 1e9),
 
-            C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
+            # C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
 
-            Qrr_typ=ds.get('Qrr') and ds.get('Qrr').typ,
-            Qrr_max=ds.get('Qrr') and ds.get('Qrr').max,
+            Qrr_typ=ds.get_typ('Qrr'),
+            Qrr_max=ds.get_max('Qrr'),
 
             tRise_ns=round(fet_specs.tRise * 1e9, 1),
             tFall_ns=round(fet_specs.tFall * 1e9, 1),

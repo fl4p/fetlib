@@ -1,7 +1,10 @@
 import math
+import sys
 from enum import Enum
+from typing import Dict, List
 
 from dslib.field import Field
+from dslib.store import Mfr, Mpn
 
 
 def fallback_specs(mfr, mpn):
@@ -11,15 +14,18 @@ def fallback_specs(mfr, mpn):
         return dict(tRise=2, tFall=2)
     return dict()
 
-
-class FetCharSymbols(Enum):
-    Qg = 'Qg'
-    Qgd = 'Qgd'
-    Qgs = 'Qgs'
-    Qgs2 = 'Qgs2'
+def get_fields() ->  Dict[Mfr, Dict[Mpn, List[Field]]]:
+    return sys.modules[__name__].__dict__
 
 
-FCS = FetCharSymbols
+#class FetCharSymbols(Enum):
+#    Qg = 'Qg'
+#    Qgd = 'Qgd'
+#    Qgs = 'Qgs'
+#    Qgs2 = 'Qgs2'
+
+
+#FCS = FetCharSymbols
 
 infineon = {
     'BSZ070N08LS5ATMA1': [  # need OCR
