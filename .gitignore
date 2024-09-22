@@ -17,6 +17,7 @@ test.pdf
 /*.csv
 
 parts-lib.pkl
+*.pkl
 
 *.xlsx
 
@@ -30,3 +31,6 @@ out/
 
 .env
 __pycache__
+
+
+/benchmark/
