@@ -444,7 +444,7 @@ def get_field_detect_regex(mfr):
             r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
             re.IGNORECASE),  # QRM
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
-        Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Qg([\s_]?\(?tota?l?\)?)?$)', re.IGNORECASE),
+        Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)', re.IGNORECASE),
         Qgs=re.compile(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE),
