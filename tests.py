@@ -1,18 +1,40 @@
 import math
 
-from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs
+import dslib.pdf2txt.parse
+import dslib.pdf2txt.pipeline
+from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs, raster_ocr
+from dslib.pdf2txt.pipeline import pdf2pdf
 
 
 def parse_line_tests():
+    r = dim_regs['V'][0]
+    m = next(r.finditer("Diode forward voltage,Vsp,-,0.89,1.2,V Ves=0 V, Ir=50 A, Tj=25 °C"), None)
+    assert m.groupdict() == dict(max='1.2', min='-', typ='0.89', unit='V')
+
+    r = dim_regs['t'][7]
+    m = next(r.finditer('Rise time,f,-,10 -,ns Re=1.60'), None)
+    assert m.groupdict() == dict(typ='10', unit='ns')
+
     # raise NotImplemented()
     n = math.nan
     cases = [
+        # "Output capacitance,C oss,-,204,265,nan,nan"
+        ("Fall time,ff,-,8 -,MS,R6=1.6Q", 'tFall', (n, 8, n)),
+        ("Gate to drain charge,Qoa,-,7 -,nC Vpp=50 V,,p=25 A, Ves=0 to 10 V", 'Qgd', (n, 7, n)),
+        ("Diode forward voltage,Vsp,-,0.89,1.2,V Ves=0 V, Ir=50 A, Tj=25 °C", "Vsd", (n, 0.89, 1.2)),
+        ("Gate to drain charge,Qga,-,7 -,nc Vop=50 V, Ipb=25 A, Ves=0 to 10 V", "Qgd", (n, 7, n)),
+        ("Gate plateau voltage,Vplateau,-,4.3 -,V,Vpp=50 V, /p=25 A, Ves=0 to 10 V", "Vpl", (n, 4.3, n)),
+        ("Gate plateau voltage,Vplateau,-,4.3 -,V,Vpp=50 V, /p=25 A, Ves=0 to 10 V", "Vpl", (n, 4.3, n)),
+        ("Rise time,f,-,10 -,ns Re=1.60", "tRise", (n, 10, n)),
+        ("Vsp,Diode Forward Voltage,-_- -_-,1.3,Vv,Ty=25°C, 15 =22A, Ves =0V @,nan", 'Vsd', (n, n, 1.3)),
         # (CSV_ROW, DIM, (MIN,TYP,MAX))
         # datasheets/toshiba/XPN1300ANC.pdf Qgs no value match in  "Gate-source charge 1,Qgs1,nan,7,nan,nan,nC"
         # "Output capacitance C oss,nan,nan,-,1152.0,1498,nan"
         # "nan,nan,Coss,nan,102"
-        ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qgs1', (n,7,n)), # XPN1300ANC
-        ('Gate plateau voltage,Vplateau,nan,nan,4.7,nan,"VDD 40 V, ID= 20 A , VGS = 0 toV",10 V,,,', 'Vpl', (n, 4.7, n)),
+        ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qgs1', (n, 7, n)),  # XPN1300ANC
+        (
+            'Gate plateau voltage,Vplateau,nan,nan,4.7,nan,"VDD 40 V, ID= 20 A , VGS = 0 toV",10 V,,,', 'Vpl',
+            (n, 4.7, n)),
         # "Output capacitance,C oss,f= 1 MHz,nan,2890.0,3840,nan"
         # "Rise Time tr,VDS=50V, RG=3Ω, -,46,nan,-,nan"
         # "Fall Time tf,-,44,nan,-,nan"
@@ -39,7 +61,8 @@ def parse_line_tests():
         ("Gate-Drain Charge,nan,Qgd,nan,nan,nan,13,nan,nan,nan,nC", 'Q', (n, 13, n)),
         ("Output capacitance,C oss,nan,-,231.0,300,nan", 'C', (n, 231, 300)),
         (
-        "Coss eff.(TR) Output Capacitance (Time Related),---,385,---,VGS = 0V, VDS = 0V to 80V,nan", 'C', (n, 385, n)),
+            "Coss eff.(TR) Output Capacitance (Time Related),---,385,---,VGS = 0V, VDS = 0V to 80V,nan", 'C',
+            (n, 385, n)),
         ("Effective Output Capacitance,---,154,---,pF f = 1.0MHz,  See Fig.5,nan", 'C', (n, 154, n)),
         ("nan,Coss,nan,7.0,nan", 'C', (n, 7, n)),
         ("Threshold Gate Charge,QG(TH),nan,9.1,nan,nC", 'Q', (n, 9.1, n)),
@@ -79,7 +102,7 @@ def parse_line_tests():
             print('\n'.join(map(str, dim_regs[dim])))
         assert f, (rl, dim)
         assert math.isnan(min) or min == f.min, f
-        assert math.isnan(typ) or typ == f.typ, (f,typ)
+        assert math.isnan(typ) or typ == f.typ, (f, typ)
         assert math.isnan(max) or max == f.max, f
     # "Coss output capacitance,nan,VDS = 50 V; VGS = 0 V; f = 1 MHz;,-,380,-,pF"
 
@@ -87,17 +110,20 @@ def parse_line_tests():
 def parse_pdf_tests():
     # TODOå
 
-    d = parse_datasheet('datasheets/infineon/IQDH88N06LM5CGSCATMA1.pdf')
-    assert d
+    d = parse_datasheet('datasheets/infineon/IQE050N08NM5CGATMA1.pdf', mfr='infineon')
+    assert len(d) >= 9
+
+    d = parse_datasheet('datasheets/infineon/IQDH88N06LM5CGSCATMA1.pdf', mfr='infineon')
+    assert len(d) >= 11
 
     d = tabula_read('datasheets/infineon/IRFB4110PBF.pdf')
     assert d.Qgd.typ == 43
 
-    d = tabula_read('datasheets/infineon/ISC030N10NM6ATMA1.pdf')
-    # assert d
+    d = parse_datasheet('datasheets/infineon/ISC030N10NM6ATMA1.pdf') # repair, produced not conform by http://activepdf.com
+    assert len(d) >= 11
 
     d = tabula_read('datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
-    assert d.Qgd.typ == 20 # datasheet mistake! 9.7
+    assert d.Qgd.typ == 20  # datasheet mistake! 9.7
 
     d = tabula_read('datasheets/infineon/BSC025N08LS5ATMA1.pdf')
     assert d.Vpl.typ == 2.8
@@ -106,8 +132,8 @@ def parse_pdf_tests():
     assert d.Vpl.typ == 4.6
 
     d = tabula_read('datasheets/infineon/BSC021N08NS5ATMA1.pdf')
-    assert d['tRise'].typ == 17
-    assert d['tFall'].typ == 20  # tFall has typ because it doesnt match the regex
+    assert d.tRise.typ == 17
+    assert d.tFall.typ == 20  # tFall has typ because it doesnt match the regex
     assert d.Qrr.typ == 80 and d.Qrr.max == 160
     assert d.Qsw.typ == 29
     assert d.Qgd.typ == 20 and d.Qgd.max == 29
@@ -160,7 +186,7 @@ def parse_pdf_tests():
     assert d['tRise'].typ == 56
     assert d['tFall'].typ == 58
     assert d['Coss'].typ == 319  # (ER)=355 TODO
-    assert d['Qrr'].typ == 133  # or 105 TODO
+    assert d['Qrr'].typ in {133, 105}, d.Qrr  # or 105 TODO multi Qrr
 
     # GT016N10TL
     d = parse_datasheet('datasheets/goford/GT016N10TL.pdf')
@@ -204,10 +230,8 @@ def parse_pdf_tests():
     assert d['Qrr'].typ == 400
     assert d['Qg_th'].typ == 15
 
-
-    d = tabula_read('datasheets/vishay/SUM60020E-GE3.pdf')
-    # ref= Field("tRise", min=nan, typ=36.0, max=nan, unit="ns", cond={0: 'Reverse recovery rise time tb', 1: '-', 2: '36', 3: '-', 4: 'ns'})
-    assert False
+    d = parse_datasheet('datasheets/vishay/SUM60020E-GE3.pdf') # special: Reverse recovery fall time
+    assert len(d) >= 7
     assert d['Qrr'].typ == 182 and d['Qrr'].max == 275
     assert d['tRise'].typ == 13
     assert d['tFall'].typ == 15
@@ -258,7 +282,7 @@ def parse_pdf_tests():
 
     d = tabula_read('datasheets/st/STL120N8F7.pdf')
     assert d['tRise'].typ == 16.8
-    assert d['tFall'].min == 15.4
+    assert d['tFall'].typ == 15.4
     assert d['Qrr'].typ == 65.6
 
     # rise 38.1 fall 18.4
@@ -293,7 +317,7 @@ def parse_pdf_tests():
     assert d['tFall'].max == 30
     assert d['Qrr'].typ == 182
 
-    d = parse_datasheet(mfr='vishay', mpn='SUM60020E-GE3')
+    d = parse_datasheet('datasheets/vishay/SUM60020E-GE3.pdf')
     assert d['Qrr'].typ == 182.
     assert d['Qrr'].max == 275.
 
@@ -314,7 +338,91 @@ def parse_pdf_tests():
     assert d['Qrr'].typ == 112
 
 
+def pdf_ocr_tests():
+    import subprocess
+    res = subprocess.run(
+        'tesseract tesseract-stuff/img_1.png stdout --user-words tesseract-stuff/mosfet.user-words tesseract-stuff/tesseract.cfg'.split(
+            ' '),
+        check=True, capture_output=True).stdout.decode('utf-8')
+    # assert 'Qgd' in res
+    assert 'Qgs' in res
+    assert 'Vplateau' in res
+
+    # multiple Qrr, multi Qrr
+    # IPT025N15NM6ATMA1
+    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon',
+                        tabular_pre_methods=('ocrmypdf_redo')
+                        )
+    assert d.Qrr.typ == 184 and d.Qrr.max == 368
+    assert d.tRise.typ == 16
+    assert d.tFall.typ == 19
+    assert d.Qg_th.typ == 26
+    assert d.Qsw.typ == 38
+    assert d.Vsd.typ == 0.86 and d.Vsd.max == 1
+
+    # same, but this time check fallback to `ocrmypdf_redo`
+    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon', )
+    assert d.Qrr.typ == 184 and d.Qrr.max == 368
+    assert d.tRise.typ == 16
+    assert d.tFall.typ == 19
+    assert d.Qg_th.typ == 26
+    assert d.Qsw.typ == 38
+    assert d.Vsd.typ == 0.86 and d.Vsd.max == 1
+
+
+    d = tabula_read('datasheets/infineon/BSC070N10NS3GATMA1.pdf', 'ocrmypdf_r400')
+    assert d.Vsd.typ == 0.89, d.Vsd
+    assert d.Vsd.max == 1.2, d.Vsd
+    assert d.Qgs.typ == 13
+    assert d.Qgd.typ == 7
+    assert d.Qsw.typ == 12
+    assert d.Qg.typ == 42 and d.Qg.max == 55
+    assert d.tRise.typ == 10
+    assert d.tFall.typ == 8
+    # raster_ocr('datasheets/infineon/BSC070N10NS3GATMA1.pdf', o,'ocrmypdf')
+
+
+def test_convertapi():
+    from dslib.pdf2txt.pipeline import convertapi
+    convertapi(
+        'datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
+        'datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf',
+        'pdf'
+    )
+    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf', mfr='infineon',tabular_pre_methods=('nop',))
+    assert d
+
+    convertapi(
+        'datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
+        'datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_rasterize.pdf',
+        'rasterize'
+    )
+    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_rasterize.pdf',
+                        mfr='infineon',
+                        tabular_pre_methods=('convertapi_ocr',))
+    assert d
+
+
 if __name__ == '__main__':
+    parse_datasheet(mfr='diodes', mpn='DMTH8003SPS-13')
     parse_line_tests()
+
+    pdf_ocr_tests()
+
+    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon')
+    assert len(d) > 8
+
+    # macos preview fixes: (CUPS printer)
+    ds = parse_datasheet('datasheets/infineon/IRF150DM115XTMA1.pdf', mfr='infineon')  # OCR
+    assert ds.get('Qgs', 'typ') == 13.2
+
+    # fixable with maco Preview print as pdf (came as CUPS method?)
+    df = tabula_read('datasheets/infineon/IRF7779L2TRPBF.pdf')
+    assert len(df) > 5
+
+    # fixable with gs:
+    df = parse_datasheet('datasheets/onsemi/NVMFS6H800NWFT1G.pdf')
+    assert len(df) > 5
+
     parse_pdf_tests()
     # tests()

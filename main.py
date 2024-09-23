@@ -84,7 +84,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         if 1:
             try:
                 from dslib.nexar.api import get_part_specs_cached
-                specs = get_part_specs_cached(mpn, mfr) or {}
+                specs = {} # get_part_specs_cached(mpn, mfr) or {}
             except Exception as e:
                 print(mfr, mpn, 'get_part_specs_cached', e)
                 specs = {}
@@ -95,25 +95,30 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
                     ds.add(Field(sym, min=math.nan, typ=sv, max=math.nan))
 
 
-        ds.add_multiple(part.specs.fields())
+        try:
+            ds.add_multiple(part.specs.fields())
+        except:
+            print(mfr, mpn, part, part.specs)
 
         # fallback specs for GaN etc (EPC tRise and tFall)
         fs = dslib.manual_fields.fallback_specs(mfr, mpn)
         for sym, typ in fs.items():
             ds.add(Field(sym, min=math.nan, typ=typ, max=math.nan))
 
-
+        print(mfr, mpn)
+        continue
 
         # parse specification for DC-DC loss model
         try:
             fet_specs = ds.get_mosfet_specs()
-        except:
-            print(mfr, mpn, 'error creating mosfet specs')
+        except Exception as e:
+            print(mfr, mpn, 'error creating mosfet specs', e, type(e))
             print(part, part.specs.__dict__)
             print('\n'.join(map(str, ds.items())))
             parse_datasheet.invalidate(ds_path, mfr=mfr, mpn=mpn)
 
-            raise
+            continue
+            # raise
 
         # compute power loss
         if 1:

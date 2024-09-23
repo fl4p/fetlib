@@ -27,6 +27,9 @@ def get_fields() ->  Dict[Mfr, Dict[Mpn, List[Field]]]:
 
 #FCS = FetCharSymbols
 
+
+# need OCR datasheets/infineon/IRF150DM115XTMA1.pdf
+
 infineon = {
     'BSZ070N08LS5ATMA1': [  # need OCR
         Field('Qrr', min=math.nan, typ=27, max=54, unit='nC'),

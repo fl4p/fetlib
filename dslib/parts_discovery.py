@@ -81,13 +81,19 @@ class MosfetBasicSpecs():
 
     def fields(self):
         n = math.nan
-        return [
-            Field('Vds', n, n, self.Vds_max ),
-            Field('Rds_on_10v', n, n, self.Rds_on_10v_max ),
-            Field('ID_25', n, self.ID_25, n ),
-            Field('Vgs_th', n, n,self.Vgs_th_max),
-            Field('Qg', n, self.Qg_typ_nC, self.Qg_max_nC, unit='nC')
-        ]
+        def f(*args, **kwargs):
+            try:
+                return Field(*args, **kwargs)
+            except:
+                return None
+
+        return filter(bool, [
+            f('Vds', n, n, self.Vds_max ),
+            f('Rds_on_10v', n, n, self.Rds_on_10v_max ),
+            f('ID_25', n, self.ID_25, n ),
+            f('Vgs_th', n, n,self.Vgs_th_max),
+            f('Qg', n, self.Qg_typ_nC, self.Qg_max_nC, unit='nC')
+        ])
 
 
 def is_nan(v):

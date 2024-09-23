@@ -16,6 +16,9 @@ class Field():
     def __init__(self, symbol: str, min, typ, max, mul=1, cond=None, unit=None):
         self.symbol = symbol
 
+        if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
+            unit = 'ns' # ocr confusion
+
         if unit in {'uC', 'μC'}:
             assert mul == 1
             mul = 1000
@@ -194,6 +197,19 @@ class DatasheetFields():
 
     def __len__(self):
         return len(self.fields_filled)
+
+    def __bool__(self):
+        return bool(self.fields_filled)
+
+    def __getattr__(self, item):
+        if item != 'fields_filled':
+            ff = getattr(self, 'fields_filled')
+            if item in ff:
+                return ff[item]
+        raise AttributeError(item)
+
+    def __getitem__(self, item):
+        return self.fields_filled[item]
 
     def all_fields(self):
         return sum(map(list, self.fields_lists.values()), [])

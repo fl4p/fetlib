@@ -540,7 +540,8 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
     return decorate
 
 
-def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, salt=None):
+def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
+               ignore_missing_inp_paths=False):
     if ignore_kwargs is None:
         ignore_kwargs = set()
 
@@ -551,21 +552,37 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, salt=None):
         import inspect
         mod = inspect.getmodule(target)
 
+        def get_file_names(args, kwargs, deps):
+            if not deps:
+                return []
+
+            file_names = []
+            fd_arg_names = deps
+            if isinstance(fd_arg_names, bool) and fd_arg_names == True:
+                fd_arg_names = [0]
+            for arg_name in fd_arg_names:
+                if isinstance(arg_name, int):
+                    arg_val = args[arg_name] if arg_name < len(args) else None
+                elif isinstance(arg_name, str) and ('.' in arg_name or '/' in arg_name):
+                    arg_val = arg_name
+                else:
+                    arg_val = kwargs.get(arg_name)
+                if arg_val is None:
+                    if ignore_missing_inp_paths:
+                        arg_val = None
+                    else:
+                        raise ValueError('missing input file path arg %s' % arg_name)
+                else:
+                    arg_val = os.path.realpath(arg_val)
+                file_names.append(arg_val)
+            return file_names
+
         def _cache_key(*args, **kwargs):
             mtimes = {}
             if file_dependencies:
-                fd_arg_names = file_dependencies
-                if isinstance(fd_arg_names, bool) and fd_arg_names == True:
-                    fd_arg_names = [0]
-                for arg_name in fd_arg_names:
-                    if isinstance(arg_name, int):
-                        arg_val = args[arg_name] if arg_name < len(args) else None
-                    else:
-                        arg_val = kwargs.get(arg_name)
-                    if arg_val is None:
-                        return None
-                    arg_val = os.path.realpath(arg_val)
-                    mtimes['__mtime:' + arg_val] = os.path.getmtime(arg_val)
+                mtimes = {
+                    '__mtime:' + fn: (os.path.getmtime(fn))
+                    for fn in get_file_names(args, kwargs, file_dependencies)  if not ignore_missing_inp_paths or fn is not None}
             if salt is not None:
                 mtimes['__salt__'] = salt
             cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs={**kwargs, **mtimes})
@@ -584,18 +601,41 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, salt=None):
         @wraps(target)
         def _disk_cache_wrapper(*args, **kwargs):
             cache_key_str = _cache_key(*args, **kwargs)
+
             if cache_key_str is None:
                 return target(*args, **kwargs)
-            try:
-                cache_val = disk_cache_store.read(cache_key_str)
-                if cache_val is not None:
-                    ret, exp = cache_val
-                    if now() <= exp:
-                        return ret
-            except Exception as _e:
-                logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
+
+            inv = False
+            if out_files:
+                assert file_dependencies
+                out_fns = get_file_names(args, kwargs, out_files)
+                in_fns = get_file_names(args, kwargs, file_dependencies)
+                out_mtime = min((os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns))
+                in_mtime = max(os.path.getmtime(fn) for fn in in_fns)
+                if in_mtime > out_mtime:
+                    inv = True
+
+            if not inv:
+                try:
+                    cache_val = disk_cache_store.read(cache_key_str)
+                    if cache_val is not None:
+                        ret, exp = cache_val
+                        if now() <= exp:
+                            return ret
+                except Exception as _e:
+                    logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
 
             ret = target(*args, **kwargs)
+
+            if out_files:
+                for fn in out_fns:
+                    if not os.path.exists(fn):
+                        logger.warning('out file %s does not exist', fn)
+                    else:
+                        mt = os.stat(fn).st_mtime
+                        if mt < in_mtime:
+                            logger.warning('out file %s has mtime %s < input %s', mt, in_mtime)
+
             try:
                 disk_cache_store.write(cache_key_str, (ret, now() + ttl))
             except Exception as _e:
