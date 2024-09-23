@@ -152,33 +152,10 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None)
 def tabula_pdf_dataframes(pdf_path=None):
     import tabula
 
-    fails = {'datasheets/onsemi/NVMFS6H800NLT1G.pdf',
-             'datasheets/onsemi/NVMFS6H800NT1G.pdf', 'datasheets/onsemi/NTMFS6H800NLT1G.pdf',
-             'datasheets/onsemi/FDD86367.pdf', 'datasheets/onsemi/FDD86369.pdf', 'datasheets/onsemi/NTMFS6H800NT1G.pdf',
-             'datasheets/onsemi/NTMFWS1D5N08XT1G.pdf', 'datasheets/onsemi/FDMC008N08C.pdf',
-             'datasheets/onsemi/NVMFS6H800NWFT1G.pdf', 'datasheets/onsemi/NVMFS6H800NLWFT1G.pdf',
-             'datasheets/onsemi/NTMFS08N2D5C.pdf', 'datasheets/nxp/PSMN4R3-80ES,127.pdf',
-             'datasheets/nxp/PSMN3R5-80PS,127.pdf', 'datasheets/nxp/PSMN4R3-80PS,127.pdf',
-             'datasheets/onsemi/FDD86367-F085.pdf', 'datasheets/onsemi/NVMFWS6D2N08XT1G.pdf',
-             'datasheets/onsemi/FDD86369-F085.pdf', 'datasheets/onsemi/NVMFWS1D9N08XT1G.pdf',
-             'datasheets/ao/AOTL66811.pdf',
-             'datasheets/littelfuse/IXTA160N10T7.pdf',
-             'datasheets/goford/GT023N10Q.pdf',
-             'datasheets/onsemi/FDB047N10.pdf',
-             'datasheets/onsemi/FDP047N10.pdf',
-             'datasheets/infineon/IPB033N10N5LFATMA1.pdf',
-             'datasheets/infineon/ISC030N10NM6ATMA1.pdf',
+    #/Users/fab/Downloads/tabula/Tabula.app/Contents/Java/tabula.jar
 
-             'datasheets/diodes/DMT10H9M9SCT.pdf',  # unsupported operation
-             'datasheets/diodes/DMT10H9M9LCT.pdf',
-             'datasheets/good_ark/GSFT3R110.pdf',
-             'datasheets/diodes/DMTH10H005SCT.pdf',
-             }
-    # if pdf_path in fails:
-    #    raise Exception(f'PDF {pdf_path} known to fail')
-    dfs = tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None})
+    dfs = tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True)
 
-    # pd.concat(dfs, ignore_index=True, axis=0).to_csv(pdf_path+'.csv', index=False)
 
     """
      from subprocess import check_output
