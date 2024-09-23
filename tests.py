@@ -404,7 +404,14 @@ def test_convertapi():
 
 
 if __name__ == '__main__':
-    parse_datasheet(mfr='diodes', mpn='DMTH8003SPS-13')
+
+    ##subprocess.run([])
+
+    d = parse_datasheet('datasheets/littelfuse/IXTQ180N10T.pdf', tabular_pre_methods='nop')
+    assert d.Qgd
+
+    #parse_datasheet(mfr='diodes', mpn='DMTH8003SPS-13')
+    d = parse_datasheet('datasheets/toshiba/XPW4R10ANB,L1XHQ.pdf')
     parse_line_tests()
 
     pdf_ocr_tests()

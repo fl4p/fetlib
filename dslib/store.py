@@ -8,9 +8,9 @@ from dslib.spec_models import MosfetSpecs
 
 
 class Part:
-    def __init__(self, mpn, mfr, specs, discovered: 'DiscoveredPart'):
-        self.mpn = mpn
-        self.mfr = mfr
+    def __init__(self, mpn=None, mfr=None, specs=None, discovered: 'DiscoveredPart'=None):
+        self.mpn = mpn or discovered.mpn
+        self.mfr = mfr or discovered.mfr
         self.specs: 'MosfetSpecs' = specs
         self.discovered = discovered
 

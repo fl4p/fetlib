@@ -2,7 +2,7 @@ import math
 import asyncio
 import math
 import os.path
-from typing import List, Dict
+from typing import List, Dict, Literal
 
 import numpy as np
 import pandas as pd
@@ -42,6 +42,117 @@ def main():
         print(p.discovered.get_ds_path())
 
 
+def process_part(part:DiscoveredPart):
+    mfr = part.mfr
+    mpn = part.mpn
+    ds_url = part.ds_url
+    ds_path = part.get_ds_path()
+
+    if not os.path.exists(ds_path):
+        fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn)
+
+    ds = DatasheetFields()
+
+    # place manual fields:
+    man_fields = dslib.manual_fields.get_fields()
+    ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []))
+
+    # parse datasheet (tabula and pdf2txt):
+    if os.path.isfile(ds_path):
+        dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
+        ds.add_multiple(dsp.all_fields())
+
+    # try nexar api:
+    if 1:
+        try:
+            from dslib.nexar.api import get_part_specs_cached
+            specs = {}  # get_part_specs_cached(mpn, mfr) or {}
+        except Exception as e:
+            print(mfr, mpn, 'get_part_specs_cached', e)
+            specs = {}
+
+        for sym, sn in dict(tRise='risetime', tFall='falltime').items():
+            sv = specs.get(sn) and pd.to_timedelta(specs[sn]).nanoseconds
+            if sv and sym not in ds:
+                ds.add(Field(sym, min=math.nan, typ=sv, max=math.nan))
+
+    try:
+        ds.add_multiple(part.specs.fields())
+    except:
+        print(mfr, mpn, part, part.specs)
+
+    # fallback specs for GaN etc (EPC tRise and tFall)
+    fs = dslib.manual_fields.fallback_specs(mfr, mpn)
+    for sym, typ in fs.items():
+        ds.add(Field(sym, min=math.nan, typ=typ, max=math.nan))
+
+    print(mfr, mpn)
+    return
+
+    # parse specification for DC-DC loss model
+    try:
+        fet_specs = ds.get_mosfet_specs()
+    except Exception as e:
+        print(mfr, mpn, 'error creating mosfet specs', e, type(e))
+        print(part, part.specs.__dict__)
+        print('\n'.join(map(str, ds.items())))
+        parse_datasheet.invalidate(ds_path, mfr=mfr, mpn=mpn)
+
+        return
+        # raise
+
+    # compute power loss
+    if 1:
+        loss_spec = dcdc_buck_hs(dcdc, fet_specs, rg_total=6, fallback_V_pl=4.5)
+        ploss = loss_spec.__dict__.copy()
+        del ploss['P_dt']
+        ploss['P_hs'] = loss_spec.buck_hs()
+        ploss['P_2hs'] = loss_spec.parallel(2).buck_hs()
+
+        loss_spec = dcdc_buck_ls(dcdc, fet_specs)
+        ploss['P_rr'] = loss_spec.P_rr
+        ploss['P_on_ls'] = loss_spec.P_on
+        ploss['P_dt_ls'] = loss_spec.P_dt
+        ploss['P_ls'] = loss_spec.buck_ls()
+        ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
+    # except Exception as e:
+    #    print(mfr, mpn, 'dcdc_buck_hs', e)
+    #    ploss = {}
+
+    row = dict(
+        mfr=mfr,
+        mpn=mpn,
+        housing=part.package,
+
+        Vds_max=ds.get_max('Vds', True),
+        Rds_max=ds.get_max('Rds_on_10v', True) * 1000,
+        Id=ds.get_typ_or_max_or_min('ID_25', True),
+
+        Qg_max=ds.get_max('Qg') * 1e9,  # TODO this is Qgtyp
+        Qgs=ds.get_typ_or_max_or_min('Qgs'),
+        Qgd=ds.get_typ_or_max_or_min('Qgd'),
+        Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+
+        # C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
+
+        Qrr_typ=ds.get_typ('Qrr'),
+        Qrr_max=ds.get_max('Qrr'),
+
+        tRise_ns=round(fet_specs.tRise * 1e9, 1),
+        tFall_ns=round(fet_specs.tFall * 1e9, 1),
+
+        Vth=part.specs.Vgs_th_max,
+        Vpl=fet_specs and fet_specs.V_pl,
+
+        FoM=fet_specs.Rds_on * 1000 * (fet_specs.Qg * 1e9),
+        FoMrr=fet_specs.Rds_on * 1000 * (fet_specs.Qrr * 1e9),
+        FoMsw=fet_specs.Rds_on * 1000 * (fet_specs.Qsw * 1e9),
+
+        **ploss,
+    )
+
+    return Part(specs=fet_specs, discovered=part), row
+
 def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     result_rows = []  # csv
     result_parts: List[Part] = []  # db storage
@@ -54,124 +165,13 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         except Exception as e:
             print('git clone error:', e)
 
-    for part in parts:
-        mfr = part.mfr
-        mpn = part.mpn
-        ds_url = part.ds_url
-        ds_path = part.get_ds_path()
+    jobs = {(p.mfr,p.mpn): (process_part, p) for p in parts}
+    results = run_parallel(jobs, 8, 'multiprocessing')
 
-        if not os.path.exists(ds_path):
-            fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn)
-
-        ds = DatasheetFields()
-
-        # place manual fields:
-        man_fields = dslib.manual_fields.get_fields()
-        ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []))
-
-        # parse datasheet (tabula and pdf2txt):
-        if os.path.isfile(ds_path):
-
-            k = (mfr, mpn)
-            if k in all_mpn:
-                continue
-            all_mpn.add(k)
-
-            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
-            ds.add_multiple(dsp.all_fields())
-
-        # try nexar api:
-        if 1:
-            try:
-                from dslib.nexar.api import get_part_specs_cached
-                specs = {} # get_part_specs_cached(mpn, mfr) or {}
-            except Exception as e:
-                print(mfr, mpn, 'get_part_specs_cached', e)
-                specs = {}
-
-            for sym, sn in dict(tRise='risetime', tFall='falltime').items():
-                sv = specs.get(sn) and pd.to_timedelta(specs[sn]).nanoseconds
-                if sv and sym not in ds:
-                    ds.add(Field(sym, min=math.nan, typ=sv, max=math.nan))
-
-
-        try:
-            ds.add_multiple(part.specs.fields())
-        except:
-            print(mfr, mpn, part, part.specs)
-
-        # fallback specs for GaN etc (EPC tRise and tFall)
-        fs = dslib.manual_fields.fallback_specs(mfr, mpn)
-        for sym, typ in fs.items():
-            ds.add(Field(sym, min=math.nan, typ=typ, max=math.nan))
-
-        print(mfr, mpn)
-        continue
-
-        # parse specification for DC-DC loss model
-        try:
-            fet_specs = ds.get_mosfet_specs()
-        except Exception as e:
-            print(mfr, mpn, 'error creating mosfet specs', e, type(e))
-            print(part, part.specs.__dict__)
-            print('\n'.join(map(str, ds.items())))
-            parse_datasheet.invalidate(ds_path, mfr=mfr, mpn=mpn)
-
-            continue
-            # raise
-
-        # compute power loss
-        if 1:
-            loss_spec = dcdc_buck_hs(dcdc, fet_specs, rg_total=6, fallback_V_pl=4.5)
-            ploss = loss_spec.__dict__.copy()
-            del ploss['P_dt']
-            ploss['P_hs'] = loss_spec.buck_hs()
-            ploss['P_2hs'] = loss_spec.parallel(2).buck_hs()
-
-            loss_spec = dcdc_buck_ls(dcdc, fet_specs)
-            ploss['P_rr'] = loss_spec.P_rr
-            ploss['P_on_ls'] = loss_spec.P_on
-            ploss['P_dt_ls'] = loss_spec.P_dt
-            ploss['P_ls'] = loss_spec.buck_ls()
-            ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
-        # except Exception as e:
-        #    print(mfr, mpn, 'dcdc_buck_hs', e)
-        #    ploss = {}
-
-        row = dict(
-            mfr=mfr,
-            mpn=mpn,
-            housing=part.package,
-
-            Vds_max=ds.get_max('Vds', True),
-            Rds_max=ds.get_max('Rds_on_10v', True)* 1000,
-            Id=ds.get_typ_or_max_or_min('ID_25', True),
-
-            Qg_max=ds.get_max('Qg') * 1e9, # TODO this is Qgtyp
-            Qgs=ds.get_typ_or_max_or_min('Qgs'),
-            Qgd=ds.get_typ_or_max_or_min('Qgd'),
-            Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-
-            # C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
-
-            Qrr_typ=ds.get_typ('Qrr'),
-            Qrr_max=ds.get_max('Qrr'),
-
-            tRise_ns=round(fet_specs.tRise * 1e9, 1),
-            tFall_ns=round(fet_specs.tFall * 1e9, 1),
-
-            Vth=part.specs.Vgs_th_max,
-            Vpl=fet_specs and fet_specs.V_pl,
-
-            FoM=fet_specs.Rds_on * 1000 * (fet_specs.Qg * 1e9),
-            FoMrr=fet_specs.Rds_on * 1000 * (fet_specs.Qrr * 1e9),
-            FoMsw=fet_specs.Rds_on * 1000 * (fet_specs.Qsw * 1e9),
-
-            **ploss,
-        )
-
+    for (mfr,mpn),(part,row) in results.items():
+        #part, row = process_part(d_part)
         result_rows.append(row)
-        result_parts.append(Part(mpn=mpn, mfr=mfr, specs=fet_specs, discovered=part))
+        result_parts.append(part)
 
     # print('no P_sw')
     # for row in result_rows:
@@ -198,6 +198,21 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
 
     return result_parts
 
+def num_cores():
+    try:
+        # noinspection PyUnresolvedReferences
+        return len(os.sched_getaffinity(0))
+    except:
+        # see https://stackoverflow.com/questions/1006289/how-to-find-out-the-number-of-cpus-using-python
+        import multiprocessing
+        return multiprocessing.cpu_count()
+def run_parallel(jobs, max_concurrency=256,
+                 backend:Literal['threading','multiprocessing']='multiprocessing',
+                 verbose=100, **kwargs):
+    from joblib import Parallel, delayed
+    results = Parallel(n_jobs=min(num_cores() + 1, max_concurrency), verbose=verbose, backend=backend, **kwargs)(
+        delayed(fn)() if callable(fn) else delayed(fn[0])(*fn[1:]) for fn in jobs.values())
+    return dict(zip(jobs.keys(), results))
 
 if __name__ == '__main__':
     # parse_pdf_tests()
