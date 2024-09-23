@@ -106,86 +106,88 @@ https://stackoverflow.com/questions/50804931/how-to-download-a-pdf-that-opens-in
 
 """
 
+_chromium_lock = asyncio.Lock()
 
 async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', close=False):
-    file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
+    async with _chromium_lock:
+        file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
 
-    if isinstance(click, str):
-        click = [click]
+        if isinstance(click, str):
+            click = [click]
 
-    def _check_dl():
-        dl_files = glob.glob(dl_path + '/*.' + file_ext_glob)
-        if len(dl_files) > 0:
-            print('got download', dl_files[0])
-            os.rename(dl_files[0], filename)
-            return True
-        return False
+        def _check_dl():
+            dl_files = glob.glob(dl_path + '/*.' + file_ext_glob)
+            if len(dl_files) > 0:
+                print('got download', dl_files[0])
+                os.rename(dl_files[0], filename)
+                return True
+            return False
 
-    dl_path = os.path.realpath(filename + '_downloads')
-    if os.path.exists(dl_path):
-        import shutil
-        shutil.rmtree(dl_path)
-    assert not os.path.exists(dl_path), dl_path
-    page = None
-    try:
-        os.path.isdir(dl_path) or os.makedirs(dl_path)
-
-        print('download folder', dl_path)
-
-        page = await get_browser_page()
-
-        await page._client.send('Page.setDownloadBehavior', {
-            'behavior': 'allow',
-            'downloadPath': dl_path,
-        })
-
+        dl_path = os.path.realpath(filename + '_downloads')
+        if os.path.exists(dl_path):
+            import shutil
+            shutil.rmtree(dl_path)
+        assert not os.path.exists(dl_path), dl_path
+        page = None
         try:
-            resp = await page.goto(url)
-            if resp.status in {404}:
-                print(url, 'NOT FOUND')
-                return
+            os.path.isdir(dl_path) or os.makedirs(dl_path)
 
-            for c in click:
+            print('download folder', dl_path)
 
-                for i in range(1, 100):
-                    if _check_dl():
-                        return
+            page = await get_browser_page()
+
+            await page._client.send('Page.setDownloadBehavior', {
+                'behavior': 'allow',
+                'downloadPath': dl_path,
+            })
+
+            try:
+                resp = await page.goto(url)
+                if resp.status in {404}:
+                    print(url, 'NOT FOUND')
+                    return
+
+                for c in click:
+
+                    for i in range(1, 100):
+                        if _check_dl():
+                            return
+
+                        try:
+                            await page.waitFor(c, timeout=200)
+                            break
+                        except Exception as e:
+                            # print(e)
+                            pass
+
+                        # await page.evaluate(""" document.querySelector('a[data-track-name="downloadLink"]').click() """)
+
+                    await page.waitFor(c, timeout=300)
+
+                    await asyncio.sleep(1)
 
                     try:
-                        await page.waitFor(c, timeout=200)
-                        break
-                    except Exception as e:
-                        # print(e)
-                        pass
+                        await page.click(c + ' a')
+                    except:
+                        await page.click(c)
 
-                    # await page.evaluate(""" document.querySelector('a[data-track-name="downloadLink"]').click() """)
+            except PageError as e:
+                # print('page error, probably direct download')
+                pass
 
-                await page.waitFor(c, timeout=300)
-
-                await asyncio.sleep(1)
-
-                try:
-                    await page.click(c + ' a')
-                except:
-                    await page.click(c)
-
-        except PageError as e:
-            # print('page error, probably direct download')
-            pass
-
-        for i in range(1, 100):
-            if _check_dl():
-                return
-            time.sleep(.3)
-        print('no downloaded file found')
-    finally:
-        os.rmdir(dl_path)
-        if close and page:
-            if close == 'page':
-                await page.close()
-            else:
-                await page.browser.close()
-            # await page.close()
+            for i in range(1, 100):
+                if _check_dl():
+                    return
+                time.sleep(.3)
+            print('no downloaded file found')
+        finally:
+            os.rmdir(dl_path)
+            if close and page:
+                if close == 'page':
+                    await page.close()
+                else:
+                    await page.browser.close()
+                # await page.close()
 
 
 if __name__ == '__main__':
