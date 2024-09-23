@@ -29,7 +29,13 @@ git clone --recurse-submodules https://github.com/fl4p/fetlib
 cd fetlib
 pip install -r requirements.txt
 git clone https://github.com/open-pe/fet-datasheets datasheets # fetch a set of data-sheets (80-200V power mosfets)
+
+# additional dependencies:
+- `gs` (Ghostscript)
 ```
+
+
+
 
 1. acquire a parts list from Digikey. go
    to [digikey.com](https://www.digikey.de/en/products/filter/transistors/fets-mosfets/single-fets-mosfets/278)
@@ -125,6 +131,41 @@ We use 3 techniques:
 2. use tabula (or another pdf2table program) to read the tables from the PDF. there is a python binding available that
    produces pandas DataFrames. find values by iterating the rows.
 3. LLM Apis https://github.com/piotrdelikat/fet-data-extractor
+
+### Field priority
+
+1. manual fields
+2. pdf2txt + regex (first symbol)
+3. tabula + regex (first symbol)
+4. Fallback specs (GaN)
+5. 
+
+For the power loss compution we need a single discrete value of relevant fields (e.g. `Rds_on`, `Qsw`, `Qrr`).
+Datasheet specify min./max/typ values and sometimes there are multiple rows for a single value under different
+testing conditions e.g. temperature, Vdd, Id, and transients di/dt and dv/dt.
+
+|            |      |             |   |
+|------------|------|-------------|---|
+| Rds_on     | Vg=10V | max         |   |
+| Qg         |      |             |   |
+| tRise/Fall |      | typ,max,min |   |
+|            |      |             |   |
+|            |      |             |   |
+|            |      |             |   |
+|            |      |             |   |
+
+
+## Benchmarking pipelines
+
+- only take those sybmols relevant for power loss model
+- Score Funcs 
+  - count fields: count symbol with any min/typ/max value
+  - rmse:
+    - define a reference Datasheet
+    - for each relevant symbol -> Sym
+      - for each (min, typ, max) -> Stat
+        - Count += abs((A[Sym][Stat] - B[Sym][Stat]) / B[Sym][Stat]) < ErrThres 
+
 
 ## Datasheet download
 
@@ -223,6 +264,7 @@ recovery. (TODO verify)
 
 # Resources
 
+* https://ledgerbox.io/blog/extract-tables-with-tesseract-ocr
 * https://www.discoveree.io/
 *
     * https://epc-co.com/epc/design-support/part-cross-reference-search

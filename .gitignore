@@ -34,3 +34,9 @@ out/
 *.pkl
 
 *.zip
+
+*.dwag
+
+/output-debug/
+/output-*/
+output.txt.txt
