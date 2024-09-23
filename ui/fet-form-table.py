@@ -1,5 +1,6 @@
 import sys
 import os
+import json
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ['PYTHONPATH'] = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -14,8 +15,7 @@ from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.store import load_parts as _load_parts, Part
 
 # Set page config to dark mode
-st.set_page_config(page_title="MOSFET Component Selector", layout="wide", initial_sidebar_state="expanded")
-
+st.set_page_config(page_title="MOSFET Component Selector", page_icon="📊", layout="wide", initial_sidebar_state="expanded")
 
 def convert_to_dcdc_specs(vi, vo, io, f, vgs, ripple_factor, tDead):
     """
@@ -49,44 +49,7 @@ def fetch_digikey_parts(search_params):
     """
     return search_digikey_parts(search_params)
 
-
-@st.cache_data
-def process_csv_data(csv_file):
-    """
-    Process uploaded CSV file containing MOSFET data.
-
-    :param csv_file: Uploaded CSV file
-    :return: Processed DataFrame
-    """
-    df = pd.read_csv(csv_file)
-    # Add any necessary processing steps here
-    return df
-
-
-def combine_mosfet_data(api_data, csv_data):
-    """
-    Combine MOSFET data from DigiKey API and uploaded CSV.
-
-    :param api_data: List of DigiKey part results
-    :param csv_data: DataFrame of CSV data
-    :return: Combined DataFrame of MOSFET data
-    """
-    # Convert api_data to DataFrame if it's not already
-    if not isinstance(api_data, pd.DataFrame):
-        api_df = pd.DataFrame(api_data)
-    else:
-        api_df = api_data
-
-    # Combine the DataFrames
-    combined_df = pd.concat([api_df, csv_data], ignore_index=True)
-
-    # Remove duplicates if any
-    combined_df.drop_duplicates(subset=['Mfr Part #'], keep='first', inplace=True)
-
-    return combined_df
-
-
-@st.cache_data
+# @st.cache_data
 def analyze_mosfets(_dcdc_specs, mosfet_data=None):
     """
     Perform MOSFET analysis based on DC-DC converter specifications and MOSFET data.
@@ -163,65 +126,6 @@ def analyze_mosfets(_dcdc_specs, mosfet_data=None):
 
     return df
 
-
-# Function to save user inputs
-def save_inputs(inputs):
-    with open('user_inputs.pkl', 'wb') as f:
-        pickle.dump(inputs, f)
-
-
-# Function to load user inputs
-def load_inputs():
-    if os.path.exists('user_inputs.pkl'):
-        with open('user_inputs.pkl', 'rb') as f:
-            return pickle.load(f)
-    return {}
-
-
-# Load previous inputs
-previous_inputs = load_inputs()
-
-st.title('MOSFET Component Selector for a DC-DC Converter')
-
-# Sidebar for user input
-st.sidebar.header('Input Parameters')
-st.sidebar.write('Please enter the DC-DC operating point parameters below:')
-
-vi = st.sidebar.number_input('Input Voltage (V)', min_value=0.0, step=0.1, value=previous_inputs.get('vi', 12.0),
-                             help="DC-DC converter input voltage")
-vo = st.sidebar.number_input('Output Voltage (V)', min_value=0.0, step=0.1, value=previous_inputs.get('vo', 5.0),
-                             help="DC-DC converter output voltage")
-io = st.sidebar.number_input('Output current (A)', min_value=0.0, step=0.1, value=previous_inputs.get('io', 10.0),
-                             help="Output current of the DC-DC converter")
-f = st.sidebar.number_input('Switching Frequency (kHz)', min_value=1.0, max_value=1000.0, step=1.0,
-                            value=previous_inputs.get('f', 100.0), help="Switching frequency of the DC-DC converter")
-vgs = st.sidebar.number_input('Gate Drive Voltage (V)', min_value=0.0, step=0.1, value=previous_inputs.get('vgs', 10.0),
-                              help="Gate drive voltage for both (HS) high-side and (LS) low-side MOSFETs")
-ripple_factor = st.sidebar.number_input('Ripple Factor', min_value=0.0, max_value=1.0, step=0.01,
-                                        value=previous_inputs.get('ripple_factor', 0.2),
-                                        help="Peak-to-peak coil current divided by mean coil current (assuming Continuous Conduction Mode)")
-tDead = st.sidebar.number_input('Dead Time (ns)', min_value=0.0, max_value=1000.0, step=1.0,
-                                value=previous_inputs.get('tDead', 100.0),
-                                help="Gate driver dead-time (occurs twice per switching period)")
-
-# Save inputs button
-if st.sidebar.button('Save Inputs'):
-    inputs = {'vi': vi, 'vo': vo, 'io': io, 'f': f, 'vgs': vgs, 'ripple_factor': ripple_factor, 'tDead': tDead}
-    save_inputs(inputs)
-    st.sidebar.success('Inputs saved successfully!')
-
-# Clear inputs button
-if st.sidebar.button('Clear Saved Inputs'):
-    if os.path.exists('user_inputs.pkl'):
-        os.remove('user_inputs.pkl')
-        st.sidebar.success('Saved inputs cleared!')
-    else:
-        st.sidebar.info('No saved inputs to clear.')
-
-
-# # Add file uploader for CSV
-# uploaded_file = st.sidebar.file_uploader("Upload CSV file with MOSFET data", type="csv")
-
 # Function to display analysis results
 def display_analysis_results(df):
     # Sort the dataframe by Total Loss
@@ -271,14 +175,48 @@ def display_analysis_results(df):
     st.subheader('MOSFET Analysis Results')
     st.dataframe(styled_df, use_container_width=True)
 
-    # Add download button for CSV
-    csv = df.to_csv(index=False)
-    st.download_button(
-        label="Download results as CSV",
-        data=csv,
-        file_name="mosfet_analysis_results.csv",
-        mime="text/csv",
-    )
+
+##############APP UI#######################################
+
+st.title('MOSFET Component Selector for a DC-DC Converter')
+
+# Sidebar for user input
+st.sidebar.header('Input Parameters')
+st.sidebar.write('Please enter the DC-DC operating point parameters below:')
+
+vi = st.sidebar.number_input('Input Voltage (V)', min_value=0.0, step=1.0, value=12.0, help="DC-DC converter input voltage")
+vo = st.sidebar.number_input('Output Voltage (V)', min_value=0.0, step=1.0, value=5.0, help="DC-DC converter output voltage")
+io = st.sidebar.number_input('Output current (A)', min_value=0.0, step=1.0, value=10.0, help="Output current of the DC-DC converter")
+f = st.sidebar.number_input('Switching Frequency (kHz)', min_value=1.0, max_value=1000.0, step=10.0, value=100.0, help="Switching frequency of the DC-DC converter")
+vgs = st.sidebar.number_input('Gate Drive Voltage (V)', min_value=0.0, step=1.0, value=10.0, help="Gate drive voltage for both (HS) high-side and (LS) low-side MOSFETs")
+ripple_factor = st.sidebar.number_input('Ripple Factor', min_value=0.0, max_value=1.0, step=0.01, value=0.2, help="Peak-to-peak coil current divided by mean coil current (assuming Continuous Conduction Mode)")
+tDead = st.sidebar.number_input('Dead Time (ns)', min_value=0.0, max_value=1000.0, step=1.0, value=100.0, help="Gate driver dead-time (occurs twice per switching period)")
+
+# Load existing components list button
+if st.sidebar.button('Calculate Power Loss for the inputs', type='primary'):
+    with st.spinner('Analyzing existing components...'):
+        try:
+            # Perform analysis on existing components
+            _dcdc_specs = convert_to_dcdc_specs(vi, vo, io, f, vgs, ripple_factor, tDead)
+            df = analyze_mosfets(_dcdc_specs)
+
+            # Display results
+            display_analysis_results(df)
+        except Exception as e:
+            st.error(f"An error occurred during analysis: {str(e)}")
+
+if os.path.exists("parts-lib.pkl"):
+    st.sidebar.warning("Existing components list found!")
+else:
+    st.sidebar.info("No existing components list found. Please upload a list or run the analysis to create one.")
+
+
+uploaded_file = st.sidebar.file_uploader("Upload MOSFETs list file (.pkl)", type="pkl")
+if uploaded_file:
+    # Save uploaded file to a directory
+    with open("parts-lib.pkl", "wb") as f:
+        f.write(uploaded_file.getvalue())
+    st.sidebar.success("File uploaded and saved successfully!")
 
 
 # Create two columns for the buttons
@@ -315,37 +253,21 @@ col2, col1 = st.columns(2)
 #         except Exception as e:
 #             st.error(f"An error occurred during analysis: {str(e)}")
 
-# Load existing components list button
-if st.sidebar.button('Load existing components list', type='primary'):
-    with st.spinner('Analyzing existing components...'):
-        try:
-            # Perform analysis on existing components
-            _dcdc_specs = convert_to_dcdc_specs(vi, vo, io, f, vgs, ripple_factor, tDead)
-            df = analyze_mosfets(_dcdc_specs)
-
-            # Display results
-            display_analysis_results(df)
-        except Exception as e:
-            st.error(f"An error occurred during analysis: {str(e)}")
-
 if 'df' not in locals() or df.empty:
     st.write("""
-    Finding the right switches for your DC-DC converter can be more complex than it initially appears. 
-    The two switches in a converter operate under different conditions, and factors like reverse recovery loss 
-    are often overlooked.
+    Finding the right switches for your DCDC-Converter might be not as straight forward as it looks on first sight.
+    Both switches operate in rather different conditions and especially the reverse recovery loss appears to be often
+    overlooked. 
+
     """)
     st.write("""
-    This tool aims to assist you in making an informed selection by considering these 
-    crucial aspects and providing a comprehensive comparison of MOSFET options.
+    This program tries to help you with the selection by estimating power loss for a given DC-DC converter inputs.
     """)
 
     # Add a brief tutorial or guide for first-time users
     with st.expander("How to use this tool"):
         st.write("""
-        Welcome to the MOSFET Component Selector for DC-DC Converters! Here's a quick guide to get you started:
-        This tool considers various crucial aspects of MOSFET selection for DC-DC converters, including reverse recovery loss, to help you make an informed decision.
-        It is an estimation and you should always double check the datasheet of manufactured components before making final decision.
-
+        
         1. Enter Parameters: Use the sidebar on the left to input your DC-DC converter parameters.
            - Input Voltage (V): The input voltage of your DC-DC converter.
            - Output Voltage (V): The desired output voltage.
@@ -355,21 +277,24 @@ if 'df' not in locals() or df.empty:
            - Ripple Factor: The peak-to-peak coil current divided by mean coil current (assuming Continuous Conduction Mode).
            - Dead Time (ns): The gate driver dead-time (occurs twice per switching period).
 
-        2. Find Components: 
-           - Click the 'Find Components by specs' button to search for and analyze MOSFETs based on your inputs and DigiKey data.
+        2. Upload .pkl (Optional): Upload a .pkl file with MOSFETs list using the file uploader in the sidebar. Should contain list of mfr,mpn values.
+
+        3. Find Components: 
+           
            - Click the 'Load existing components list' button to analyze MOSFETs from the existing database.
 
-        3. View Results: The results table will show various MOSFET options with their specifications and estimated power losses.
+        4. View Results: The results table will show various MOSFET options with their specifications and estimated power losses.
            - The table is sorted by Total Loss (W) in ascending order.
            - Color coding helps identify better performing MOSFETs (green is better, red is worse).
 
-        4. Download Results: Use the 'Download results as CSV' button to save the analysis for further review.
+        5. Download Results: Use the download icon appearing in top right of the table to save the analysis for further review.
 
-        5. Save Inputs: You can save your inputs for future sessions using the 'Save Inputs' button in the sidebar.
+        Note: It is an estimation and you should always double check the datasheet of manufactured components before making final decision.
 
-        6. Clear Inputs: To start fresh, use the 'Clear Saved Inputs' button in the sidebar.
         """)
-        # 2. Upload CSV (Optional): You can upload a CSV file with additional MOSFET data using the file uploader in the sidebar.
+
+#TODO
+#- Click the 'Find Components by specs' button to search for and analyze MOSFETs based on your inputs and DigiKey data.
 
 st.markdown("""
 <style>
@@ -403,3 +328,5 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+
