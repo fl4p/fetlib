@@ -21,6 +21,9 @@ def extract_text(pdf_path, try_ocr=False):
     import fitz  # PyMuPDF
     pdf_document = fitz.open(pdf_path)
 
+    if len(pdf_document) > 25:
+        raise ValueError(pdf_path + ' has more than 25 pages ' + len(pdf_document))
+
     pdf_text = ""
     for page_number in range(len(pdf_document)):
         page = pdf_document[page_number]
