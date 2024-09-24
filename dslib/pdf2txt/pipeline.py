@@ -22,12 +22,13 @@ def convertapi(in_path, out_path, method: Literal['ocr', 'pdf', 'rasterize'] = '
 
 
 # @disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v200')
-def rasterize_pdf(in_path, out_path):
+def rasterize_pdf(in_path, out_path, dpi=400):
+    # this breaks "encryption" e.g. FDP047N10.pdf
     from pdf2image import convert_from_path
     images = convert_from_path(in_path)
     assert images
     images[0].save(
-        out_path, "PDF", resolution=200.0, save_all=True, append_images=images[1:]
+        out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
     )
     assert os.path.isfile(out_path)
 
@@ -55,7 +56,7 @@ def add_options(parser):
             file_dependencies=[0, 'tesseract-stuff/tesseract.cfg', 'tesseract-stuff/mosfet.user-words'],
             out_files=[1],
             salt='v03')
-def ocrmypdf(in_path, out_path, rasterize:Union[bool, int]):
+def ocrmypdf(in_path, out_path, rasterize:Union[bool, int], try_decrypt=True):
     # custom wordlist
     # https://github.com/tesseract-ocr/test/blob/main/testing/eng.unicharset
     # https://vprivalov.medium.com/tesseract-ocr-tips-custom-dictionary-to-improve-ocr-d2b9cd17850b
@@ -73,13 +74,15 @@ def ocrmypdf(in_path, out_path, rasterize:Union[bool, int]):
     #if rasterize:
     #    rasterize_pdf(in_path, in_path + '.r.pdf')
     #    in_path = in_path + '.r.pdf'
-    import ocrmypdf
+    import ocrmypdf as ocrmypdf_
 
     #import PIL.Image
     #PIL.Image.MAX_IMAGE_PIXELS *= 2
     print('ocrmypdf', in_path)
 
-    ocrmypdf.ocr(in_path, out_path,
+    try:
+        ocrmypdf_.ocr(
+            in_path, out_path,
                  language='eng',
                  #image_dpi=
                  output_type='pdf',
@@ -95,6 +98,14 @@ def ocrmypdf(in_path, out_path, rasterize:Union[bool, int]):
                  #pages='1,2-4',
                  plugins='ocrmypdf_plugins.py',
                  )
+    except Exception as e:
+        if try_decrypt and ('is encrypted' in str(e) or isinstance(e, ocrmypdf_.EncryptedPdfError)):
+            dec_path = in_path + '.decrypted.pdf'
+            pdf2pdf(in_path, dec_path, method='qpdf_decrypt')
+            return ocrmypdf(dec_path, out_path, rasterize=rasterize, try_decrypt=False)
+        else:
+            raise
+
     assert os.path.isfile(out_path)
     return
 
@@ -154,6 +165,13 @@ def pdf2pdf(in_path, out_path, method):
         with open(out_path, 'wb') as f:
             f.write(ret.stdout)
 
+    def r400_ocrmypdf():
+        rasterize_pdf(in_path, in_path + '.r.pdf')
+        return ocrmypdf(in_path + '.r.pdf', out_path, rasterize=False)
+
+    def qpdf_decrypt():
+        subprocess.run(['qpdf', '--decrypt', in_path, out_path], check=True)
+
     # TODO https://stackoverflow.com/a/4297984
     import subprocess
     #os.path.isfile(out_path) and os.remove(out_path) # dont delete, inner function might use disk_cache
@@ -169,7 +187,9 @@ def pdf2pdf(in_path, out_path, method):
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),
         ocrmypdf_r400=lambda: ocrmypdf(in_path, out_path, rasterize=400),
+        r400_ocrmypdf=r400_ocrmypdf,
         ocrmypdf_redo=lambda: ocrmypdf(in_path, out_path, rasterize=False),
 
         convertapi_ocr=lambda: raster_ocr(in_path, out_path, 'convertapi'),
+        qpdf_decrypt=qpdf_decrypt,
     )[method]()
