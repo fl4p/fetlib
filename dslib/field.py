@@ -17,7 +17,7 @@ class Field():
         self.symbol = symbol
 
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
-            unit = 'ns' # ocr confusion
+            unit = 'ns'  # ocr confusion
 
         if unit in {'uC', 'μC'}:
             assert mul == 1
@@ -100,6 +100,27 @@ class Field():
         assert item in {'min', 'max', 'typ'}
         return getattr(self, item)
 
+    def values(self) -> List[float]:
+        return [self.min, self.typ, self.max]
+
+    def __eq__(self, other):
+        if isinstance(other, Field):
+            assert self.unit == other.unit
+            if self.symbol != other.symbol:
+                return False
+            other = other.values()
+
+        if isinstance(other, (tuple, list)):
+            assert len(other) == 3, other
+            ks = ('min', 'typ', 'max')
+            for i in range(0, 3):
+                v = self.__dict__[ks[i]]
+                if math.isnan(v) and math.isnan(other[i]):
+                    continue
+                if v != other[i]:
+                    return False
+        return True
+
 
 def parse_field_value(s):
     if isinstance(s, (float, int)):
@@ -119,12 +140,17 @@ class MpnMfr:
 
 
 class DatasheetFields():
-    def __init__(self, mfr=None, mpn=None, fields: Iterable[Field] = None):
-        self.part = MpnMfr(mpn, mfr)
+    def __init__(self, mfr=None, mpn=None, part: 'DiscoveredPart' = None, fields: Iterable[Field] = None):
+        from dslib.parts_discovery import DiscoveredPart
+        self.part: Union[DiscoveredPart, MpnMfr] = part or MpnMfr(mpn, mfr)
         self.fields_filled: Dict[str, Field] = {}
         self.fields_lists: Dict[str, List[Field]] = {}
         if fields:
             self.add_multiple(fields)
+
+    @property
+    def ds_path(self):
+        return self.part.get_ds_path()
 
     def add(self, f: Field):
         assert not math.isnan(f.typ_or_max_or_min)
@@ -144,18 +170,19 @@ class DatasheetFields():
             'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
             'Coss', 'Qsw',
         ]
-        field_mul = lambda sym: 1 if sym[0] == 'V' else 1e-9
+
+        field_mul = lambda sym, v: v if sym[0] == 'V' else (v * 1e-9)
 
         ds = self
 
         from dslib.spec_models import MosfetSpecs
         return MosfetSpecs(
-            Vds_max=ds.get_max('Vds', True),
+            Vds_max=ds.get_max('Vds'),
             Rds_on=ds.get_max('Rds_on_10v'),
             Qg=ds.get_typ_or_max_or_min('Qg') * 1e-9,
             tRise=ds.get_typ_or_max_or_min('tRise') * 1e-9,
             tFall=ds.get_typ_or_max_or_min('tFall') * 1e-9,
-            **{k: ds.get_typ_or_max_or_min(k) * field_mul(k) for k in mf_fields},
+            **{k: field_mul(k, ds.get_typ_or_max_or_min(k)) for k in mf_fields},
             Vpl=ds.get_typ_or_max_or_min('Vpl'),
         )
 
@@ -201,17 +228,17 @@ class DatasheetFields():
     def __bool__(self):
         return bool(self.fields_filled)
 
-    def __getattr__(self, item):
+    def __getattr__(self, item) -> Field:
         if item != 'fields_filled':
             ff = getattr(self, 'fields_filled')
             if item in ff:
                 return ff[item]
         raise AttributeError(item)
 
-    def __getitem__(self, item):
+    def __getitem__(self, item) -> Field:
         return self.fields_filled[item]
 
-    def all_fields(self):
+    def all_fields(self) -> List[Field]:
         return sum(map(list, self.fields_lists.values()), [])
 
     # def _apply_on_values(self, symbols=None, reduce_field):
@@ -269,6 +296,12 @@ class DatasheetFields():
                     min_err = max_err
 
         return n
+
+    def __str__(self):
+        return f'DataSheetFields({self.part.mfr},{self.part.mpn}, count={len(self)})'
+
+    def __repr__(self):
+        return str(self)
 
     def rmse(self, b: 'DatasheetFields'):
         raise NotImplemented()
