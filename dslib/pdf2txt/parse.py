@@ -19,6 +19,7 @@ def _empty(s):
 class TooManyPages(ValueError):
     pass
 
+
 @disk_cache(ttl='30d', file_dependencies=[0], salt='v03')
 def extract_text(pdf_path, try_ocr=False):
     import fitz  # PyMuPDF
@@ -106,8 +107,12 @@ def validate_datasheet_text(mfr, mpn, text):
     if mpn.split(',')[0][:7].lower() not in text.lower():
         raise ValueError(mpn + ' not found in PDF text(%s)' % text[:30])
 
+
 @disk_cache(ttl='99d', file_dependencies=[0], salt='v22', ignore_missing_inp_paths=True)
-def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None) -> DatasheetFields:
+def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
+                    tabular_pre_methods=None,
+                    need_symbols=None
+                    ) -> DatasheetFields:
     if not pdf_path:
         assert mfr
         pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
@@ -147,7 +152,6 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None)
 
     pdf_text = normalize_pdf_text(pdf_text)
 
-
     # S19-0181-Rev. A, 25-Feb-2019, "S16-0163-Rev. A, 01-Feb-16"
     # "November 2021", "2021-01"
     # Rev.2.1,2022-03-28
@@ -162,7 +166,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None)
 
     try:
         print(pdf_path, 'tabular read ...')
-        tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods)
+        tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods, need_symbols=need_symbols)
         assert tabular_ds, 'empty tabular data'
         if tabular_ds:
             ds.add_multiple(tabular_ds.all_fields())
@@ -277,12 +281,12 @@ def field_value_regex_variations(head, unit, signed=False):
     field = r'[0-9]+(\.[0-9]+)?'
     if signed:
         field = r'-?' + field
-    nan = r'[-\s_]*|nan'
+    nan = r'[-\s_]*|nan|\.'
     field_nan = nan + r'|' + field
 
     return [
         re.compile(  # min typ max
-            head + rf',(?P<min>({field_nan})),(?P<typ>({field})),(?P<max>({field_nan})),I?(?P<unit>' + unit + r')(,|$|\s)',
+            head + rf'(?P<minN_typ_maxN_unit>.)?,(?P<min>({field_nan})),(?P<typ>({field})),(?P<max>({field_nan})),I?(?P<unit>' + unit + r')(,|$|\s)',
             re.IGNORECASE),
 
         re.compile(  # typ surrounded by nan/-
@@ -456,7 +460,7 @@ def get_field_detect_regex(mfr):
         # others:       Qgs1* = charge from Qg_th to miller plateau start (0 Qgs_th|TH|Qgs1|)
         qgs += '1?'
     else:
-        qgs += '([^1]|$)' # dont match Qgs1
+        qgs += '([^1]|$)'  # dont match Qgs1
         qgs1 = r'|^Q[ _]?gs[ _]?1$'
 
     # regex matched on cell contents
@@ -470,7 +474,9 @@ def get_field_detect_regex(mfr):
 
         Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)', re.IGNORECASE),
         Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))', re.IGNORECASE),
-        Qg_th=(re.compile(rf'(gate[\s-]+charge\s+at\s+V[ _]?th|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})', re.IGNORECASE),
+        Qg_th=(re.compile(
+            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})',
+            re.IGNORECASE),
                ('post-threshold',)),
         Qgs=re.compile(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
@@ -657,9 +663,14 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
             # fix image datasheets, weird encoding
             'ocrmypdf_r400',
             'r400_ocrmypdf',
+
+            'ocrmypdf_r600',
+            'r600_ocrmypdf',
         )
     elif isinstance(pre_process_methods, str):
         pre_process_methods = (pre_process_methods,)
+
+    assert len(set(pre_process_methods)) == len(pre_process_methods), 'duplicate pre_process_methods'
 
     for method in list(pre_process_methods):
         if f'.{method}.' in ds_path:
@@ -703,7 +714,8 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
             if need_symbols:
                 missing = need_symbols - set(combined_fields.keys())
                 if missing:
-                    print(ds_path, 'extracted', len(fields), 'fields with method', method, 'but still missing fields:', missing)
+                    print(ds_path, 'extracted', len(fields), 'fields with method', method, 'but still missing fields:',
+                          missing)
                     continue
                 else:
                     return combined_fields
@@ -711,10 +723,11 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
         else:
             print(ds_path, 'tabula no fields extracted with method', method)
 
-    if need_symbols:
+    if need_symbols and combined_fields:
         missing = need_symbols - set(combined_fields.keys())
         print(ds_path, 'needed', need_symbols, ', have', set(combined_fields.keys()), 'missing fields:', missing)
-        raise ValueError('missing fields ' + str(missing))
+        return combined_fields
+        # raise ValueError('missing fields ' + str(missing))
 
     # no fields found..
     txt = extract_text(ds_path, try_ocr=False)

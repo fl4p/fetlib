@@ -87,7 +87,7 @@ if 'v2':
     BMRef('datasheets/toshiba/TK34A10N1.pdf', tags='Qgs1')
 
     # IXTQ180N10T # tabula detection issue
-    # IRF150DM115XTMA1
+    # IRF150DM115XTMA1 # long ocr
 
     # datasheets/littelfuse/IXTA160N10T7.pdf
     # 'datasheets/mcc/MCB70N10YA-TP.pdf'

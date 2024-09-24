@@ -43,7 +43,7 @@ def main():
         print(p.discovered.get_ds_path())
 
 
-def compile_part_datasheet(part: DiscoveredPart):
+def compile_part_datasheet(part: DiscoveredPart, need_symbols):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -61,7 +61,7 @@ def compile_part_datasheet(part: DiscoveredPart):
     # parse datasheet (tabula and pdf2txt):
     if os.path.isfile(ds_path):
         try:
-            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
+            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols)
         except Exception as e:
             print(ds_path, e)
             return None, None
@@ -180,6 +180,12 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     result_parts: List[Part] = []  # db storage
     all_mpn = set()
 
+    need_symbols = {
+        'tRise', 'tFall',  # HS
+        'Qgd', 'Qgs',  # HS
+        'Qrr'  # LS
+    }
+
     if not os.path.isdir('datasheets'):
         try:
             import subprocess
@@ -193,7 +199,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         with(open('fet-datasheets.pkl', 'rb')) as f:
             dss: List[DatasheetFields] = pickle.load(f)
     else:
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p) for p in parts}
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols) for p in parts}
         results = run_parallel(jobs, 8, 'multiprocessing')
         dss: List[DatasheetFields] = list(results.values())
 
@@ -202,7 +208,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
 
     print('computing power loss...')
     for ds in dss:
-        if isinstance(ds, tuple) and ds == (None,None):
+        if isinstance(ds, tuple) and ds == (None, None):
             continue
         part, row = compute_part_powerloss(ds, dcdc)
         if part is not None:

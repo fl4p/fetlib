@@ -15,7 +15,7 @@ nan = na = math.nan
 def parse_line_tests():
     r = dim_regs['V'][0]
     m = next(r.finditer("Diode forward voltage,Vsp,-,0.89,1.2,V Ves=0 V, Ir=50 A, Tj=25 °C"), None)
-    assert m.groupdict() == dict(max='1.2', min='-', typ='0.89', unit='V')
+    assert m.groupdict() == dict(max='1.2', min='-', typ='0.89', unit='V', minN_typ_maxN_unit=None), m.groupdict()
 
     r = dim_regs['t'][7]
     m = next(r.finditer('Rise time,f,-,10 -,ns Re=1.60'), None)
@@ -24,6 +24,7 @@ def parse_line_tests():
     # raise NotImplemented()
     n = math.nan
     cases = [
+        ("Fall time,t,.,14.0,.,ns,Von=75 V, Ves=10 V, [p=45 A", 'tFall', (n, 14, n)),
         ("43,Qgs,-,27,-,nC,,,,,", 'Qgs', (n, 27, n)),
         ("Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V", "Qg_th", (n, 2.7, n)),
         # ("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3", "Vsd", (n, n, 1.3)), # TODO
@@ -442,6 +443,12 @@ def pdf_ocr_tests():
     assert d.tFall.typ == 8
     # raster_ocr('datasheets/infineon/BSC070N10NS3GATMA1.pdf', o,'ocrmypdf')
 
+    ds = tabula_read('datasheets/infineon/IRF150DM115XTMA1.pdf',
+                     pre_process_methods=('r400_ocrmypdf', 'r600_ocrmypdf',),
+                     need_symbols={'tRise', 'tFall'},
+                     )
+    assert ds.tRise and ds.tFall
+
 
 def test_convertapi():
     from dslib.pdf2txt.pipeline import convertapi
@@ -482,16 +489,10 @@ def test_rasterize():
 
 
 if __name__ == '__main__':
+    parse_line_tests()
 
-    #ds = tabula_read('datasheets/_samples/infineon/IRF150DM115XTMA1_cyn_char.pdf')
-    #assert ds
-
-    ds = tabula_read('datasheets/infineon/IRF150DM115XTMA1.pdf',
-                     pre_process_methods=('ocrmypdf_r400', 'r400_ocrmypdf'),
-                     need_symbols={'tRise','tFall'},
-                    )
-    assert ds.tRise and ds.tFall
-
+    # ds = tabula_read('datasheets/_samples/infineon/IRF150DM115XTMA1_cyn_char.pdf')
+    # assert ds
 
     ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
         dfs=[pd.DataFrame(['43,Qgs,-,27,-,nC,,,,,'.split(',')])],
@@ -504,8 +505,6 @@ if __name__ == '__main__':
         mfr='infineon',
         ds_path='')
     assert ds.tRise.typ == 21
-
-    parse_line_tests()
 
     d = parse_datasheet('datasheets/infineon/AUIRFS4115.pdf')  # split rows
     assert d.Qrr.typ == 300
@@ -529,7 +528,14 @@ if __name__ == '__main__':
     assert len(ds) > 8
 
     # macos preview fixes: (CUPS printer)
-    ds = parse_datasheet('datasheets/infineon/./IRF150DM115XTMA1.pdf', mfr='infineon')  # OCR long
+    ds = tabula_read(
+        'datasheets/infineon/IRF150DM115XTMA1.pdf',
+        pre_process_methods=('ocrmypdf_r400',
+                             'r400_ocrmypdf',
+
+                             'ocrmypdf_r600',
+                             'r600_ocrmypdf',),
+        need_symbols=('tRise', 'tFall'))  # OCR long
     ref = DatasheetFields("IRF150DM115XTMA1", "infineon",
                           fields=[Field("tFall", nan, 14.0, nan, "ns"),
                                   Field("tRise", nan, 21.0, nan, "ns"),

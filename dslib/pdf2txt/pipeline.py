@@ -21,7 +21,7 @@ def convertapi(in_path, out_path, method: Literal['ocr', 'pdf', 'rasterize'] = '
     assert os.path.isfile(out_path)
 
 
-# @disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v200')
+@disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v200')
 def rasterize_pdf(in_path, out_path, dpi=400):
     # this breaks "encryption" e.g. FDP047N10.pdf
     from pdf2image import convert_from_path
@@ -136,6 +136,12 @@ def raster_ocr(in_path, out_path, method: Literal['convertapi', 'ocrmypdf']):
         raise ValueError(method)
 
 
+#@disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v01')
+def rasterize_ocrmypdf(in_path, out_path, dpi):
+    rasterize_pdf(in_path, in_path + '.r.pdf', dpi=dpi)
+    return ocrmypdf(in_path + '.r.pdf', out_path, rasterize=False)
+
+
 # @disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v02')
 def pdf2pdf(in_path, out_path, method):
     # import fitz
@@ -165,9 +171,7 @@ def pdf2pdf(in_path, out_path, method):
         with open(out_path, 'wb') as f:
             f.write(ret.stdout)
 
-    def r400_ocrmypdf():
-        rasterize_pdf(in_path, in_path + '.r.pdf')
-        return ocrmypdf(in_path + '.r.pdf', out_path, rasterize=False)
+
 
     def qpdf_decrypt():
         subprocess.run(['qpdf', '--decrypt', in_path, out_path], check=True)
@@ -187,7 +191,9 @@ def pdf2pdf(in_path, out_path, method):
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),
         ocrmypdf_r400=lambda: ocrmypdf(in_path, out_path, rasterize=400),
-        r400_ocrmypdf=r400_ocrmypdf,
+        ocrmypdf_r600=lambda: ocrmypdf(in_path, out_path, rasterize=600),
+        r400_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=400),
+        r600_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=600),
         ocrmypdf_redo=lambda: ocrmypdf(in_path, out_path, rasterize=False),
 
         convertapi_ocr=lambda: raster_ocr(in_path, out_path, 'convertapi'),

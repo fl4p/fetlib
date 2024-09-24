@@ -128,7 +128,7 @@ def parse_field_value(s):
     if not s:
         return math.nan
     s = normalize_dash(s.strip().strip('\x03').rstrip('L'))
-    if not s or s == '-' or set(s) == {'-'}:
+    if not s or s == '-' or s =='.' or set(s) == {'-'}:
         return math.nan
     return float(s)
 
