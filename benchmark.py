@@ -89,6 +89,8 @@ if 'v2':
     # IXTQ180N10T # tabula detection issue
     # IRF150DM115XTMA1 # long ocr
 
+    # IR680ADP-T1-RE3 # complex structured tables
+
     # datasheets/littelfuse/IXTA160N10T7.pdf
     # 'datasheets/mcc/MCB70N10YA-TP.pdf'
 

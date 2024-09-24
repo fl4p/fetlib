@@ -58,6 +58,8 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols):
     man_fields = dslib.manual_fields.get_fields()
     ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []))
 
+    need_symbols = set(need_symbols) - set(ds.keys())
+
     # parse datasheet (tabula and pdf2txt):
     if os.path.isfile(ds_path):
         try:
@@ -183,7 +185,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     need_symbols = {
         'tRise', 'tFall',  # HS
         'Qgd', 'Qgs',  # HS
-        'Qrr'  # LS
+        #'Qrr'  # LS # kl leave this, many DS dont have this
     }
 
     if not os.path.isdir('datasheets'):
@@ -195,8 +197,8 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
 
     import pickle
 
-    if os.path.isfile('fet-datasheets.pkl'):
-        with(open('fet-datasheets.pkl', 'rb')) as f:
+    if os.path.isfile('fet-datasheets2.pkl'):
+        with(open('fet-datasheets2.pkl', 'rb')) as f:
             dss: List[DatasheetFields] = pickle.load(f)
     else:
         jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols) for p in parts}

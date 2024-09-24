@@ -5,7 +5,7 @@ from typing import Literal
 def isnum(v):
     return v is not None and not math.isnan(v)
 
-QgsQgs2_ratio_estimate = 0.6
+QgsQgs2_ratio_estimate = 0.45 # 0.3 ... 0.6
 class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
@@ -62,13 +62,21 @@ class MosfetSpecs:
             Qg_th = Qgs - Qgs2
             assert Qg_th > 0, Qg_th
 
+        if not isnum(Qgs) and isnum(Qg_th) and isnum(Qgs2):
+            Qgs = Qg_th + Qgs2
+
         self.Qg = Qg or math.nan
         self.Qgd = Qgd or math.nan
         self.Qgs = Qgs or math.nan
         self._Qgs2 = Qgs2 or math.nan
         self.Qg_th = Qg_th or math.nan
+        self._Qsw = Qsw or math.nan # untouched!
 
         assert not isnum(Qg_th) or Qg_th < Qgs, (Qgs, Qg_th,)
+
+        if isnum(Qsw) and isnum(Qgd) and isnum(Qgs2):
+            print('WARNING: Qsw=(%.1fn) != (%.1fn + %.1fn)=Qgd+Qgs2' % (Qsw*1e9, Qgd*1e9, Qgs2*1e9))
+            # assert Qsw == (Qgd + Qgs2)
 
         self._Vpl = Vpl or math.nan
         assert not isnum(Vpl) or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
@@ -123,6 +131,8 @@ class MosfetSpecs:
 
     @property
     def Qsw(self):
+        if not math.isnan(self._Qsw):
+            return self._Qsw
         return self.Qgd + self.Qgs2
 
     def __str__(self):

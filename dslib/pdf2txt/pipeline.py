@@ -194,6 +194,7 @@ def pdf2pdf(in_path, out_path, method):
         ocrmypdf_r600=lambda: ocrmypdf(in_path, out_path, rasterize=600),
         r400_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=400),
         r600_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=600),
+        r800_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=800),
         ocrmypdf_redo=lambda: ocrmypdf(in_path, out_path, rasterize=False),
 
         convertapi_ocr=lambda: raster_ocr(in_path, out_path, 'convertapi'),

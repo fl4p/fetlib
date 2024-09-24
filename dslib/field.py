@@ -62,7 +62,7 @@ class Field():
             self.max), 'all nan ' + self.__repr__()
 
     def __repr__(self):
-        return f'Field("{self.symbol}",{self.min},{self.typ},{self.max},"{self.unit}")' #,cond={repr(self.cond)}
+        return f'Field("{self.symbol}",{self.min},{self.typ},{self.max},"{self.unit}")'  # ,cond={repr(self.cond)}
 
     def __str__(self):
         return f'{self.symbol} = %5.1f,%5.1f,%5.1f [%s] (%s)' % (self.min, self.typ, self.max, self.unit, self.cond)
@@ -128,7 +128,7 @@ def parse_field_value(s):
     if not s:
         return math.nan
     s = normalize_dash(s.strip().strip('\x03').rstrip('L'))
-    if not s or s == '-' or s =='.' or set(s) == {'-'}:
+    if not s or s == '-' or s == '.' or set(s) == {'-'}:
         return math.nan
     return float(s)
 
@@ -270,6 +270,8 @@ class DatasheetFields():
         return n
 
     def show_diff(self, a: 'DatasheetFields', symbols=None, err_threshold=0.05, title=''):
+        assert 0 <= err_threshold < 0.2
+
         b = self
         n = 0
         if not symbols:
@@ -292,7 +294,7 @@ class DatasheetFields():
                     print(title, self.part.mfr, self.part.mpn,
                           f'err {round(max_err, 3)} > {err_threshold}',
                           '\nref=', f,
-                          '\noth=', a.fields_filled.get(sym,None)
+                          '\noth=', a.fields_filled.get(sym, None)
                           )
                     n += 1
 

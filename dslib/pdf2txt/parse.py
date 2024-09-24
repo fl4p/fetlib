@@ -102,13 +102,17 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
 
 def validate_datasheet_text(mfr, mpn, text):
     if len(text) < 60:
-        raise ValueError('text too short ' + str(len(text)))
+        print('text too short ' + str(len(text)))
+        return False
 
     if mpn.split(',')[0][:7].lower() not in text.lower():
-        raise ValueError(mpn + ' not found in PDF text(%s)' % text[:30])
+        print(mpn + ' not found in PDF text(%s)' % text[:30])
+        return False
+
+    return True
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt='v22', ignore_missing_inp_paths=True)
+@disk_cache(ttl='99d', file_dependencies=[0], salt='v25', ignore_missing_inp_paths=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
                     need_symbols=None
@@ -126,29 +130,37 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     if not mpn:
         mpn = os.path.basename(pdf_path).split('.')[0]
 
-    pdf_text = ''
-    for method in ['nop', 'qpdf_decrypt', 'ocrmypdf_redo', 'ocrmypdf_r400', 'r400_ocrmypdf']:
-        try:
-            if method == 'nop':
-                out_path = pdf_path
-            else:
+    pdf_text = extract_text(pdf_path, try_ocr=False)
+
+    if not validate_datasheet_text(mfr, mpn, pdf_text):
+        methods = ['qpdf_decrypt', 'ocrmypdf_redo', 'ocrmypdf_r400', 'r400_ocrmypdf']
+
+        if not pdf_text:
+            methods.remove('ocrmypdf_redo')
+            methods.append('ocrmypdf_redo')  # move to end, because its intense
+
+        for method in methods:
+            try:
                 out_path = pdf_path + '.' + method + '.pdf'
                 pdf2pdf(pdf_path, out_path, method)
 
-            pdf_text = extract_text(out_path, try_ocr=False)
-            validate_datasheet_text(mfr, mpn, pdf_text)
-            pdf_path = out_path
-            print(pdf_path, 'extracted', len(pdf_text), 'characters using', method)
-            break
-        except TooManyPages as e:
-            print(e)
-            raise
-        except Exception as e:
-            print(pdf_path, 'text extraction error using', method, e)
-            continue
+                pdf_text = extract_text(out_path, try_ocr=False)
+
+                if not validate_datasheet_text(mfr, mpn, pdf_text):
+                    print(pdf_path, 'text extraction error using', method)
+                    continue
+
+                pdf_path = out_path
+                print(pdf_path, 'extracted', len(pdf_text), 'characters using', method)
+
+                break
+
+            except TooManyPages as e:
+                print(e)
+                raise
 
     if len(pdf_text) < 40:
-        print(pdf_path, 'no text extracted')
+        print(pdf_path, 'no/little text extracted')
 
     pdf_text = normalize_pdf_text(pdf_text)
 
@@ -163,6 +175,11 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path)
     ds.add_multiple(txt_fields)
     # TODO do extract_fields_from_text again afet raster_ocr
+
+    if need_symbols:
+        need_symbols = set(need_symbols) - set(ds.keys())
+    else:
+        need_symbols = None
 
     try:
         print(pdf_path, 'tabular read ...')
@@ -295,7 +312,7 @@ def field_value_regex_variations(head, unit, signed=False):
 
         # "Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V"
         re.compile(  # head,gibber?,nan?,typ -,unit ...,
-            head + r',([-_()a-z0-9]+,)?((' + field_nan + '),){0,4}(?P<typ>(' + field + r'))\s*-+\s*,(?P<unit>' + unit + r')(,|$|\s)',
+            head + r',([-_()a-z0-9]+,)?((' + field_nan + '),){0,4}(?P<typ>(' + field + r'))(\s*-+|\s+(?P<max>(' + field + r'))),(?P<unit>' + unit + r')(,|$|\s)',
             re.IGNORECASE),
 
         re.compile(  # min,typ,max with (scrambled) testing conditions and unit
@@ -472,7 +489,6 @@ def get_field_detect_regex(mfr):
             re.IGNORECASE),  # QRM
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
 
-        Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)', re.IGNORECASE),
         Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))', re.IGNORECASE),
         Qg_th=(re.compile(
             rf'(gate[\s-]+charge\s+at\s+V[ _]?th|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})',
@@ -483,6 +499,9 @@ def get_field_detect_regex(mfr):
             re.IGNORECASE),
         Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"?miller"?\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
         Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
+        Qg=re.compile( # this should be after all other gate charges
+            rf'(total[\s-]+gate[\s-]+charge|gate[\s-]+charge[\s-]+total|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)',
+            re.IGNORECASE),
 
         Vpl=re.compile(r'(gate\s+plate\s*au\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
 
@@ -705,7 +724,8 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
 
         if len(dfs):  # and not os.path.isfile(ds_path + '.csv'):
             pd.concat(dfs, ignore_index=True, axis=0).map(
-                lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.csv', header=False)
+                lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.' + method + '.csv',
+                                                                                  header=False)
 
         fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=ds_path)
 
