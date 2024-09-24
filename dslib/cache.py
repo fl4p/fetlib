@@ -266,6 +266,8 @@ def hashable_to_sha224(obj):
     return hashlib.sha224(bytes(str(obj), 'utf-8')).hexdigest()
 
 
+dict_keys_t = type({}.keys())
+
 def to_hashable(obj):
     if is_hashable(obj):
         return obj  # , type(obj)
@@ -274,6 +276,8 @@ def to_hashable(obj):
         obj = sorted(obj)
     elif isinstance(obj, dict):
         obj = sorted(obj.items())
+    elif isinstance(obj, dict_keys_t):
+        obj = sorted(obj)
 
     if isinstance(obj, (list, tuple)):
         return tuple(map(to_hashable, obj))
@@ -582,7 +586,8 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
             if file_dependencies:
                 mtimes = {
                     '__mtime:' + fn: (os.path.getmtime(fn))
-                    for fn in get_file_names(args, kwargs, file_dependencies)  if not ignore_missing_inp_paths or fn is not None}
+                    for fn in get_file_names(args, kwargs, file_dependencies) if
+                    not ignore_missing_inp_paths or fn is not None}
             if salt is not None:
                 mtimes['__salt__'] = salt
             cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs={**kwargs, **mtimes})
