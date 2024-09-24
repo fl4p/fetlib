@@ -78,7 +78,7 @@ def ocrmypdf(in_path, out_path, rasterize:Union[bool, int], try_decrypt=True):
 
     #import PIL.Image
     #PIL.Image.MAX_IMAGE_PIXELS *= 2
-    print('ocrmypdf', in_path)
+    print('ocrmypdf', 'redo' if not rasterize else ('raster ' +str(rasterize)), in_path)
 
     try:
         ocrmypdf_.ocr(

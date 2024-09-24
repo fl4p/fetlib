@@ -106,7 +106,7 @@ def validate_datasheet_text(mfr, mpn, text):
     if mpn.split(',')[0][:7].lower() not in text.lower():
         raise ValueError(mpn + ' not found in PDF text(%s)' % text[:30])
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt='v21', ignore_missing_inp_paths=True)
+@disk_cache(ttl='99d', file_dependencies=[0], salt='v22', ignore_missing_inp_paths=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None) -> DatasheetFields:
     if not pdf_path:
         assert mfr
@@ -625,7 +625,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> Dat
     return fields
 
 
-def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
+def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> DatasheetFields:
     """
 
     nop
@@ -645,6 +645,8 @@ def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
     """
 
     mfr = ds_path.split('/')[-2]
+
+    need_symbols = need_symbols and set(need_symbols)
 
     if pre_process_methods is None:
         pre_process_methods = (
@@ -666,6 +668,8 @@ def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
             pre_process_methods.remove(method)
             if 'nop' not in pre_process_methods:
                 pre_process_methods.insert(0, 'nop')
+
+    combined_fields = DatasheetFields()
 
     last_e = None
     for method in pre_process_methods:
@@ -693,10 +697,24 @@ def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
                 lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.csv', header=False)
 
         fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=ds_path)
+
         if len(fields) > 0:
+            combined_fields.add_multiple(fields.all_fields())
+            if need_symbols:
+                missing = need_symbols - set(combined_fields.keys())
+                if missing:
+                    print(ds_path, 'extracted', len(fields), 'fields with method', method, 'but still missing fields:', missing)
+                    continue
+                else:
+                    return combined_fields
             return fields
         else:
             print(ds_path, 'tabula no fields extracted with method', method)
+
+    if need_symbols:
+        missing = need_symbols - set(combined_fields.keys())
+        print(ds_path, 'needed', need_symbols, ', have', set(combined_fields.keys()), 'missing fields:', missing)
+        raise ValueError('missing fields ' + str(missing))
 
     # no fields found..
     txt = extract_text(ds_path, try_ocr=False)

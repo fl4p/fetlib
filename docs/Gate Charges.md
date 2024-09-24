@@ -15,11 +15,11 @@ The amount of charge of the gate to reach the miller-plateau is often
 * AUIRF540ZXKMA1
 * IRF6644TRPBF
 
-![img.png](docs/gate-charge-waveform-infineon-auir.png)
+![img.png](gate-charge-waveform-infineon-auir.png)
 
 * BSS169IXTSA1
 
-![img.png](docs/gate-charge-curve-infineon-bss.png)
+![img.png](gate-charge-curve-infineon-bss.png)
 
 ## NXP
 
@@ -27,7 +27,7 @@ The amount of charge of the gate to reach the miller-plateau is often
 * Specifies: Qg, Qgs, Qgd
 * Qgs1 = Qgs * (Vth/Vpl)
 
-![img.png](docs/gate-charge-curve-nxp.png)
+![img.png](gate-charge-curve-nxp.png)
 
 * PSMN5R5-100YSFX.pdf
 * QGS(th): pre-threshold gate- source charge
@@ -35,7 +35,7 @@ The amount of charge of the gate to reach the miller-plateau is often
 
 ## Onsemi
 
-![img.png](docs/gate-charge-curve-onsemi-FDB.png)
+![img.png](gate-charge-curve-onsemi-FDB.png)
 FDB024N08BL7.pdf
 
 ## Toshiba
@@ -44,7 +44,7 @@ https://toshiba.semicon-storage.com/info/application_note_en_20180726_AKX00068.p
 
 * Toshiba's Qgs1 is = Qgs
 
-![img.png](docs/gate-drive-waveform-toshiba.png)
+![img.png](gate-drive-waveform-toshiba.png)
 
 # Predict Qgs2
 

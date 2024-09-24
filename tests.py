@@ -5,10 +5,11 @@ import pandas as pd
 
 import dslib.pdf2txt.parse
 import dslib.pdf2txt.pipeline
+from dslib.field import DatasheetFields, Field
 from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs, raster_ocr
 from dslib.pdf2txt.pipeline import pdf2pdf
 
-na = math.nan
+nan = na = math.nan
 
 
 def parse_line_tests():
@@ -23,7 +24,7 @@ def parse_line_tests():
     # raise NotImplemented()
     n = math.nan
     cases = [
-        ("43,Qgs,-,27,-,nC,,,,,", 'Qgs', (n,27,n)),
+        ("43,Qgs,-,27,-,nC,,,,,", 'Qgs', (n, 27, n)),
         ("Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V", "Qg_th", (n, 2.7, n)),
         # ("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3", "Vsd", (n, n, 1.3)), # TODO
         ("Diode forward voltage,VDSF,IDR = 70 A, VGS = 0 V,-,-,-1.2,V", "Vsd", (n, n, -1.2)),
@@ -121,9 +122,7 @@ def parse_pdf_tests():
     # TODOå
 
     d = parse_datasheet('datasheets/mcc/MCB70N10YA-TP.pdf')
-    assert len(d) >=8
-
-
+    assert len(d) >= 8
 
     d = parse_datasheet('datasheets/onsemi/FDP047N10.pdf')
     assert d.Qg == (na, 160, 210)
@@ -483,12 +482,28 @@ def test_rasterize():
 
 
 if __name__ == '__main__':
+
+    #ds = tabula_read('datasheets/_samples/infineon/IRF150DM115XTMA1_cyn_char.pdf')
+    #assert ds
+
+    ds = tabula_read('datasheets/infineon/IRF150DM115XTMA1.pdf',
+                     pre_process_methods=('ocrmypdf_r400', 'r400_ocrmypdf'),
+                     need_symbols={'tRise','tFall'},
+                    )
+    assert ds.tRise and ds.tFall
+
+
     ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
         dfs=[pd.DataFrame(['43,Qgs,-,27,-,nC,,,,,'.split(',')])],
         mfr='infineon',
         ds_path='')
-
     assert ds.Qgs.typ == 27
+
+    ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
+        dfs=[pd.DataFrame(['56,Rise time te,,21,,ns,"Voo=75 V, Ves=10 V, Ib=45 A,",,,,'.split(',')])],
+        mfr='infineon',
+        ds_path='')
+    assert ds.tRise.typ == 21
 
     parse_line_tests()
 
@@ -500,13 +515,33 @@ if __name__ == '__main__':
 
     # parse_datasheet(mfr='diodes', mpn='DMTH8003SPS-13')
     d = parse_datasheet('datasheets/toshiba/XPW4R10ANB,L1XHQ.pdf')
+    assert len(d) >= 7
 
-    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon')
-    assert len(d) > 8
+    ds = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon')
+    ref = DatasheetFields("IPT025N15NM6ATMA1", "infineon",
+                          fields=[Field("Qrr", nan, 184.0, 368.0, "None"), Field("Qg", nan, 105.0, 137.0, "nC"),
+                                  Field("Coss", 2300.0, 3000.0, nan, "pF"), Field("tRise", nan, 16.0, nan, "ns"),
+                                  Field("tFall", nan, 19.0, nan, "ns"), Field("Qgs", nan, 41.0, 53.0, "nC"),
+                                  Field("Qg_th", nan, 26.0, nan, "nC"), Field("Qgd", nan, 23.0, 35.0, "nC"),
+                                  Field("Qsw", nan, 38.0, nan, "nC"), Field("Vpl", nan, 5.4, nan, "V"),
+                                  Field("Vsd", nan, 0.86, 1.0, "V")])
+    assert ref.show_diff(ds, err_threshold=1e-3) == 0
+    assert len(ds) > 8
 
     # macos preview fixes: (CUPS printer)
-    ds = parse_datasheet('datasheets/infineon/IRF150DM115XTMA1.pdf', mfr='infineon')  # OCR
+    ds = parse_datasheet('datasheets/infineon/./IRF150DM115XTMA1.pdf', mfr='infineon')  # OCR long
+    ref = DatasheetFields("IRF150DM115XTMA1", "infineon",
+                          fields=[Field("tFall", nan, 14.0, nan, "ns"),
+                                  Field("tRise", nan, 21.0, nan, "ns"),
+                                  Field("Qgs", nan, 13.2, nan, "nC"),
+                                  Field("Qg_th", nan, 8.7, nan, "nC"), Field("Qgd", nan, 8.0, 12.0, "nC"),
+                                  Field("Qsw", nan, 12.5, nan, "nC"), Field("Qg", nan, 33.0, 50.0, "nC"),
+                                  Field("Vpl", nan, 5.7, nan, "V"), Field("Vsd", nan, 0.9, 1.2, "V")])
+    assert ref.show_diff(ds, err_threshold=1e-3) == 0
+    assert len(ds) >= 8
+
     assert ds.get('Qgs', 'typ') == 13.2
+    # assert len(ds) > 9
 
     # fixable with maco Preview print as pdf (came as CUPS method?)
     df = tabula_read('datasheets/infineon/IRF7779L2TRPBF.pdf')
@@ -515,7 +550,6 @@ if __name__ == '__main__':
     # fixable with gs:
     df = parse_datasheet('datasheets/onsemi/NVMFS6H800NWFT1G.pdf')
     assert len(df) > 5
-
 
     test_rasterize()
     pdf_ocr_tests()

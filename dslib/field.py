@@ -13,7 +13,7 @@ class Field():
     StatLiteral = Literal['min', 'max', 'typ']
     Stats = cast(List[StatLiteral], ['min', 'typ', 'max'])
 
-    def __init__(self, symbol: str, min, typ, max, mul=1, cond=None, unit=None):
+    def __init__(self, symbol: str, min, typ, max, unit=None, mul=1, cond=None):
         self.symbol = symbol
 
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
@@ -62,7 +62,7 @@ class Field():
             self.max), 'all nan ' + self.__repr__()
 
     def __repr__(self):
-        return f'Field("{self.symbol}", min={self.min}, typ={self.typ}, max={self.max}, unit="{self.unit}", cond={repr(self.cond)})'
+        return f'Field("{self.symbol}",{self.min},{self.typ},{self.max},"{self.unit}")' #,cond={repr(self.cond)}
 
     def __str__(self):
         return f'{self.symbol} = %5.1f,%5.1f,%5.1f [%s] (%s)' % (self.min, self.typ, self.max, self.unit, self.cond)
@@ -281,14 +281,18 @@ class DatasheetFields():
                 for stat in cast(List[Field.StatLiteral], ['min', 'typ', 'max']):
                     # TODO iterate fields_list and take min err
                     rv = f[stat]
-                    are = abs((a.get(sym, stat) - rv) / rv)
+                    v = a.get(sym, stat)
+                    if not math.isnan(rv) and math.isnan(v):
+                        are = 1
+                    else:
+                        are = abs((v - rv) / rv)
                     max_err = max(max_err, are)
                 if max_err >= err_threshold:
                     print('')
                     print(title, self.part.mfr, self.part.mpn,
                           f'err {round(max_err, 3)} > {err_threshold}',
                           '\nref=', f,
-                          '\noth=', a.fields_filled[sym]
+                          '\noth=', a.fields_filled.get(sym,None)
                           )
                     n += 1
 
@@ -298,10 +302,10 @@ class DatasheetFields():
         return n
 
     def __str__(self):
-        return f'DataSheetFields({self.part.mfr},{self.part.mpn}, count={len(self)})'
+        return f'DatasheetFields({self.part.mfr},{self.part.mpn}, count={len(self)})'
 
     def __repr__(self):
-        return str(self)
+        return f'DatasheetFields("{self.part.mfr}","{self.part.mpn}",fields={list(self.fields_filled.values())})'
 
     def rmse(self, b: 'DatasheetFields'):
         raise NotImplemented()
