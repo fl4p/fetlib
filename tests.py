@@ -6,7 +6,8 @@ import pandas as pd
 import dslib.pdf2txt.parse
 import dslib.pdf2txt.pipeline
 from dslib.field import DatasheetFields, Field
-from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs, raster_ocr
+from dslib.pdf2txt import strip_no_print_latin, ocr_post_subs
+from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs, raster_ocr, detect_fields
 from dslib.pdf2txt.pipeline import pdf2pdf
 
 nan = na = math.nan
@@ -24,12 +25,53 @@ def test_parse_lines():
     # raise NotImplemented()
     n = math.nan
     cases = [
+        # (CSV_ROW, DIM, (MIN,TYP,MAX))
+        # ("Qg,Total Gate Charge,---,60,91,ID = 26A",'Qg',(na,60,91)),
+        # ("Qgd,Gate-to-Drain Charge,---,28,42,VGS = 10V ", 'Qg', ()),
+        # ("Qrr,Reverse Recovery Charge,--- 1.3,2.0,C,di,dt = 100A,s ","Qrr",()),
+        # "Qg,Total Gate Charge ---,---,130,nan,ID = 28A,nan,nan"
+        # "Output capacitance,V GS=0V, VC oss f =1MHz,DS,=25V,nan,-,940,1222,nan"
+        # AUIRF7759L2TR.pdf Qsw no value match in  "Qsw,Switch Charge (Qgs2 + Qgu),-,73 --,nan"
+        # tFall no value match in  "ts,Fall Time,-- 33 --,nan"
+        # "tr,nan,nan,Reverse Recovery Time,-. 64 96 ns,[Ty = 25°C, lr = 96A, Vpp = 38V"
+        # ",Avalanche Rated,nan,Qg Gate Charge Total (10 V),76,nC"
+        # "QgGate charge total (10 V),VDS = 40 V, ID = 100 A,76,nC,nan,nan"
+        # "VSDDiode forward voltage,ISD = 100 A, VGS = 0 V,0.91.1,V,nan,nan"
+        # "Qgd,Gate-to-Drain Charge,23,nan,nan"
+        # "tr,Rise Time,20,nan,ID = 46A,nan,nan"
+        # "Coss,Output Capacitance,460,nan,pF VDS = 25V,nan,nan"
+        # "Rise time,t,Vpp=40 V, Ves=10V,",73 =,ns"
+        # "Output capacitance,Cus,4 Kaz. ps,-,2890 3840,nan"
+        # "Gate charge total,Q,nan,-,155.0,206,nan"
+
+        ("165,VSD source-drain voltage,,IS = 25 A; VGS = 0 V; Tj = 25 °C; Fig. 17,-,0.82,1,V,,,,,,,,,,,,",
+         "Vsd", (na, 0.82, 1)),  # PSMN3R9-100YSF
+
+        (ocr_post_subs('52,Qoa,Gate-to-Drain (""Miller"") Charge,- | 62 93 nC See Fig.11,,,,,,,,,,,,,,,'), 'Qgd',
+         (n, 62, 93)),
+        (ocr_post_subs('72,Vsp Diode Forward Voltage,- | - 1.3 V,"|Ty = 25°C, Is = 96A, Ves = OV @",,,,,,,,,,,,,,,'),
+         'Vsd', (na, na, 1.3)),
+        # (ocr_post_subs('77,Msp,,Diode Forward Voltage,"- | - 1.3 V_ |Ty = 25°C, ls = 96A, Veg = OV ©",,,,'),
+        # 'Vsd', (na, na, 1.3)),
+        # (ocr_post_subs('70,Vsp,,Diode Forward Voltage,-_ | - 1.3 Vs,"|Ty = 25°C, Is = 96A, Veg = OV @",,,,'),
+        # 'Vsd', (na, na, 1.3)),
+
+        ("Output Capacitance Coss VDS = 50V, --,3042,--,pF", 'Coss', (n, 3042, n)),
+        ("Output Capacitance Coss VDS = 50V, --,380,--,pF", 'Coss', (n, 380, n)),
+        ("Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan", 'Qrr', (n, 297, n)),
+        ("Reverse Recovery Charge Qrr nCIF = 50A, VGS = 0V--,87,--,nan", 'Qrr', (n, 87, n)),
+        ("/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC", 'Qrr', (n, 35, n)),
+
+        ('tf fall time,nan,nan,- 49.5 - ns', 'tFall', (n, 49.5, n)),
         ('63,Gate charge total’,Qs,-,26 35,nC | Vop=50 V, />=10 A, Ves=0 to 10 V",,,', 'Qg', (n, 26, 35)),
-        # ('63,Gate charge total’,Qs,-,26 35,"nC | Vop=50 V, />=10 A, Ves=0 to 10 V",,,', 'Qg', (n,26,35)),
+        # ('63,Gate charge total’,Qs,-,26 35,"nC | Vop=50 V, />=10 A, Ves=0 to 10 V",,,', 'Qg', (n, 26, 35)),
         ("Fall time,t,.,14.0,.,ns,Von=75 V, Ves=10 V, [p=45 A", 'tFall', (n, 14, n)),
         ("43,Qgs,-,27,-,nC,,,,,", 'Qgs', (n, 27, n)),
         ("Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V", "Qg_th", (n, 2.7, n)),
-        # ("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3", "Vsd", (n, n, 1.3)), # TODO
+
+        ("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3", "Vsd", (n, n, 1.3)),  # TODO
+        (strip_no_print_latin("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3"), "Vsd", (n, n, 1.3)),  # TODO
+
         ("Diode forward voltage,VDSF,IDR = 70 A, VGS = 0 V,-,-,-1.2,V", "Vsd", (n, n, -1.2)),
         ("Diode forward voltage,Vsp,>,-,1,1.2,IV", "Vsd", (n, 1, 1.2)),
 
@@ -43,11 +85,11 @@ def test_parse_lines():
         ("Gate plateau voltage,Vplateau,-,4.3 -,V,Vpp=50 V, /p=25 A, Ves=0 to 10 V", "Vpl", (n, 4.3, n)),
         ("Rise time,f,-,10 -,ns Re=1.60", "tRise", (n, 10, n)),
         ("Vsp,Diode Forward Voltage,-_- -_-,1.3,Vv,Ty=25°C, 15 =22A, Ves =0V @,nan", 'Vsd', (n, n, 1.3)),
-        # (CSV_ROW, DIM, (MIN,TYP,MAX))
-        # datasheets/toshiba/XPN1300ANC.pdf Qgs no value match in  "Gate-source charge 1,Qgs1,nan,7,nan,nan,nC"
-        # "Output capacitance C oss,nan,nan,-,1152.0,1498,nan"
-        # "nan,nan,Coss,nan,102"
-        ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qgs1', (n, 7, n)),  # XPN1300ANC
+
+        ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qg_th', (n, 7, n)),  ## datasheets/toshiba/XPN1300ANC.pdf
+        ("Output capacitance C oss,nan,nan,-,1152.0,1498,nan", 'Coss', (n, 1152, 1498)),
+        # ("nan,nan,Coss,nan,102", 'Coss', (n,102,n)),
+        ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qg_th', (n, 7, n)),  # XPN1300ANC
         ('Gate plateau voltage,Vplateau,nan,nan,4.7,nan,"VDD 40 V, ID= 20A, VGS = 0 toV",10 V,,,', 'Vpl', (n, 4.7, n)),
         # "Output capacitance,C oss,f= 1 MHz,nan,2890.0,3840,nan"
         # "Rise Time tr,VDS=50V, RG=3Ω, -,46,nan,-,nan"
@@ -60,20 +102,20 @@ def test_parse_lines():
         # "Output capacitance,C oss-,240,320,nan,f=1 MHz"
         # "Gate-Drain Charge - Gate-Drain-Ladung Industrial /-Q,nan,-,4 nC,-"
         # "QgsGate charge gate-to-source,25,nC,nan,nan,nan,nan,nan"
-        ("QgdGate charge gate-to-drain,11,nC,nan,nan,nan,nan,nan", 'Q', (n, 11, n)),
-        ("Qrr,nan,VDD = 64 V (see Figure 15: \"Test,-,66,nan,nC", 'Q', (n, 66, n)),
-        ("Qgd,Gate-drain charge,behavior\"),-,28,-,nC", 'Q', (n, 28, n)),
+        ("QgdGate charge gate-to-drain,11,nC,nan,nan,nan,nan,nan", 'Qgd', (n, 11, n)),
+        ("Qrr,nan,VDD = 64 V (see Figure 15: \"Test,-,66,nan,nC", 'Qrr', (n, 66, n)),
+        ("Qgd,Gate-drain charge,behavior\"),-,28,-,nC", 'Qgd', (n, 28, n)),
         # "COSS,Output Capacitance,nan,nan,1045.0,1465.0,nan"
-        ("QgsGate charge gate-to-source,25,nC,nan,nan,nan,nan,nan", 'Q', (n, 25, n)),
-        ('Gate plateau voltage,Vplate au,,,4.4,,V,"VDD 40 V, ID = 50 A, VGS = 0 to 10 V",,,,,', 'V', (n, 4.4, n)),
-        ("Gate plateau voltage,V plateau,nan,4.6,-,IV", 'V', (n, 4.6, n)),
-        ("Rise Time3,4 tr,VDD=75V, RG=3Ω, VGS=10V, -,90,-,nan", 't', (n, 90, n)),
+        ("QgsGate charge gate-to-source,25,nC,nan,nan,nan,nan,nan", 'Qgs', (n, 25, n)),
+        ('Gate plateau voltage,Vplate au,,,4.4,,V,"VDD 40 V, ID = 50 A, VGS = 0 to 10 V",,,,,', 'Vpl', (n, 4.4, n)),
+        ("Gate plateau voltage,V plateau,nan,4.6,-,IV", 'Vpl', (n, 4.6, n)),
+        ("Rise Time3,4 tr,VDD=75V, RG=3Ω, VGS=10V, -,90,-,nan", 'tRise', (n, 90, n)),
         ("COSS(ER),Effective Output Capacitance, Energy Related (Note 1),VDS = 0 to 50 V, VGS = 0 V,nan,1300,nan,nan",
-         'C', (n, 1300, n)),
-        ('Gate to drain charge1 ),Qgd,,,20,29,nC,"VDD =40 V, ID = 50 A, VGS = 0 to 10 V",,,,,', 'Q', (n, 20, 29)),
-        ("Gate-to-Source Charge,QGS,VGS = 10 V, VDS = 75 V; ID = 41 A,15.0,nan,nC", "Q", (n, 15, n)),
-        ("Gate-Drain Charge,nan,Qgd,nan,nan,nan,13,nan,nan,nan,nC", 'Q', (n, 13, n)),
-        ("Output capacitance,C oss,nan,-,231.0,300,nan", 'C', (n, 231, 300)),
+         'Coss', (n, 1300, n)),
+        ('Gate to drain charge1 ),Qgd,,,20,29,nC,"VDD =40 V, ID = 50 A, VGS = 0 to 10 V",,,,,', 'Qgd', (n, 20, 29)),
+        ("Gate-to-Source Charge,QGS,VGS = 10 V, VDS = 75 V; ID = 41 A,15.0,nan,nC", "Qgs", (n, 15, n)),
+        ("Gate-Drain Charge,nan,Qgd,nan,nan,nan,13,nan,nan,nan,nC", 'Qgd', (n, 13, n)),
+        ("Output capacitance,C oss,nan,-,231.0,300,nan", 'Coss', (n, 231, 300)),
         (
             "Coss eff.(TR) Output Capacitance (Time Related),---,385,---,VGS = 0V, VDS = 0V to 80V,nan", 'C',
             (n, 385, n)),
@@ -109,12 +151,21 @@ def test_parse_lines():
         #
     ]
 
+    for c in cases:
+        assert len(c) == 3, c
+        assert len(c[2]) == 3, c
+
     for rl, sym, (min, typ, max) in cases:
         dim = sym[:1]
+        m, field_sym = detect_fields('any', rl.split(','))
+        assert m and field_sym, 'no field detected in "%s" %s %s' % (rl, m, field_sym)
+        assert field_sym[:len(sym)] == sym, (field_sym, sym, rl)
+
         f = parse_field_csv(rl, dim, field_sym=sym)
         if not f:
+            print('dim regs for', dim, ':')
             print('\n'.join(map(lambda r: r.pattern, dim_regs[dim])))
-        assert f, (rl, dim)
+        assert f, "field not parsed %s %s" % (rl, dim)
         assert math.isnan(min) or min == f.min, f
         assert math.isnan(typ) or typ == f.typ, (f, typ)
         assert math.isnan(max) or max == f.max, f
@@ -127,7 +178,7 @@ def test_pdf_parse():
     ref = DatasheetFields("SIR680ADP-T1-RE3", "vishay",
                           fields=[Field("Qrr", nan, 70.0, 140.0, "nC"),
                                   Field("Coss", nan, 614.0, nan, "pF"),
-                                  Field("Qg", nan, 43.0, 65.0, "nC"), # <unit err
+                                  Field("Qg", nan, 43.0, 65.0, "nC"),  # <unit err
                                   Field("Qgs", nan, 17.0, nan, "nC"),
                                   Field("Qgd", nan, 10.0, nan, "nC"),
                                   Field("tRise", nan, 8.0, 16.0, "ns"),
@@ -429,12 +480,27 @@ def test_pdf_parse():
 def test_pdf_ocr():
     import subprocess
     res = subprocess.run(
-        'tesseract tesseract-stuff/test2.png stdout --user-words tesseract-stuff/mosfet.user-words tesseract-stuff/tesseract.cfg'.split(
+        'tesseract datasheets/_samples/test2.png stdout --user-words tesseract-stuff/mosfet.user-words tesseract-stuff/tesseract.cfg'.split(
             ' '),
         check=True, capture_output=True).stdout.decode('utf-8')
     # assert 'Qgd' in res
     assert 'Qgs' in res
     assert 'Vplateau' in res  # only works with custom words!
+
+    d = parse_datasheet('datasheets/nxp/PSMN3R9-100YSFX.pdf', need_symbols={'Vsd'})
+    assert d.Vsd == (na, 0.82, 1)
+    assert DatasheetFields(
+        "PSMN3R9-100YSFX", "nxp",
+        fields=[Field("Qrr", nan, 44.0, nan, "None"), Field("Qgd", 5.0, 18.0, 41.0, "nC"),
+                Field("Qg", 40.0, 80.0, 120.0, "nC"), Field("Qgs", 14.0, 23.6, 33.0, "nC"),
+                Field("Qg_th", nan, 15.3, nan, "nC"), Field("Qgs2", nan, 8.3, nan, "nC"),
+                Field("Coss", 800.0, 1335.0, 2140.0, "pF"), Field("tRise", nan, 18.0, nan, "ns"),
+                Field("tFall", nan, 26.0, nan, "ns"),
+                Field("Vsd", nan, 0.82, 1.0, "V")]
+    ).show_diff(d) == 0
+
+    d = parse_datasheet("datasheets/infineon/IPB072N15N3GATMA1.pdf")
+    assert d.Vpl == (na, 5.5, na)
 
     ref = DatasheetFields("BSZ150N10LS3GATMA1", "infineon",
                           fields=[Field("Coss", nan, 280.0, 370.0, "pF"),
@@ -476,13 +542,26 @@ def test_pdf_ocr():
     assert d.Qg.typ == 26
     assert d.Qg.max == 35
     assert d.Qgd.typ == 5
-    # assert d.Qgs.typ == 9
     assert d.Qsw.typ == 10
     assert d.Qrr.typ == 102
     mf = d.get_mosfet_specs()
     assert mf.Qsw == 10e-9
+    assert mf.Qgs2 == 5e-9
+    assert mf.V_pl == 5.2
+    if 'Qgs' in d:
+        assert d.Qgs.typ == 9
+        assert mf.Qg_th == 4e-9
     assert abs((mf.Qgs + mf.Qgd - mf.Qsw) - mf.Qg_th) < 1e-20
     assert abs((mf.Qgs2 + mf.Qgd) - mf.Qsw) < 1e-20
+
+    from dslib.spec_models import DcDcSpecs
+    dcdc = DcDcSpecs(40, 20, 40e3, 10, 200e-9, 20, ripple_factor=.2)
+    from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+    pl_hs = dcdc_buck_hs(dcdc, mf, 6)
+    assert pl_hs.P_sw > 0.5
+    pl_ls = dcdc_buck_ls(dcdc, mf)
+    assert pl_ls.P_rr > 0.1
+    assert pl_ls.P_dt > 0.3
 
     # multiple Qrr, multi Qrr
     # IPT025N15NM6ATMA1
@@ -566,8 +645,53 @@ def test_convertapi():
                         tabular_pre_methods=('convertapi_ocr',))
     assert d
 
+
 import pytest
+
+
 def test_mosfet_specs():
+    need_symbols = {
+        'tRise', 'tFall',  # HS
+        'Qgd',  # HS
+        ('Qgs', 'Qg_th', 'Qgs2'),  # HS, need one of those.
+        'Vsd',  # LS
+    }
+
+    d = parse_datasheet('datasheets/ao/AOT66811L.pdf', need_symbols=need_symbols)
+    assert 'Qg_th' not in d
+
+    ref = DatasheetFields("AOT66811L", "ao",
+                          fields=[
+                              Field("Qrr", nan, 175.0, nan, "None"),
+                              Field("Vsd", nan, 0.7, 1.0, "V"),
+                              Field("Coss", nan, 1580.0, nan, "pF"),
+                              Field("Qg", nan, 77.0, 110.0, "nC"),
+                              Field("Qgs", nan, 21.0, nan, "nC"),
+                              Field("Qgd", nan, 15.0, nan, "nC"),
+                              Field("tRise", nan, 7.0, nan, "ns"),
+                              Field("tFall", nan, 10.0, nan, "ns")])
+
+    dut = DatasheetFields(
+        "ao", "AOT66811L",
+        fields=[Field("Qgd", nan, 15, nan, "nC"),
+                Field("Qgs", nan, 21, nan, "nC"),
+                Field("Qg_th", nan, 15, nan, "nC"), Field("Qoss", nan, 112, nan, "nC"),
+                Field("Vpl", nan, 4.2, nan, "V"), Field("Qrr", nan, 175.0, nan, "None"),
+                Field("Vsd", nan, 0.7, 1.0, "V"), Field("Coss", nan, 1580.0, nan, "pF"),
+                Field("Qg", nan, 77.0, 110.0, "nC"), Field("tRise", nan, 7.0, nan, "ns"),
+                Field("tFall", nan, 10.0, nan, "ns"),
+                Field("Vds", nan, nan, 80.0, "None"),
+                Field("Rds_on_10v", nan, nan, 0.003, "None"),
+                Field("ID_25", nan, 120.0, nan, "None"),
+                Field("Vgs_th", nan, nan, 3.8, "None")])
+
+    dut.get_mosfet_specs().Qsw
+
+    ref.show_diff()
+    assert ref.show_diff(d) == 0
+    mf = d.get_mosfet_specs()
+    assert mf.Qsw == pytest.approx(24.45e-9, 0.1e-9)
+
     d = parse_datasheet('datasheets/infineon/IRF6644TRPBF.pdf')
     assert d.Qg_th.typ == 7  # Qgs1
     assert d.Qgs2.typ == 3
@@ -576,6 +700,17 @@ def test_mosfet_specs():
     assert mf.Qg_th == pytest.approx(7e-9, 1e-20)
     assert mf.Qgs2 == pytest.approx(3e-9, 1e-20)
     assert mf.Qsw == pytest.approx(16e-9, 1e-20)
+
+    d = parse_datasheet('datasheets/infineon/AUIRF7769L2TR.pdf')
+    assert d.Qg == (na, 200, 300)
+    assert d.Qg_th == (na, 30, na)
+    assert d.Qgs2 == (na, 9, na)
+    assert d.Qgd == (na, 110, 165)
+    mf = d.get_mosfet_specs()
+    assert mf
+
+    d = parse_datasheet('datasheets/ao/AOT66811L.pdf')
+    assert d.get_mosfet_specs()
 
 
 def test_pdf_rasterize():
@@ -605,8 +740,41 @@ def test_extract_fields_from_dataframes():
     assert ds.tRise.typ == 21
 
 
+def test_substract_symbols():
+    need = {'A', ('B', 'C')}
+    assert dslib.pdf2txt.parse.subsctract_needed_symbols(need, {'D'}) is None
+    assert need == {'A', ('B', 'C')}
+
+    assert dslib.pdf2txt.parse.subsctract_needed_symbols(need, {'A'}) is None
+    assert need == {('B', 'C')}
+
+    assert dslib.pdf2txt.parse.subsctract_needed_symbols(need, {'C'}) is None
+    assert not need
+
+    assert dslib.pdf2txt.parse.subsctract_needed_symbols({'A', ('B', 'C')}, {'C', 'B'}, copy=True) == {'A'}
+
+
 if __name__ == '__main__':
     test_parse_lines()
+
+    # d = parse_datasheet('datasheets/infineon/AUIRF7759L2TR.pdf')
+    d = tabula_read('datasheets/infineon/AUIRF7759L2TR.pdf', need_symbols={'Vsd'})
+    ref = DatasheetFields("None", "None",
+                          fields=[Field("Qgd", nan, 62.0, 93.0, "nC"), Field("Qsw", nan, 73.0, nan, "None"),
+                                  Field("tRise", nan, 64.0, 96.0, "ns"), Field("Qrr", nan, 150.0, 225.0, "nC"),
+                                  Field("Qg_th", nan, 37.0, nan, "None"), Field("Coss", nan, 1465.0, nan, "None"),
+                                  Field("Vsd", nan, nan, 1.3, "V")])
+    assert ref.show_diff(d) == 0
+    assert d.Qgd == (na, 62, 93)
+    assert d.Vsd.max == 1.3
+
+    d = parse_datasheet('datasheets/diodes/DMTH10H005SCT.pdf', need_symbols={'Vsd'})
+    assert d.get_mosfet_specs().Vsd == 1.3
+    assert d
+
+    d = parse_datasheet('datasheets/vishay/SIR578DP-T1-RE3.pdf')
+    assert d.Qg == (na, 24.5, 37)
+
     test_extract_fields_from_dataframes()
 
     test_pdf_rasterize()
@@ -629,3 +797,8 @@ def failing():
 
     d = parse_datasheet('datasheets/littelfuse/IXTA160N10T7.pdf')
     assert d
+
+    d = parse_datasheet('datasheets/infineon/AUIRF7759L2TR.pdf')
+    assert d.Qgd == (na, 62, 93)
+    assert d.tRise
+    assert d.Vsd.max == 1.3

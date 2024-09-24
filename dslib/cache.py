@@ -658,4 +658,55 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
     return decorate
 
 
+class NopLock:
+    def __enter__(self):
+        pass
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
+    def close(self):
+        pass
+
+def acquire_file_lock(fn, kill_holder, max_time=10):
+    if os.name == 'nt':
+        logger.warning('File locks not supported on Windows! (file %s)', fn)
+        return NopLock()
+
+    import signal
+    import fcntl
+    import backoff
+
+    fh = open(fn, 'a+')
+
+    @backoff.on_exception(backoff.expo, OSError, max_time=max_time, logger=None)
+    def _lockf_backoff(_fh):
+
+        fcntl.lockf(_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        fh.seek(0), fh.truncate(), fh.seek(0)
+        fh.write('%d' % os.getpid())
+        fh.flush()
+        # logger.info('%s lock acquired!', fn)
+
+    try:
+        _lockf_backoff(fh)
+    except OSError:
+        fh.seek(0)
+        pid = int(fh.read())
+
+        if kill_holder:
+            logger.warning('%s locked by %d sending SIGTERM', fn, pid)
+            os.kill(pid, signal.SIGTERM)
+            try:
+                _lockf_backoff(fh)
+            except OSError:
+                logger.warning('%s still locked by %d sending SIGKILL !', fn, pid)
+                os.kill(pid, signal.SIGKILL)
+                _lockf_backoff(fh)
+        else:
+            raise RuntimeError('%s locked by %d' % (fn, pid))
+
+    return fh
+
+
 init_cache()

@@ -1,11 +1,19 @@
 import math
+import warnings
 from typing import Literal
 
 
 def isnum(v):
     return v is not None and not math.isnan(v)
 
-QgsQgs2_ratio_estimate = 0.45 # 0.3 ... 0.6
+
+def rel_err(a, b, reg=1e-20):
+    return (a - b) / (abs(b) + reg)
+
+
+QgsQgs2_ratio_estimate = 0.45  # 0.3 ... 0.6
+
+
 class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
@@ -42,8 +50,10 @@ class MosfetSpecs:
         self.Rds_on = Rds_on
 
         if not isnum(Qgs2) and isnum(Qsw):
-            assert Qsw > Qgd
+            assert Qsw > Qgd, (Qsw, Qgd)
             Qgs2 = Qsw - Qgd
+
+        self._Qg_th = None
 
         if not isnum(Qg_th) and isnum(Qsw) and isnum(Qgd):
             if isnum(Qgs):
@@ -55,6 +65,7 @@ class MosfetSpecs:
                 assert 0 < Qg_th < Qgs
                 assert Qgs > 0
             else:
+                self._Qg_th = math.nan  # TODO flag as estimate
                 Qg_th = (Qsw - Qgd) * (1 / QgsQgs2_ratio_estimate - 1)
                 Qgs = Qg_th - Qgd - Qsw
 
@@ -70,16 +81,18 @@ class MosfetSpecs:
         self.Qgs = Qgs or math.nan
         self._Qgs2 = Qgs2 or math.nan
         self.Qg_th = Qg_th or math.nan
-        self._Qsw = Qsw or math.nan # untouched!
+        if self._Qg_th is None:  # _Qg_th is nan if estimated
+            self._Qg_th = self.Qg_th
+        self._Qsw = Qsw or math.nan  # untouched!
 
         assert not isnum(Qg_th) or Qg_th < Qgs, (Qgs, Qg_th,)
 
-        if isnum(Qsw) and isnum(Qgd) and isnum(Qgs2):
-            print('WARNING: Qsw=(%.1fn) != (%.1fn + %.1fn)=Qgd+Qgs2' % (Qsw*1e9, Qgd*1e9, Qgs2*1e9))
-            # assert Qsw == (Qgd + Qgs2)
-
         self._Vpl = Vpl or math.nan
         assert not isnum(Vpl) or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
+
+        if abs(Vsd) > 10:
+            warnings.warn('abs Vsd is greater than 10, ' + str(Vsd) + ', assuming ' + str(Vsd / 10))
+            Vsd /= 10
 
         self.Coss = Coss or math.nan
         self.tRise = tRise or math.nan
@@ -92,9 +105,25 @@ class MosfetSpecs:
         assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
         assert math.isnan(self.tFall) or .5e-9 < self.tFall < 1000e-9, self.tFall
         if isnum(Vsd): Vsd = abs(Vsd)
+
         assert not isnum(Vsd) or 0.2 < Vsd < 3, Vsd  # FBG10N30BC: 2.5V
 
         assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 1e-08, (Qg, Rds_on, Qg * Rds_on)
+
+        if isnum(Qg_th + Qgs):
+            assert 0.2 < (Qg_th / Qgs) < 0.8, ((Qg_th / Qgs), Qg_th, Qgs)
+
+        if isnum(Qsw + Qgd + Qgs2):
+            # up: TK3R9E10PL, AUIRF7769L2TR
+            assert 0.33 < Qgd / Qsw < 0.95, (Qgd / Qsw, Qgd, Qsw)
+
+            err = rel_err(Qsw, Qgd + Qgs2)
+            if abs(err) > 0.05:
+                s = 'Qsw=(%.1fn) != (%.1fn + %.1fn)=Qgd+Qgs2 {err=%.2f}' % (Qsw * 1e9, Qgd * 1e9, Qgs2 * 1e9, err)
+                if abs(err) > 0.36:
+                    raise ValueError(s)
+                else:
+                    warnings.warn(s)
 
     @staticmethod
     def from_mpn(mpn, mfr) -> 'MosfetSpecs':
@@ -136,7 +165,11 @@ class MosfetSpecs:
         return self.Qgd + self.Qgs2
 
     def __str__(self):
-        return f'MosfetSpecs({self.Vds}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
+        return f'MosfetSpecs({round(self.Vds,0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n Qsw={round(self.Qsw * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
+
+    def keys(self):
+        fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
+        return set(s.lstrip('_') for s in fl if hasattr(self, s) and not math.isnan(getattr(self, s)))
 
 
 class DcDcSpecs:
@@ -180,7 +213,7 @@ class DcDcSpecs:
         self.tDead = tDead
 
         p = 1 / self.f
-        assert tDead / p < 0.1
+        assert tDead / p < 0.1, (tDead / p)
 
     @property
     def Pout(self):

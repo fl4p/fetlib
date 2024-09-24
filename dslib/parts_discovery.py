@@ -114,6 +114,11 @@ class DiscoveredPart():
     def __repr__(self):
         return f'DiscoveredPart({self.mfr}, {self.mpn}, ({self.specs}))'
 
+    #def is_ganfet(self):
+    #    from dslib.pdf2txt.parse import is_gan
+    #    assert self.mfr
+    #    return is_gan(self.mfr)
+
 
 async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], **kwargs):
     os.makedirs('parts-lists/' + mfr, exist_ok=True)

@@ -9,6 +9,8 @@ from typing import Union, List
 import requests
 from pyppeteer.errors import PageError
 
+from dslib.cache import acquire_file_lock
+
 
 def get_datasheet_url(mfr, mpn):
     if mfr == 'mcc':
@@ -25,6 +27,9 @@ def get_datasheet_url(mfr, mpn):
 
     if mfr == 'ti':
         return f'https://www.ti.com/lit/ds/symlink/{mpn.lower()}.pdf'
+
+    if mfr == 'ao':
+        return f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}.pdf'
 
     # asyncio.get_event_loop().run_until_complete(download_with_chromium(
     #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
@@ -109,7 +114,7 @@ https://stackoverflow.com/questions/50804931/how-to-download-a-pdf-that-opens-in
 _chromium_lock = asyncio.Lock()
 
 async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', close=False):
-    async with _chromium_lock:
+    async with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
         file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
 
         if isinstance(click, str):

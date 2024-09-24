@@ -8,7 +8,7 @@ import pandas as pd
 from dslib import mfr_tag
 from dslib.cache import disk_cache, mem_cache
 from dslib.field import Field, DatasheetFields
-from dslib.pdf2txt import expr, normalize_dash
+from dslib.pdf2txt import expr, normalize_dash, strip_no_print_latin, ocr_post_subs
 from dslib.pdf2txt.pipeline import convertapi, pdf2pdf, raster_ocr
 
 
@@ -18,6 +18,31 @@ def _empty(s):
 
 class TooManyPages(ValueError):
     pass
+
+
+def subsctract_needed_symbols(a: set, b: set, copy=False):
+    if not isinstance(b, set):
+        b = set(b)
+
+    assert isinstance(a, set)
+    assert set(map(type, b)) == {str}
+
+    if copy:
+        a = a.copy()
+
+    for ia in list(a):
+        if isinstance(ia, tuple):
+            for iia in ia:
+                if iia in b:
+                    a.remove(ia)
+                    break
+        else:
+            assert isinstance(ia, str)
+            if ia in b:
+                a.remove(ia)
+
+    if copy:
+        return a
 
 
 @disk_cache(ttl='30d', file_dependencies=[0], salt='v03')
@@ -112,7 +137,10 @@ def validate_datasheet_text(mfr, mpn, text):
     return True
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt='v25', ignore_missing_inp_paths=True)
+regex_ver_salt = 'v32'
+
+
+@disk_cache(ttl='99d', file_dependencies=[0], salt=regex_ver_salt, ignore_missing_inp_paths=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
                     need_symbols=None
@@ -177,12 +205,12 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     # TODO do extract_fields_from_text again afet raster_ocr
 
     if need_symbols:
-        need_symbols = set(need_symbols) - set(ds.keys())
+        subsctract_needed_symbols(need_symbols, ds.keys())
     else:
         need_symbols = None
 
     try:
-        print(pdf_path, 'tabular read ...')
+        print(pdf_path, 'tabular read ...  need=', need_symbols)
         tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods, need_symbols=need_symbols)
         assert tabular_ds, 'empty tabular data'
         if tabular_ds:
@@ -216,8 +244,8 @@ def tabula_pdf_dataframes(pdf_path=None):
     return dfs
 
 
-def is_gan(d):
-    return 'EPC' in d
+def is_gan(mfr):
+    return 'epc' in mfr.lower()
 
 
 # def find_dim_match(csv_line, regexs):
@@ -274,19 +302,6 @@ def parse_field_csv(csv_line, dim, field_sym, cond=None) -> Field:
 
 def field_value_regex_variations(head, unit, signed=False):
     """
-    Output Capacitance Coss VDS = 50V, --,3042,--,pF
-    Output Capacitance Coss VDS = 50V, --,2730,--,pF
-
-    Coss no value match Output Capacitance Coss VDS = 50V, --,380,--,pF
-
-    Qrr no value match Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan
-
-
-     Qrr no value match Reverse Recovery Charge Qrr nCIF = 50A, VGS = 0V--,87,--,nan
-    "/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC"
-
-    TODO
-    tFall no value match in  "tf fall time,nan,nan,- 49.5 - ns"
 
     :param head:
     :param unit:
@@ -375,6 +390,14 @@ def field_value_regex_variations(head, unit, signed=False):
         # 'Vsp,Diode Forward Voltage,-_- -_-,1.3,Vv,Ty=25°C, 15 =22A, Ves =0V @,nan', 'V'
         re.compile(head + rf',({field_nan})[\s,]({field_nan}),(?P<max>{field}),(?P<unit>{unit})(,|$|\s)',
                    re.IGNORECASE),
+
+        # ^broad,-,-,<max>$
+        re.compile(head + rf'({test_cond_broad})?,(nan|-),(nan|-),(?P<max>{field})$', re.IGNORECASE),
+
+        # ^,-,<typ> <max> <unit>$
+        # Charge,-,62 93 nC See
+        re.compile(head + rf',-+,(?P<typ>{field})\s{{1,3}}(?P<max>{field})\s{{1,3}}(?P<unit>{unit})(\s|,|$)',
+                   re.IGNORECASE),
     ]
 
 
@@ -427,7 +450,7 @@ def get_dimensional_regular_expressions():
 
               # datasheets/vishay/SIR622DP-T1-RE3.pdf Qrr no value match Body diode reverse recovery charge Qrr -,350,680,nan,nC
           ] + field_value_regex_variations(
-            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|charge\s+at\s+threshold|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
+            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|charge\s+at\s+threshold|charge|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
             r'[uμnp]C'),
 
         C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
@@ -448,6 +471,8 @@ def detect_fields(mfr, strings: Iterable[str]):
 
         def detect_field(s):
             s = normalize_dash(str(s)).strip(' -')
+            s = strip_no_print_latin(s)
+
             if len(s) > 80:
                 return False
             if not field_re.search(s):
@@ -497,15 +522,17 @@ def get_field_detect_regex(mfr):
         Qgs=re.compile(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE),
-        Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"?miller"?\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
+        Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"*miller"*\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
         Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
-        Qg=re.compile( # this should be after all other gate charges
+        Qg=re.compile(  # this should be after all other gate charges
             rf'(total[\s-]+gate[\s-]+charge|gate[\s-]+charge[\s-]+total|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)',
             re.IGNORECASE),
 
         Vpl=re.compile(r'(gate\s+plate\s*au\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
 
-        Vsd=re.compile(r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(sd)$|V[ _]?DS_?FW?D?)', re.IGNORECASE),
+        Vsd=re.compile(
+            r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(sd)(\s+source[\s-]+drain[\s-]+voltage)?$|V[ _]?DS_?FW?D?)',
+            re.IGNORECASE),
         # plate au
         # Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
@@ -526,7 +553,9 @@ def right_strip_nan(v, n):
     return v
 
 
-def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> DatasheetFields:
+def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbose=False) -> DatasheetFields:
+    assert mfr
+    assert not ds_path or mfr in ds_path, (mfr, ds_path)
     fields_detect = get_field_detect_regex(mfr)
 
     dim_units = dict(
@@ -610,27 +639,33 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> Dat
                 rl_ff = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_ffill.iloc[i])))
 
                 # OCR
-                rl = ','.join(map(lambda s: s.strip(' /'), rl.replace('{', '|').replace('/', '|').split('|')))
+                rl = ocr_post_subs(rl)
+                rl = strip_no_print_latin(rl)
 
                 field = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()))
 
-                if not field:
+                if not field and len(row.dropna()) > 2:
                     print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
 
                 if field:
+                    if verbose > 1:
+                        print('add regex field', field, 'from', rl)
                     fields.add(field)
 
                 elif col_typ:
                     for row_ in [row, df_bfill.iloc[i], df_ffill.iloc[i]]:
                         v_typ = row_[col_typ]
                         try:
-                            fields.add(Field(
+                            field = Field(
                                 symbol=field_sym,
                                 min=row_[col_idx['min']] if col_idx['min'] else math.nan,
                                 typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
                                 max=row_[col_idx['max']] if col_idx['max'] else math.nan,
                                 mul=1, cond=dict(row_.dropna()), unit=unit
-                            ))
+                            )
+                            if verbose > 1:
+                                print('add row_ field', field, 'from', row_)
+                            fields.add(field)
                             break
                         except Exception as e:
                             print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
@@ -640,7 +675,8 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> Dat
                             print(rl_bf)
                             # raise
                 else:
-                    print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
+                    if verbose:
+                        print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
 
     for s in fields_detect.keys():
         if s not in fields and not is_gan(ds_path):
@@ -650,6 +686,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> Dat
     return fields
 
 
+@disk_cache(ttl='99d', file_dependencies=[0], salt=regex_ver_salt)
 def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> DatasheetFields:
     """
 
@@ -723,16 +760,18 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
             continue
 
         if len(dfs):  # and not os.path.isfile(ds_path + '.csv'):
+            side_csv = ds_path + '.' + method + '.csv'
+            print('writing sidecar csv', side_csv)
             pd.concat(dfs, ignore_index=True, axis=0).map(
-                lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.' + method + '.csv',
-                                                                                  header=False)
+                lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(side_csv, header=False)
 
         fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=ds_path)
 
         if len(fields) > 0:
             combined_fields.add_multiple(fields.all_fields())
             if need_symbols:
-                missing = need_symbols - set(combined_fields.keys())
+                missing = subsctract_needed_symbols(need_symbols, combined_fields.keys(), copy=True)
+
                 if missing:
                     print(ds_path, 'extracted', len(fields), 'fields with method', method, 'but still missing fields:',
                           missing)
@@ -744,7 +783,7 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
             print(ds_path, 'tabula no fields extracted with method', method)
 
     if need_symbols and combined_fields:
-        missing = need_symbols - set(combined_fields.keys())
+        missing = subsctract_needed_symbols(need_symbols, combined_fields.keys(), copy=True)
         print(ds_path, 'needed', need_symbols, ', have', set(combined_fields.keys()), 'missing fields:', missing)
         return combined_fields
         # raise ValueError('missing fields ' + str(missing))

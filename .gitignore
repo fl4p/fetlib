@@ -40,3 +40,5 @@ out/
 /output-debug/
 /output-*/
 output.txt.txt
+
+*.lock

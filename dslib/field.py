@@ -1,4 +1,5 @@
 import math
+import warnings
 from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast
 
@@ -34,6 +35,7 @@ class Field():
             mul = 1e6
             unit = 'pF'
 
+
         min = parse_field_value(min) * mul
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
@@ -49,6 +51,10 @@ class Field():
             typ = min
             min = math.nan
             max = math.nan
+
+        if symbol == 'Vpl' and 30 < typ < 60:
+            warnings.warn('Vpl %s out of range, assuming /10' % typ)
+            typ /= 10
 
         self.min = min
         self.typ = typ
@@ -66,6 +72,9 @@ class Field():
 
     def __str__(self):
         return f'{self.symbol} = %5.1f,%5.1f,%5.1f [%s] (%s)' % (self.min, self.typ, self.max, self.unit, self.cond)
+
+    def __len__(self):
+        return 3 - math.isnan(self.min) - math.isnan(self.typ) - math.isnan(self.max)
 
     @property
     def typ_or_max_or_min(self):

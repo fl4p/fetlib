@@ -9,9 +9,14 @@ from dslib.store import Mfr, Mpn
 
 def fallback_specs(mfr, mpn):
     from dslib import mfr_tag
-    if mfr_tag(mfr) == 'epc':
+    mfr = mfr_tag(mfr)
+
+    if mfr == 'epc':
         assert mpn.startswith('EPC')
         return dict(tRise=2, tFall=2)
+    elif mfr == 'nxp':
+        if mpn.startswith('GAN'):
+            return dict(tRise=2, tFall=2)
     return dict()
 
 def get_fields() ->  Dict[Mfr, Dict[Mpn, List[Field]]]:
@@ -250,7 +255,7 @@ ao = {
     'AOT66811L': [
         Field('Qgd', min=math.nan, typ=15, max=math.nan, unit='nC'),
         Field('Qgs', min=math.nan, typ=21, max=math.nan, unit='nC'),
-        Field('Qg_th', min=math.nan, typ=17, max=math.nan, unit='nC'),
+        #Field('Qg_th', min=math.nan, typ=15, max=math.nan, unit='nC'), # TODO?
         Field('Qoss', min=math.nan, typ=112, max=math.nan, unit='nC'),
         Field('Vpl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
     ]
