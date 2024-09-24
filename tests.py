@@ -1,4 +1,5 @@
 import math
+import os
 
 import dslib.pdf2txt.parse
 import dslib.pdf2txt.pipeline
@@ -22,6 +23,9 @@ def parse_line_tests():
     cases = [
         ("Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V", "Qg_th", (n, 2.7, n)),
         # ("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3", "Vsd", (n, n, 1.3)), # TODO
+        ("Diode forward voltage,VDSF,IDR = 70 A, VGS = 0 V,-,-,-1.2,V", "Vsd", (n, n, -1.2)),
+        ("Diode forward voltage,Vsp,>,-,1,1.2,IV", "Vsd", (n, 1, 1.2)),
+
         ("Output capacitance,C oss,-,204,265,nan,nan", 'Coss', (n, 204, 265)),
         ("Gate charge total,Qg,nan,nan,-,26,35,nan", 'Qg', (n, 26, 35)),
         ("Fall time,ff,-,8 -,MS,R6=1.6Q", 'tFall', (n, 8, n)),
@@ -37,9 +41,7 @@ def parse_line_tests():
         # "Output capacitance C oss,nan,nan,-,1152.0,1498,nan"
         # "nan,nan,Coss,nan,102"
         ("Gate-source charge 1,Qgs1,nan,7,nan,nan,nC", 'Qgs1', (n, 7, n)),  # XPN1300ANC
-        (
-            'Gate plateau voltage,Vplateau,nan,nan,4.7,nan,"VDD 40 V, ID= 20 A , VGS = 0 toV",10 V,,,', 'Vpl',
-            (n, 4.7, n)),
+        ('Gate plateau voltage,Vplateau,nan,nan,4.7,nan,"VDD 40 V, ID= 20A, VGS = 0 toV",10 V,,,', 'Vpl', (n, 4.7, n)),
         # "Output capacitance,C oss,f= 1 MHz,nan,2890.0,3840,nan"
         # "Rise Time tr,VDS=50V, RG=3Ω, -,46,nan,-,nan"
         # "Fall Time tf,-,44,nan,-,nan"
@@ -78,7 +80,7 @@ def parse_line_tests():
         ("tf fall time,nan,nan,- 49.5 - ns", 't', (n, 49.5, n)),
         ("/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC", 'Q', (n, 35, n)),
         ("Output Capacitance Coss VDS = 50V,--,3042,--,pF", 'C', (n, 3042, n)),
-        ("Diode forward voltage,VDSF,IDR = 120 A, VGS = 0 V,nan,nan,nan,-1.2,V", 'V', (n, -1.2, n)),
+        ("Diode forward voltage,VDSF,IDR = 120 A, VGS = 0 V,nan,nan,nan,-1.2,V", 'V', (n, n, -1.2)),
 
         # "Output capacitance,C oss,nan,-,523.0,696,nan"
         # "Output Capacitance,Coss,--,392,--,nan,nan"
@@ -115,13 +117,33 @@ def parse_line_tests():
 def parse_pdf_tests():
     # TODOå
 
-    d = parse_datasheet('datasheets/onsemi/FDP047N10.pdf')  # enc
-    assert d and False
-
     d = parse_datasheet('datasheets/mcc/MCB70N10YA-TP.pdf')
-    assert d and False
+    assert len(d) >=8
 
-    d = parse_datasheet('datasheets/littelfuse/IXTA160N10T7.pdf')
+
+
+    d = parse_datasheet('datasheets/onsemi/FDP047N10.pdf')
+    assert d.Qg == (na, 160, 210)
+    assert d.Qgs == (na, 56, na)
+    assert d.Qgd == (na, 36, na)
+    assert len(d) >= 8
+
+    d = parse_datasheet('datasheets/onsemi/FDD86367.pdf')
+    assert d.Qg == (math.nan, 68, 88)
+    assert d.Qg_th == (math.nan, 8.8, math.nan)
+    assert d.Qgs == (math.nan, 22, math.nan)
+    assert d.Qgd == (math.nan, 14, math.nan)
+    mf = d.get_mosfet_specs()
+    assert abs(mf.Qg_th - 8.8e-9) < 1e-15
+    assert mf.Qgs2 == (mf.Qgs - mf.Qg_th)
+
+    d = parse_datasheet('datasheets/nxp/PSMN5R5-100YSFX.pdf')
+    assert d.Qg == (32, 64, 95)
+    assert d.Qgs == (10.3, 17.1, 24)
+    assert d.Qg_th.typ == 12
+    assert d.Qgs2.typ == 4.8
+    assert d.Qgd == (3.5, 11.8, 27.1)
+    assert d.Qrr == (math.nan, 30, math.nan)
 
     d = parse_datasheet('datasheets/infineon/IQE050N08NM5CGATMA1.pdf', mfr='infineon')
     assert len(d) >= 9
@@ -368,6 +390,19 @@ def pdf_ocr_tests():
     assert d.Qg_th == (na, 2.7, na)
     assert d.Qsw == (na, 7.7, na)
 
+    # IPB039N10N3GATMA1
+    d = parse_datasheet('datasheets/infineon/IPP100N08N3GXKSA1.pdf')  # ocr
+    assert d.Qg.typ == 26
+    assert d.Qg.max == 35
+    assert d.Qgd.typ == 5
+    # assert d.Qgs.typ == 9
+    assert d.Qsw.typ == 10
+    assert d.Qrr.typ == 102
+    mf = d.get_mosfet_specs()
+    assert mf.Qsw == 10e-9
+    assert abs((mf.Qgs + mf.Qgd - mf.Qsw) - mf.Qg_th) < 1e-20
+    assert abs((mf.Qgs2 + mf.Qgd) - mf.Qsw) < 1e-20
+
     # multiple Qrr, multi Qrr
     # IPT025N15NM6ATMA1
     d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon',
@@ -432,60 +467,19 @@ def test_mosfet_specs():
     assert mf.Qg_th == 3
 
 
-if __name__ == '__main__':
-    parse_line_tests()
-
+def test_rasterize():
     from dslib.pdf2txt.pipeline import rasterize_pdf
-
+    os.path.exists('datasheets/onsemi/FDP047N10.r.pdf') and os.remove('datasheets/onsemi/FDP047N10.r.pdf')
     rasterize_pdf('datasheets/onsemi/FDP047N10.pdf', 'datasheets/onsemi/FDP047N10.r.pdf')
+    assert os.stat('datasheets/onsemi/FDP047N10.r.pdf').st_size > os.stat('datasheets/onsemi/FDP047N10.pdf').st_size
 
-    # d = parse_datasheet('datasheets/onsemi/FDP047N10.pdf', tabular_pre_methods=('qpdf_decrypt',))
-    # assert d
 
-    d = parse_datasheet('datasheets/onsemi/FDP047N10.pdf')
-    assert d.Qg == (na, 160, 210)
-    assert d.Qgs == (na, 56, na)
-    assert d.Qgd == (na, 36, na)
-    assert d
-
-    # test_mosfet_specs()
-    pdf_ocr_tests()
-
-    d = parse_datasheet('datasheets/onsemi/FDD86367.pdf')
-    assert d.Qg == (math.nan, 68, 88)
-    assert d.Qg_th == (math.nan, 8.8, math.nan)
-    assert d.Qgs == (math.nan, 22, math.nan)
-    assert d.Qgd == (math.nan, 14, math.nan)
-    mf = d.get_mosfet_specs()
-    assert abs(mf.Qg_th - 8.8e-9) < 1e-15
-    assert mf.Qgs2 == (mf.Qgs - mf.Qg_th)
-
-    d = parse_datasheet('datasheets/nxp/PSMN5R5-100YSFX.pdf')
-    assert d.Qg == (32, 64, 95)
-    assert d.Qgs == (10.3, 17.1, 24)
-    assert d.Qg_th.typ == 12
-    assert d.Qgs2.typ == 4.8
-    assert d.Qgd == (3.5, 11.8, 27.1)
-    assert d.Qrr == (math.nan, 30, math.nan)
-
-    # IPB039N10N3GATMA1
-    d = parse_datasheet('datasheets/infineon/IPP100N08N3GXKSA1.pdf')  # ocr
-    assert d.Qg.typ == 26
-    assert d.Qg.max == 35
-    assert d.Qgd.typ == 5
-    # assert d.Qgs.typ == 9
-    assert d.Qsw.typ == 10
-    assert d.Qrr.typ == 102
-    mf = d.get_mosfet_specs()
-    assert mf.Qsw == 10e-9
-    assert abs((mf.Qgs + mf.Qgd - mf.Qsw) - mf.Qg_th) < 1e-20
-    assert abs((mf.Qgs2 + mf.Qgd) - mf.Qsw) < 1e-20
-
+if __name__ == '__main__':
     d = parse_datasheet('datasheets/infineon/AUIRFS4115.pdf')  # split rows
     assert d.Qrr.typ == 300
-    ##subprocess.run([])
+
     d = parse_datasheet('datasheets/infineon/IPI072N10N3G.pdf')
-    assert d
+    assert d.Qsw.typ == 16
 
     # parse_datasheet(mfr='diodes', mpn='DMTH8003SPS-13')
     d = parse_datasheet('datasheets/toshiba/XPW4R10ANB,L1XHQ.pdf')
@@ -505,12 +499,20 @@ if __name__ == '__main__':
     df = parse_datasheet('datasheets/onsemi/NVMFS6H800NWFT1G.pdf')
     assert len(df) > 5
 
+    parse_line_tests()
+    test_rasterize()
+    pdf_ocr_tests()
     parse_pdf_tests()
-    # tests()
+    test_mosfet_specs()
 
 
 def failing():
+    # TODO TODO
+    # TODO use tabular browser?
     d = parse_datasheet('datasheets/littelfuse/IXTQ180N10T.pdf',
                         # tabular_pre_methods='nop'
                         )
     assert d.Qgd
+
+    d = parse_datasheet('datasheets/littelfuse/IXTA160N10T7.pdf')
+    assert d

@@ -182,7 +182,7 @@ def pdf2pdf(in_path, out_path, method):
         gs=lambda: subprocess.run(['gs', '-sDEVICE=pdfwrite',
                                    '-dPDFSETTINGS=/printer',  # /screen /default
                                    '-dPDFA=2',  # 1,2,3
-                                   '-o', out_path, in_path], check=True),
+                                   '-o', out_path, in_path], check=True), # TODO try decrypt
         cups=cups,
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),

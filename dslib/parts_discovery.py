@@ -111,6 +111,9 @@ class DiscoveredPart():
     def get_ds_path(self):
         return os.path.join('datasheets', self.mfr, self.mpn + '.pdf')
 
+    def __repr__(self):
+        return f'DiscoveredPart({self.mfr}, {self.mpn}, ({self.specs}))'
+
 
 async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], **kwargs):
     os.makedirs('parts-lists/' + mfr, exist_ok=True)

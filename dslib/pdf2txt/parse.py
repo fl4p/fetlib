@@ -16,13 +16,16 @@ def _empty(s):
     return not s or str(s).lower() == 'nan'
 
 
+class TooManyPages(ValueError):
+    pass
+
 @disk_cache(ttl='30d', file_dependencies=[0], salt='v03')
 def extract_text(pdf_path, try_ocr=False):
     import fitz  # PyMuPDF
     pdf_document = fitz.open(pdf_path)
 
-    if len(pdf_document) > 25:
-        raise ValueError(pdf_path + ' has more than 25 pages ' + len(pdf_document))
+    if len(pdf_document) > 30:
+        raise TooManyPages(pdf_path + ' has more than 25 pages ' + str(len(pdf_document)))
 
     pdf_text = ""
     for page_number in range(len(pdf_document)):
@@ -96,7 +99,14 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
     return fields
 
 
-@disk_cache(ttl='90d', file_dependencies=[0], salt='v13', ignore_missing_inp_paths=True)
+def validate_datasheet_text(mfr, mpn, text):
+    if len(text) < 60:
+        raise ValueError('text too short ' + str(len(text)))
+
+    if mpn.split(',')[0][:7].lower() not in text.lower():
+        raise ValueError(mpn + ' not found in PDF text(%s)' % text[:30])
+
+@disk_cache(ttl='99d', file_dependencies=[0], salt='v20', ignore_missing_inp_paths=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None) -> DatasheetFields:
     if not pdf_path:
         assert mfr
@@ -104,24 +114,39 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None)
 
     if not mfr:
         assert pdf_path
+        pdf_path = os.path.realpath(pdf_path)
         mfr = pdf_path.split('/')[-2]
+        assert len(mfr) >= 2
 
+    if not mpn:
+        mpn = os.path.basename(pdf_path).split('.')[0]
 
-    pdf_text = extract_text(pdf_path, try_ocr=False)
+    pdf_text = ''
+    for method in ['nop', 'qpdf_decrypt', 'ocrmypdf_redo', 'ocrmypdf_r400', 'r400_ocrmypdf']:
+        try:
+            if method == 'nop':
+                out_path = pdf_path
+            else:
+                out_path = pdf_path + '.' + method + '.pdf'
+                pdf2pdf(pdf_path, out_path, method)
 
-    ocr_path = None
+            pdf_text = extract_text(out_path, try_ocr=False)
+            validate_datasheet_text(mfr, mpn, pdf_text)
+            pdf_path = out_path
+            print(pdf_path, 'extracted', len(pdf_text), 'characters using', method)
+            break
+        except TooManyPages as e:
+            print(e)
+            raise
+        except Exception as e:
+            print(pdf_path, 'text extraction error using', method, e)
+            continue
 
     if len(pdf_text) < 40:
-        ocr_path = pdf_path + '.ocrmypdf.pdf'
-        raster_ocr(pdf_path, ocr_path, method='ocrmypdf')
-        pdf_text = extract_text(ocr_path, try_ocr=False)
-        if len(pdf_text) < 40:
-            print(pdf_path, 'no text extracted')
-        else:
-            print(ocr_path, 'extracted', len(pdf_text), 'characters using OCR')
-            pdf_path = ocr_path
+        print(pdf_path, 'no text extracted')
 
     pdf_text = normalize_pdf_text(pdf_text)
+
 
     # S19-0181-Rev. A, 25-Feb-2019, "S16-0163-Rev. A, 01-Feb-16"
     # "November 2021", "2021-01"
@@ -136,9 +161,11 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None)
     # TODO do extract_fields_from_text again afet raster_ocr
 
     try:
+        print(pdf_path, 'tabular read ...')
         tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods)
         assert tabular_ds, 'empty tabular data'
-        ds.add_multiple(tabular_ds.all_fields())
+        if tabular_ds:
+            ds.add_multiple(tabular_ds.all_fields())
     except Exception as e:
         print(pdf_path, 'tabula error', e)
         raise
@@ -152,10 +179,9 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None)
 def tabula_pdf_dataframes(pdf_path=None):
     import tabula
 
-    #/Users/fab/Downloads/tabula/Tabula.app/Contents/Java/tabula.jar
+    # /Users/fab/Downloads/tabula/Tabula.app/Contents/Java/tabula.jar
 
     dfs = tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True)
-
 
     """
      from subprocess import check_output
@@ -173,7 +199,7 @@ def is_gan(d):
     return 'EPC' in d
 
 
-#def find_dim_match(csv_line, regexs):
+# def find_dim_match(csv_line, regexs):
 #    for r in regexs:
 ##        m = next(r.finditer(csv_line), None)
 #        if m is not None:
@@ -183,12 +209,14 @@ def is_gan(d):
 
 
 def check_range(v, range):
+    if len(range) == 3 and range[2]:
+        v = abs(v)
     return math.isnan(v) or (v >= range[0] and v <= range[1])
 
 
 valid_range = dict(
-    Vpl=(1, 10),
-    Vsd=(0.1, 4),
+    Vpl=(1, 10, False),
+    Vsd=(0.1, 4, True),
 )
 
 
@@ -244,7 +272,7 @@ def field_value_regex_variations(head, unit, signed=False):
     :return:
     """
 
-    test_cond_broad = r'[-\s=≈/a-z0-9äöü.,;:μΩ°()"\']+'  # parameter lab testing conditions (temperature, I, U, didit,...)
+    test_cond_broad = r'[-\s=≈/a-z0-9äöü.,;:μΩ°()"\'<>]+'  # parameter lab testing conditions (temperature, I, U, didit,...)
 
     field = r'[0-9]+(\.[0-9]+)?'
     if signed:
@@ -261,15 +289,20 @@ def field_value_regex_variations(head, unit, signed=False):
             head + r',((-*|nan),){0,4}(?P<typ>(' + field + r')),((-*|nan),){0,4}(?P<unit>' + unit + r')(,|$)',
             re.IGNORECASE),
 
-        re.compile(  # head,nan?,typ -,unit ...,
-            head + r',(('+field_nan+'),){0,4}(?P<typ>(' + field + r'))\s*-+\s*,(?P<unit>' + unit + r')(,|$|\s)',
+        # "Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V"
+        re.compile(  # head,gibber?,nan?,typ -,unit ...,
+            head + r',([-_()a-z0-9]+,)?((' + field_nan + '),){0,4}(?P<typ>(' + field + r'))\s*-+\s*,(?P<unit>' + unit + r')(,|$|\s)',
             re.IGNORECASE),
 
         re.compile(  # min,typ,max with (scrambled) testing conditions and unit
             rf'{head}({test_cond_broad},)?(?P<min>{field_nan}),(?P<typ>{field}),(?P<max>{field_nan}),(?P<unit>{unit})(,|$)',
             re.IGNORECASE),
 
-        #re.compile(  # head,nan?,nan,max,unit
+        re.compile(  # same as before but max required instead of typ
+            rf'(?P<cond_minN_typN_max>.)?{head}({test_cond_broad},)?(?P<min>{field_nan}),(?P<typ>{field_nan}),(?P<max>{field}),I?(?P<unit>{unit})(,|$)',
+            re.IGNORECASE),
+
+        # re.compile(  # head,nan?,nan,max,unit
         #    rf'{head},(({nan}),)?({nan}),(?P<max>{field}),(?P<unit>' + unit + r')(,|$)',
         #    re.IGNORECASE),
 
@@ -279,6 +312,10 @@ def field_value_regex_variations(head, unit, signed=False):
 
         # typ surrounded by nan/- or max  and no unit
         re.compile(head + rf'[-\s]*,(-|nan|),(-,)?(?P<typ>{field}),(?P<max>{field_nan}),nan',
+                   re.IGNORECASE),
+
+        # 'Gate charge total,Qg,nan,nan,-,26,35,nan'
+        re.compile(head + rf',(nan,){{0,4}}-,(?P<typ>{field}),(?P<max>{field}),nan(,nan){{0,3}}(,|$)',
                    re.IGNORECASE),
 
         re.compile(
@@ -314,8 +351,9 @@ def field_value_regex_variations(head, unit, signed=False):
         # 'Gate plateau voltage,Vplateau,nan,nan,4.7,nan,
         re.compile(head + rf',nan,nan,(?P<typ>{field}),nan(,|$)', re.IGNORECASE),
 
-        #'Vsp,Diode Forward Voltage,-_- -_-,1.3,Vv,Ty=25°C, 15 =22A, Ves =0V @,nan', 'V'
-        re.compile(head + rf',({field_nan})[\s,]({field_nan}),(?P<max>{field}),(?P<unit>{unit})(,|$|\s)', re.IGNORECASE),
+        # 'Vsp,Diode Forward Voltage,-_- -_-,1.3,Vv,Ty=25°C, 15 =22A, Ves =0V @,nan', 'V'
+        re.compile(head + rf',({field_nan})[\s,]({field_nan}),(?P<max>{field}),(?P<unit>{unit})(,|$|\s)',
+                   re.IGNORECASE),
     ]
 
 
@@ -339,7 +377,7 @@ def get_dimensional_regular_expressions():
                   r'(time|t[_\s]?[rf])\s*,?\s*(?P<min>nan|-*|[-0-9.]+)\s*,?\s*(?P<typ>nan|-*|[-0-9.]+)\s*,?\s*(?P<max>nan|-*|[-0-9.]+)\s*,?\s*(?P<unit>[uμnm]s)(,|$)',
                   re.IGNORECASE),
 
-          ] + field_value_regex_variations(r'(time|[tf][_\s]?[rf]?)', r'[uμnm]s'), # f for OCR confusing t
+          ] + field_value_regex_variations(r'(time|[tf][_\s]?[rf]?)', r'[uμnm]s'),  # f for OCR confusing t
         # Q=
         Q=[
 
@@ -368,7 +406,7 @@ def get_dimensional_regular_expressions():
 
               # datasheets/vishay/SIR622DP-T1-RE3.pdf Qrr no value match Body diode reverse recovery charge Qrr -,350,680,nan,nC
           ] + field_value_regex_variations(
-            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
+            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|charge\s+at\s+threshold|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
             r'[uμnp]C'),
 
         C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
@@ -382,6 +420,7 @@ def detect_fields(mfr, strings: Iterable[str]):
     for field_sym, field_re in fields_detect.items():
         if isinstance(field_re, tuple):
             stop_words = field_re[1]
+            assert not isinstance(stop_words, str)
             field_re = field_re[0]
         else:
             stop_words = []
@@ -408,10 +447,17 @@ def get_field_detect_regex(mfr):
     mfr = mfr_tag(mfr, raise_unknown=False)
 
     qgs = r'Q[ _]?gs'
+    qgs1 = ''
     if mfr == 'toshiba':
-        # toshiba: Qgs1 = charge from 0 to miller plateau start
-        # others: Qgs1 = charge from Qg_th to miller plateau start
+        # toshiba:      Qgs1* = Qg_th + Qgs2 charge from 0 to miller plateau start (Qgs)
+        #               Qgs2* = charger after miller plateau (not relevant and usually not specified)
+        # IRF6644TRPBF: Qgs1* = Qg_th    (0|Qgs1|TH|Qgs2|Qgd)
+        #               Qgs2* = Qgs
+        # others:       Qgs1* = charge from Qg_th to miller plateau start (0 Qgs_th|TH|Qgs1|)
         qgs += '1?'
+    else:
+        qgs += '[^1]'
+        qgs1 = r'|^Q[ _]?gs[ _]?1$'
 
     # regex matched on cell contents
     fields_detect = dict(
@@ -421,18 +467,20 @@ def get_field_detect_regex(mfr):
             r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
             re.IGNORECASE),  # QRM
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?$)', re.IGNORECASE),
+
         Qg=re.compile(rf'(total[\s-]+gate[\s-]+charge|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)', re.IGNORECASE),
+        Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))', re.IGNORECASE),
+        Qg_th=(re.compile(rf'(gate[\s-]+charge\s+at\s+V[ _]?th|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})', re.IGNORECASE),
+               ('post-threshold',)),
         Qgs=re.compile(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE),
-        Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$)', re.IGNORECASE),
         Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"?miller"?\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
-        Qg_th=re.compile(r'(gate[\s-]+charge\s+at\s+V[ _]?th|^Q[ _]?g\(?th\)?$)', re.IGNORECASE),
         Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
 
         Vpl=re.compile(r'(gate\s+plate\s*au\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
 
-        Vsd=re.compile(r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(sd)$)', re.IGNORECASE),
+        Vsd=re.compile(r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(sd)$|V[ _]?DS_?FW?D?)', re.IGNORECASE),
         # plate au
         # Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
@@ -451,6 +499,7 @@ def right_strip_nan(v, n):
     if i + n + 1 < len(v):
         v = v[0:i + n + 1]
     return v
+
 
 def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> DatasheetFields:
     fields_detect = get_field_detect_regex(mfr)
@@ -531,14 +580,12 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path) -> Dat
                     (_fill_unit(row, [-1, -2, -3], df_ffill.iloc[i], dim_units[dim]) or
                      _fill_unit(row, [-1, -2, -3], df_bfill.iloc[i], dim_units[dim]))
 
-
-
-                rl = normalize_dash(','.join(map(lambda v: str(v).strip(' ,\'"/|'), right_strip_nan(row,2))))
+                rl = normalize_dash(','.join(map(lambda v: str(v).strip(' ,\'"/|'), right_strip_nan(row, 2))))
                 rl_bf = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_bfill.iloc[i])))
                 rl_ff = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_ffill.iloc[i])))
 
                 # OCR
-                rl = ','.join(map(lambda s:s.strip(' /'), rl.replace('{','|').replace('/','|').split('|')))
+                rl = ','.join(map(lambda s: s.strip(' /'), rl.replace('{', '|').replace('/', '|').split('|')))
 
                 field = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()))
 
@@ -602,11 +649,23 @@ def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
     if pre_process_methods is None:
         pre_process_methods = (
             # fix java.lang.IllegalArgumentException: lines must be orthogonal, vertical and horizontal:
-            'nop', 'sips', 'gs', 'cups', 'ocrmypdf_redo',
+            'nop',
+            'sips', 'gs', 'cups',
+            'ocrmypdf_redo',
             # fix image datasheets, weird encoding
-            'ocrmypdf_r400')
+            'ocrmypdf_r400',
+            'r400_ocrmypdf',
+        )
     elif isinstance(pre_process_methods, str):
         pre_process_methods = (pre_process_methods,)
+
+    for method in list(pre_process_methods):
+        if f'.{method}.' in ds_path:
+            print(ds_path, 'already has method', method, 'applied')
+            pre_process_methods = list(pre_process_methods)
+            pre_process_methods.remove(method)
+            if 'nop' not in pre_process_methods:
+                pre_process_methods.insert(0, 'nop')
 
     last_e = None
     for method in pre_process_methods:
@@ -626,10 +685,10 @@ def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
                 continue
         except Exception as e:
             last_e = e
-            print('tabula error with method', method, e)
+            print(ds_path, 'tabula error with method', method, e)
             continue
 
-        if len(dfs): # and not os.path.isfile(ds_path + '.csv'):
+        if len(dfs):  # and not os.path.isfile(ds_path + '.csv'):
             pd.concat(dfs, ignore_index=True, axis=0).map(
                 lambda s: (isinstance(s, str) and normalize_dash(s)) or s).to_csv(ds_path + '.csv', header=False)
 
@@ -639,12 +698,13 @@ def tabula_read(ds_path, pre_process_methods=None) -> DatasheetFields:
         else:
             print(ds_path, 'tabula no fields extracted with method', method)
 
+    # no fields found..
     txt = extract_text(ds_path, try_ocr=False)
     if len(txt) < 20:
         print(ds_path, 'probably needs OCR')
         raise ValueError('probably need OCR ' + ds_path)
     else:
-        print(ds_path, 'tabula no methods working')
+        print(ds_path, 'tabula no methods working, tried', ', '.join(pre_process_methods))
         if last_e:
             raise last_e
 
