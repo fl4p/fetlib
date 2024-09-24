@@ -2,6 +2,10 @@ import math
 from typing import Literal
 
 
+def isnum(v):
+    return v is not None and not math.isnan(v)
+
+QgsQgs2_ratio_estimate = 0.6
 class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
@@ -37,24 +41,37 @@ class MosfetSpecs:
 
         self.Rds_on = Rds_on
 
-        if not Qgs2 and Qsw:
+        if not isnum(Qgs2) and isnum(Qsw):
             assert Qsw > Qgd
             Qgs2 = Qsw - Qgd
 
-        if not Qg_th and Qgs2:
+        if not isnum(Qg_th) and isnum(Qsw) and isnum(Qgd):
+            if isnum(Qgs):
+                Qg_th = Qgs + Qgd - Qsw
+                assert 0 < Qg_th < Qgs, Qg_th
+            elif isnum(Qgs2):
+                Qg_th = Qsw - Qgd
+                Qgs = Qsw + Qg_th - Qgd
+                assert 0 < Qg_th < Qgs
+                assert Qgs > 0
+            else:
+                Qg_th = (Qsw - Qgd) * (1 / QgsQgs2_ratio_estimate - 1)
+                Qgs = Qg_th - Qgd - Qsw
+
+        if not isnum(Qg_th) and isnum(Qgs2):
             Qg_th = Qgs - Qgs2
             assert Qg_th > 0, Qg_th
 
-        self.Qg = Qg  or math.nan
+        self.Qg = Qg or math.nan
         self.Qgd = Qgd or math.nan
         self.Qgs = Qgs or math.nan
         self._Qgs2 = Qgs2 or math.nan
         self.Qg_th = Qg_th or math.nan
 
-        assert not Qg_th or Qg_th < Qgs, (Qgs, Qg_th,)
+        assert not isnum(Qg_th) or Qg_th < Qgs, (Qgs, Qg_th,)
 
         self._Vpl = Vpl or math.nan
-        assert not Vpl or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
+        assert not isnum(Vpl) or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
 
         self.Coss = Coss or math.nan
         self.tRise = tRise or math.nan
@@ -66,8 +83,8 @@ class MosfetSpecs:
         assert math.isnan(self.Qrr) or 0 <= self.Qrr < 4000e-9, self.Qrr  # GaN have 0 qrr
         assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
         assert math.isnan(self.tFall) or .5e-9 < self.tFall < 1000e-9, self.tFall
-        if Vsd: Vsd = abs(Vsd)
-        assert Vsd is None or 0.2 < Vsd < 3, Vsd # FBG10N30BC: 2.5V
+        if isnum(Vsd): Vsd = abs(Vsd)
+        assert not isnum(Vsd) or 0.2 < Vsd < 3, Vsd  # FBG10N30BC: 2.5V
 
         assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 1e-08, (Qg, Rds_on, Qg * Rds_on)
 
@@ -102,7 +119,7 @@ class MosfetSpecs:
             return self._Qgs2
         if not math.isnan(self.Qg_th):
             return self.Qgs - self.Qg_th
-        return self.Qgs * 0.6  # TODO estimate
+        return self.Qgs * QgsQgs2_ratio_estimate  # TODO estimate
 
     @property
     def Qsw(self):
@@ -188,7 +205,7 @@ class DcDcSpecs:
         """
         :return: Whether the DC-DC converter operates in continuous conduction mode (coil current does not touch zero)
         """
-        #if math.isnan(self.Iripple):
+        # if math.isnan(self.Iripple):
         #    return True
         assert self.Iripple >= 0, self.Iripple
         return self.Iripple < 2 * self.Io
