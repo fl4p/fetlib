@@ -106,7 +106,7 @@ def validate_datasheet_text(mfr, mpn, text):
     if mpn.split(',')[0][:7].lower() not in text.lower():
         raise ValueError(mpn + ' not found in PDF text(%s)' % text[:30])
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt='v20', ignore_missing_inp_paths=True)
+@disk_cache(ttl='99d', file_dependencies=[0], salt='v21', ignore_missing_inp_paths=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None, tabular_pre_methods=None) -> DatasheetFields:
     if not pdf_path:
         assert mfr
@@ -456,7 +456,7 @@ def get_field_detect_regex(mfr):
         # others:       Qgs1* = charge from Qg_th to miller plateau start (0 Qgs_th|TH|Qgs1|)
         qgs += '1?'
     else:
-        qgs += '[^1]'
+        qgs += '([^1]|$)' # dont match Qgs1
         qgs1 = r'|^Q[ _]?gs[ _]?1$'
 
     # regex matched on cell contents

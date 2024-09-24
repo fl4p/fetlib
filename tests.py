@@ -1,6 +1,8 @@
 import math
 import os
 
+import pandas as pd
+
 import dslib.pdf2txt.parse
 import dslib.pdf2txt.pipeline
 from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, dim_regs, raster_ocr
@@ -21,6 +23,7 @@ def parse_line_tests():
     # raise NotImplemented()
     n = math.nan
     cases = [
+        ("43,Qgs,-,27,-,nC,,,,,", 'Qgs', (n,27,n)),
         ("Gate charge at threshold,Qaitth),-,2.7 -,nC,Vop=50 V,,p=10 A, Ves=0 to 10 V", "Qg_th", (n, 2.7, n)),
         # ("VSD,TJ = 25°C, IS = 34A,VGS = 0V  ,-,-,1.3", "Vsd", (n, n, 1.3)), # TODO
         ("Diode forward voltage,VDSF,IDR = 70 A, VGS = 0 V,-,-,-1.2,V", "Vsd", (n, n, -1.2)),
@@ -149,7 +152,11 @@ def parse_pdf_tests():
     assert len(d) >= 9
 
     d = parse_datasheet('datasheets/infineon/IQDH88N06LM5CGSCATMA1.pdf', mfr='infineon')
-    assert len(d) >= 11
+    assert d.Qgs.typ == 27
+    # missing Qgs
+    miss = {'Coss', 'Qg', 'Qg_th', 'Qgd', 'Qgs', 'Qrr', 'Qsw', 'Vpl', 'Vsd', 'tFall', 'tRise'} - set(d.keys())
+    assert len(miss) == 0, miss
+    assert len(d) >= 11, d
 
     d = tabula_read('datasheets/infineon/IRFB4110PBF.pdf')
     assert d.Qgd.typ == 43
@@ -174,6 +181,7 @@ def parse_pdf_tests():
     assert d.Qsw.typ == 29
     assert d.Qgd.typ == 20 and d.Qgd.max == 29
     assert d.Vpl.typ == 4.4
+    assert d.Qgs.typ == 29
 
     d = tabula_read('datasheets/onsemi/NTP011N15MC.pdf')
     assert d.Qgs.typ == 15
@@ -475,6 +483,15 @@ def test_rasterize():
 
 
 if __name__ == '__main__':
+    ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
+        dfs=[pd.DataFrame(['43,Qgs,-,27,-,nC,,,,,'.split(',')])],
+        mfr='infineon',
+        ds_path='')
+
+    assert ds.Qgs.typ == 27
+
+    parse_line_tests()
+
     d = parse_datasheet('datasheets/infineon/AUIRFS4115.pdf')  # split rows
     assert d.Qrr.typ == 300
 
@@ -499,7 +516,7 @@ if __name__ == '__main__':
     df = parse_datasheet('datasheets/onsemi/NVMFS6H800NWFT1G.pdf')
     assert len(df) > 5
 
-    parse_line_tests()
+
     test_rasterize()
     pdf_ocr_tests()
     parse_pdf_tests()
