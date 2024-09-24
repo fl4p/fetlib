@@ -15,7 +15,7 @@ def rasterize_pdf_page(
         stop_on_soft_error,
 ):
 
-    # fix
+    # limit DPI to prevent insanely large images
     raster_dpi.x = min(raster_dpi.x, 600)
     raster_dpi.y = min(raster_dpi.y, 600)
 

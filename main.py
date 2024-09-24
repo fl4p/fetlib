@@ -2,7 +2,8 @@ import math
 import asyncio
 import math
 import os.path
-from typing import List, Dict, Literal
+import traceback
+from typing import List, Dict, Literal, Tuple
 
 import numpy as np
 import pandas as pd
@@ -42,7 +43,7 @@ def main():
         print(p.discovered.get_ds_path())
 
 
-def process_part(part:DiscoveredPart):
+def compile_part_datasheet(part: DiscoveredPart):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -51,7 +52,7 @@ def process_part(part:DiscoveredPart):
     if not os.path.exists(ds_path):
         fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn)
 
-    ds = DatasheetFields()
+    ds = DatasheetFields(part=part)
 
     # place manual fields:
     man_fields = dslib.manual_fields.get_fields()
@@ -59,7 +60,11 @@ def process_part(part:DiscoveredPart):
 
     # parse datasheet (tabula and pdf2txt):
     if os.path.isfile(ds_path):
-        dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
+        try:
+            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn)
+        except Exception as e:
+            print(ds_path, e)
+            return None, None
         ds.add_multiple(dsp.all_fields())
 
     # try nexar api:
@@ -77,29 +82,45 @@ def process_part(part:DiscoveredPart):
                 ds.add(Field(sym, min=math.nan, typ=sv, max=math.nan))
 
     try:
+        # add discovered basic specs
         ds.add_multiple(part.specs.fields())
     except:
         print(mfr, mpn, part, part.specs)
+        raise
 
     # fallback specs for GaN etc (EPC tRise and tFall)
     fs = dslib.manual_fields.fallback_specs(mfr, mpn)
     for sym, typ in fs.items():
         ds.add(Field(sym, min=math.nan, typ=typ, max=math.nan))
 
-    print(mfr, mpn)
-    return
+    # print(mfr, mpn)
+    return ds
+
+
+def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs) -> Tuple[Part, Dict[str, float]]:
+    if isinstance(ds, tuple):
+        raise ValueError(ds)
+    else:
+        part = ds.part
+    mfr = part.mfr
+    mpn = part.mpn
+
+    ds.add_multiple(ds.part.specs.fields())
 
     # parse specification for DC-DC loss model
     try:
         fet_specs = ds.get_mosfet_specs()
     except Exception as e:
         print(mfr, mpn, 'error creating mosfet specs', e, type(e))
+        print(traceback.format_exc())
         print(part, part.specs.__dict__)
         print('\n'.join(map(str, ds.items())))
-        parse_datasheet.invalidate(ds_path, mfr=mfr, mpn=mpn)
+        parse_datasheet.invalidate(ds.ds_path, mfr=mfr, mpn=mpn)
+        parse_datasheet.invalidate(ds.ds_path, mfr=mfr)
+        parse_datasheet.invalidate(ds.ds_path)
 
-        return
         # raise
+        return None, None
 
     # compute power loss
     if 1:
@@ -128,7 +149,7 @@ def process_part(part:DiscoveredPart):
         Rds_max=ds.get_max('Rds_on_10v', True) * 1000,
         Id=ds.get_typ_or_max_or_min('ID_25', True),
 
-        Qg_max=ds.get_max('Qg') * 1e9,  # TODO this is Qgtyp
+        Qg_max=ds.get_max('Qg') * 1e9,
         Qgs=ds.get_typ_or_max_or_min('Qgs'),
         Qgd=ds.get_typ_or_max_or_min('Qgd'),
         Qsw=fet_specs and (fet_specs.Qsw * 1e9),
@@ -153,6 +174,7 @@ def process_part(part:DiscoveredPart):
 
     return Part(specs=fet_specs, discovered=part), row
 
+
 def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
     result_rows = []  # csv
     result_parts: List[Part] = []  # db storage
@@ -165,13 +187,27 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
         except Exception as e:
             print('git clone error:', e)
 
-    jobs = {(p.mfr,p.mpn): (process_part, p) for p in parts}
-    results = run_parallel(jobs, 8, 'multiprocessing')
+    import pickle
 
-    for (mfr,mpn),(part,row) in results.items():
-        #part, row = process_part(d_part)
-        result_rows.append(row)
-        result_parts.append(part)
+    if os.path.isfile('fet-datasheets.pkl'):
+        with(open('fet-datasheets.pkl', 'rb')) as f:
+            dss: List[DatasheetFields] = pickle.load(f)
+    else:
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p) for p in parts}
+        results = run_parallel(jobs, 8, 'multiprocessing')
+        dss: List[DatasheetFields] = list(results.values())
+
+        with open('fet-datasheets.pkl', 'wb') as f:
+            pickle.dump(dss, f)
+
+    print('computing power loss...')
+    for ds in dss:
+        if isinstance(ds, tuple) and ds == (None,None):
+            continue
+        part, row = compute_part_powerloss(ds, dcdc)
+        if part is not None:
+            result_rows.append(row)
+            result_parts.append(part)
 
     # print('no P_sw')
     # for row in result_rows:
@@ -181,14 +217,14 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
 
     df = pd.DataFrame(result_rows)
 
-    df.sort_values(by=['Vds', 'mfr', 'mpn'], inplace=True, kind='mergesort')
+    df.sort_values(by=['Vds_max', 'mfr', 'mpn'], inplace=True, kind='mergesort')
 
     for col in df.columns:
         if col.startswith('P_') or col.startswith('FoM'):
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
 
     os.path.exists('out') or os.makedirs('out', exist_ok=True)
-    out_fn = f'out/fets-{dcdc.fn_str("buck")}.csv'
+    out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}.csv'
     df.to_csv(out_fn, index=False, float_format=lambda f: round_to_n(f, 4))
     print('written', out_fn)
 
@@ -196,7 +232,14 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs):
 
     print('stored', len(result_parts), 'parts')
 
+    # report
+    # - total datasheets with at least 1 field
+    # - total fields with at least one value
+    # - total values
+    # - total power values
+
     return result_parts
+
 
 def num_cores():
     try:
@@ -206,13 +249,40 @@ def num_cores():
         # see https://stackoverflow.com/questions/1006289/how-to-find-out-the-number-of-cpus-using-python
         import multiprocessing
         return multiprocessing.cpu_count()
+
+
+import contextlib
+import joblib
+from tqdm import tqdm
+
+
+@contextlib.contextmanager
+def tqdm_joblib(tqdm_object):
+    """Context manager to patch joblib to report into tqdm progress bar given as argument"""
+
+    class TqdmBatchCompletionCallback(joblib.parallel.BatchCompletionCallBack):
+        def __call__(self, *args, **kwargs):
+            tqdm_object.update(n=self.batch_size)
+            return super().__call__(*args, **kwargs)
+
+    old_batch_callback = joblib.parallel.BatchCompletionCallBack
+    joblib.parallel.BatchCompletionCallBack = TqdmBatchCompletionCallback
+    try:
+        yield tqdm_object
+    finally:
+        joblib.parallel.BatchCompletionCallBack = old_batch_callback
+        tqdm_object.close()
+
+
 def run_parallel(jobs, max_concurrency=256,
-                 backend:Literal['threading','multiprocessing']='multiprocessing',
+                 backend: Literal['threading', 'multiprocessing'] = 'multiprocessing',
                  verbose=100, **kwargs):
     from joblib import Parallel, delayed
-    results = Parallel(n_jobs=min(num_cores() + 1, max_concurrency), verbose=verbose, backend=backend, **kwargs)(
-        delayed(fn)() if callable(fn) else delayed(fn[0])(*fn[1:]) for fn in jobs.values())
+    with tqdm_joblib(tqdm(desc="Run Progress:", total=len(jobs))) as progress_bar:
+        results = Parallel(n_jobs=min(num_cores() + 1, max_concurrency), verbose=verbose, backend=backend, **kwargs)(
+            delayed(fn)() if callable(fn) else delayed(fn[0])(*fn[1:]) for fn in jobs.values())
     return dict(zip(jobs.keys(), results))
+
 
 if __name__ == '__main__':
     # parse_pdf_tests()

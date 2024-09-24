@@ -1,6 +1,10 @@
 gate
 drain
 source
+miller
+charge
+Threshold
+Voltage
 Qsw
 QSW
 Qgd

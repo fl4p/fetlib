@@ -32,6 +32,9 @@ git clone https://github.com/open-pe/fet-datasheets datasheets # fetch a set of 
 
 # additional dependencies:
 - `gs` (Ghostscript)
+- qpdf
+- sips
+- CUPS_PDF (www.cups-pdf.de/)
 ```
 
 

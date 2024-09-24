@@ -29,9 +29,9 @@ problems:
 solution:
 - create training set from working pdfs
 - extract text
-
+- https://ledgerbox.io/blog/extract-tables-with-tesseract-ocr
 
 
 * pix2text detects table structure well, but text OCR is bad
 * tabular has issues with border-less tables (IXTQ180N10T)
-* tabula in the browser works better than python wrapper 
+* tabula in the browser works better than python wrapper
