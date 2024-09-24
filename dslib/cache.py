@@ -268,12 +268,15 @@ def hashable_to_sha224(obj):
 
 dict_keys_t = type({}.keys())
 
+def _sort_key(o):
+    return str(o)
+
 def to_hashable(obj):
     if is_hashable(obj):
         return obj  # , type(obj)
 
     if isinstance(obj, set):
-        obj = sorted(obj)
+        obj = sorted(obj, key=_sort_key)
     elif isinstance(obj, dict):
         obj = sorted(obj.items())
     elif isinstance(obj, dict_keys_t):
