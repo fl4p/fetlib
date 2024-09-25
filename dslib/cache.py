@@ -549,7 +549,8 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
 _disk_cache_disabled = False
 
 def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
-               ignore_missing_inp_paths=False):
+               ignore_missing_inp_paths=False,
+               hash_func_code=False):
     if ignore_kwargs is None:
         ignore_kwargs = set()
 
@@ -559,6 +560,8 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
     def decorate(target):
         import inspect
         mod = inspect.getmodule(target)
+
+        source_code = inspect.getsource(target) if hash_func_code else None
 
         def get_file_names(args, kwargs, deps):
             if not deps:
@@ -594,6 +597,8 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                     not ignore_missing_inp_paths or fn is not None}
             if salt is not None:
                 mtimes['__salt__'] = salt
+            if hash_func_code:
+                mtimes['__target_source'] = source_code
             cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs={**kwargs, **mtimes})
             return cache_key_str
 
