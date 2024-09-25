@@ -1,26 +1,25 @@
 import argparse
-import math
 import asyncio
 import math
 import os.path
 import pickle
+import random
 import sys
 import traceback
 from typing import List, Dict, Literal, Tuple
 
-import numpy as np
 import pandas as pd
 
 import dslib.manual_fields
 from discover_parts import discover_mosfets
-from dslib import round_to_n
+from dslib import write_csv
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
 from dslib.parts_discovery import DiscoveredPart
-from dslib.pdf2txt.parse import parse_datasheet, is_gan, subsctract_needed_symbols
+from dslib.pdf2txt.parse import parse_datasheet, subsctract_needed_symbols
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
-from dslib.spec_models import MosfetSpecs, DcDcSpecs
-from dslib.store import Part, Mfr, Mpn
+from dslib.spec_models import DcDcSpecs
+from dslib.store import Part
 
 
 def main():
@@ -30,8 +29,20 @@ def main():
     #    'discover', 'download', 'parse', 'power'), default='power')
     parser.add_argument('--dcdc-file')
     parser.add_argument('-q')
-    parser.add_argument('-j',default=8) # parallel jobs
+    parser.add_argument('-j', default=8)  # parallel jobs
+    parser.add_argument('--rg-total', default=6)  # total gate resistance
+    parser.add_argument('--vpl-fallback', default=4.5)
+    parser.add_argument('--no-cache', action='store_true')
+    parser.add_argument('--clean', action='store_true')
     args = parser.parse_args(sys.argv[1:])
+
+    if args.clean:
+        raise NotImplementedError()
+        # git clean -xn
+
+    if args.no_cache:
+        from dslib.cache import disk_cache
+        disk_cache.disable(True)
 
     if not args.dcdc_file:
         # set DC-DC operating point:
@@ -59,16 +70,14 @@ def main():
 
     # pre-select mosfets by voltage and current
     n_pre_select = len(parts)
-    parts = [p for p in parts if (
-            p.specs.Vds_max >= (dcdc.Vi * 1.1) and p.specs.Vds_max <= (dcdc.Vi * 4)
-            and p.specs.ID_25 > dcdc.Io_max * 1.2)]
+    parts = dcdc.select_mosfets(parts)
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
 
     # parts = parts[:100]
 
     # do all the magic: download datasheets, read them and compute power loss:
-    parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, n_jobs=int(args.j))
+    parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, args=args)
 
     # show parts missing Qsw, no switching loss estimation is possible:
     no_qsw = [p for p in parts if math.isnan(p.specs.Qsw)]
@@ -77,7 +86,7 @@ def main():
         print(p.discovered.get_ds_path())
 
 
-def compile_part_datasheet(part: DiscoveredPart, need_symbols):
+def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -97,14 +106,28 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols):
     if ds or ff:
         need_symbols = subsctract_needed_symbols(need_symbols, set(ds.keys()) | set(ff.keys()), copy=True)
 
+    if not no_cache:
+
+        lp = dslib.store.parts_db.load_obj(part)
+        if lp:
+            lp_keys = lp.specs.keys()
+            if lp_keys:
+                need_symbols = subsctract_needed_symbols(need_symbols, lp_keys, copy=True)
+
+        ld = dslib.store.datasheets_db.load_obj(part)
+        ld_keys = ld.keys() if ld else None
+        if ld_keys:
+            need_symbols = subsctract_needed_symbols(need_symbols, ld_keys, copy=True)
+
     # parse datasheet (tabula and pdf2txt):
     if os.path.isfile(ds_path):
         try:
             dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols)
+            ds.timestamp = dsp.timestamp
+            ds.add_multiple(dsp.all_fields())
         except Exception as e:
-            print(ds_path, e)
-            return None, None
-        ds.add_multiple(dsp.all_fields())
+            print(traceback.format_exc())
+            print(ds_path, 'error', e)
 
     # try nexar api:
     if 1:
@@ -136,7 +159,7 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols):
     return ds
 
 
-def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs) -> Tuple[Part, Dict[str, float]]:
+def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[Part, Dict[str, float]]:
     if isinstance(ds, tuple):
         raise ValueError(ds)
     else:
@@ -163,7 +186,10 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs) -> Tuple[Part, 
 
     # compute power loss
     if 1:
-        loss_spec = dcdc_buck_hs(dcdc, fet_specs, rg_total=6, fallback_V_pl=4.5)
+        loss_spec = dcdc_buck_hs(dcdc, fet_specs,
+                                 rg_total=float(args.rg_total),
+                                 fallback_V_pl=float(args.vpl_fallback)
+                                 )
         ploss = loss_spec.__dict__.copy()
         del ploss['P_dt']
         ploss['P_hs'] = loss_spec.buck_hs()
@@ -180,26 +206,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs) -> Tuple[Part, 
     #    ploss = {}
 
     row = dict(
-        mfr=mfr,
-        mpn=mpn,
-        housing=part.package,
-
-        Vds_max=ds.get_max('Vds', True),
-        Rds_max=ds.get_max('Rds_on_10v', True) * 1000,
-        Id=ds.get_typ_or_max_or_min('ID_25', True),
-
-        Qg_max=ds.get_max('Qg') * 1e9,
-        Qgs=ds.get_typ_or_max_or_min('Qgs'),
-        Qgd=ds.get_typ_or_max_or_min('Qgd'),
-        Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-
-        # C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
-
-        Qrr_typ=ds.get_typ('Qrr'),
-        Qrr_max=ds.get_max('Qrr'),
-
-        tRise_ns=round(fet_specs.tRise * 1e9, 1),
-        tFall_ns=round(fet_specs.tFall * 1e9, 1),
+        **ds.get_row(),
 
         Vth=part.specs.Vgs_th_max,
         Vpl=fet_specs and fet_specs.V_pl,
@@ -214,8 +221,10 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs) -> Tuple[Part, 
     return Part(specs=fet_specs, discovered=part), row
 
 
-def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs,n_jobs=8):
+def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, args):
     assert parts, "No parts to generate"
+
+    print('generating power loss estimates for ', len(parts), 'parts')
 
     result_rows = []  # csv
     result_parts: List[Part] = []  # db storage
@@ -223,9 +232,9 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs,n
 
     need_symbols = {
         'tRise', 'tFall',  # HS
-        'Qgd', # HS
-        ('Qgs', 'Qg_th', 'Qgs2'), # HS, need one of those.
-        'Vsd', # LS
+        'Qgd',  # HS
+        ('Qgs', 'Qg_th', 'Qgs2'),  # HS, need one of those.
+        'Vsd',  # LS
         # if we would only specify Qgs, the OCR pipeline would brute-force rasterization
         # until it wrongly finds Qgs (which actually was Qgs1)
         # 'Qrr'  # LS # kl leave this, many DS dont have this
@@ -240,27 +249,32 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs,n
 
     import pickle
 
-    if os.path.isfile('fet-datasheets2_.pkl'):
+    if os.path.isfile('fet-datasheets.pkl_'):
         with(open('fet-datasheets.pkl', 'rb')) as f:
             dss: List[DatasheetFields] = pickle.load(f)
-            dss = [d for d in dss if d != (None, None)]
     else:
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols) for p in parts}
-        results = run_parallel(jobs, n_jobs, 'multiprocessing')
+        parts_shuffled = list(parts)
+        random.shuffle(parts_shuffled)
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache) for p in parts_shuffled}
+        results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=50)
         dss: List[DatasheetFields] = list(results.values())
 
+    dss = [d for d in dss if d != (None, None)]
+
     if len(dss) == 1:
-        print(repr(dss[0]))
+        # print(repr(dss[0]))
+        dss[0].print(show_cond=True)
+        print('mosfet specs:')
         print(dss[0].get_mosfet_specs())
 
-        #with open('fet-datasheets.pkl', 'wb') as f:
+        # with open('fet-datasheets.pkl', 'wb') as f:
         #    pickle.dump(dss, f)
 
-    print('computing power loss...')
+    print('computing power loss for %s parts...' % len(dss))
     for ds in dss:
         if isinstance(ds, tuple) and ds == (None, None):
             continue
-        part, row = compute_part_powerloss(ds, dcdc)
+        part, row = compute_part_powerloss(ds, dcdc, args=args)
         if part is not None:
             result_rows.append(row)
             result_parts.append(part)
@@ -273,18 +287,16 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs,n
 
     df = pd.DataFrame(result_rows)
 
-    df.sort_values(by=['Vds_max', 'mfr', 'mpn'], inplace=True, kind='mergesort')
+    if len(dss) > 2:
+        os.path.exists('out') or os.makedirs('out', exist_ok=True)
+        out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}.csv'
+        write_csv(df, out_fn)
+        print('written', out_fn)
+    else:
+        print('skip csv write because only few parts')
 
-    for col in df.columns:
-        if col.startswith('P_') or col.startswith('FoM'):
-            df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
-
-    os.path.exists('out') or os.makedirs('out', exist_ok=True)
-    out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}.csv'
-    df.to_csv(out_fn, index=False, float_format=lambda f: round_to_n(f, 4))
-    print('written', out_fn)
-
-    dslib.store.add_parts(result_parts, overwrite=True)
+    dslib.store.parts_db.add(result_parts, overwrite=True)
+    dslib.store.datasheets_db.add(dss, overwrite=True)
 
     print('')
     print('')
@@ -338,7 +350,8 @@ def run_parallel(jobs, max_concurrency=256,
                  verbose=100, **kwargs):
     from joblib import Parallel, delayed
     with tqdm_joblib(tqdm(desc="Run Progress:", total=len(jobs))) as progress_bar:
-        results = Parallel(n_jobs=min(num_cores() + 1, max_concurrency, len(jobs)), verbose=verbose, backend=backend, **kwargs)(
+        results = Parallel(n_jobs=min(num_cores() + 1, max_concurrency, len(jobs)), verbose=verbose, backend=backend,
+                           **kwargs)(
             delayed(fn)() if callable(fn) else delayed(fn[0])(*fn[1:]) for fn in jobs.values())
     return dict(zip(jobs.keys(), results))
 

@@ -1,3 +1,11 @@
+# New approach
+- find a tabular segmentation with merged cells
+  - some tables have missing borders
+  - apps
+    - https://github.com/jsvine/pdfplumber 
+    - tabula
+    - tesseract with tables (TODO link)
+    - pix2image 
 
 # Power Loss Model
 
@@ -134,3 +142,14 @@ mosfetlib
 fetfinder
 findfet
 mosdb
+
+
+# Tabula CMD
+```
+["java" "-jar" "~/dev/tabula-java/target/tabula-1.0.6-SNAPSHOT-jar-with-dependencies.jar",
+                            "--guess",
+                            "--pages", "all",
+                            '""']
+                            
+java-jar~/dev/tabula-java/target/tabula-1.0.6-SNAPSHOT-jar-with-dependencies.jar --guess --pages all                            
+```
