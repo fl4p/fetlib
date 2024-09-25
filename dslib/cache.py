@@ -546,6 +546,7 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
 
     return decorate
 
+_disk_cache_disabled = False
 
 def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
                ignore_missing_inp_paths=False):
@@ -614,6 +615,10 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                 return target(*args, **kwargs)
 
             inv = False
+
+            if _disk_cache_disabled:
+                inv = True
+
             if out_files:
                 assert file_dependencies
                 out_fns = get_file_names(args, kwargs, out_files)
@@ -656,6 +661,14 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
         return _disk_cache_wrapper
 
     return decorate
+
+def disk_cache_disable(disable:bool):
+    global _disk_cache_disabled
+    if disable and not _disk_cache_disabled:
+        logger.info('Disk cache disabled')
+    _disk_cache_disabled = disable
+
+setattr(disk_cache, 'disable', disk_cache_disable)
 
 
 class NopLock:
@@ -704,7 +717,7 @@ def acquire_file_lock(fn, kill_holder, max_time=10):
                 os.kill(pid, signal.SIGKILL)
                 _lockf_backoff(fh)
         else:
-            raise RuntimeError('%s locked by %d' % (fn, pid))
+            raise TimeoutError('%s locked by %d' % (fn, pid))
 
     return fh
 
