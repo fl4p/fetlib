@@ -1,4 +1,12 @@
 # New approach
+
+5 types:
+- text as pdf, table grid vectors
+- text in pdf but broken enconding, tables grid vectors
+- vectorized text (need OCR), tables grid vectors
+- rasterized pdf
+- scanned pdf (very raw)
+
 - find a tabular segmentation with merged cells
   - some tables have missing borders
   - apps
@@ -6,6 +14,13 @@
     - tabula
     - tesseract with tables (TODO link)
     - pix2image 
+
+img2table does a good job on rasterized tables.
+it is useful to add borders to tables and draw implicit row/column grid. 
+
+pdf2plumber and pymudf are similar.
+they work good with table grid vectors. does they work with rasterized?
+
 
 # Power Loss Model
 

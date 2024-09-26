@@ -86,13 +86,30 @@ if 'v2':
     BMRef('datasheets/onsemi/FDD86367.pdf', tags='Qg(tot)')
     BMRef('datasheets/toshiba/TK34A10N1.pdf', tags='Qgs1')
 
-    # IXTQ180N10T # tabula detection issue
+    BMRef('datasheets/littelfuse/IXTQ180N10T.pdf', tags='tabulaDetectIssue,tabulaBrowser')
+
+    #DMTH10H005SCT# Vsd 13
+    # AUIRF7759L2TR # Qgd
+    AUIRF7759L2TR
+    AUIRF7769L2TR # qgs1,qgs2,Qgodr
+    'datasheets/st/STP140N8F7.pdf'
+    BMRef('datasheets/onsemi/FDMS86368-F085.pdf', tags='VsdStacked')
+    # SIRS5800DP-T1-GE3.pdf
+    # IXTQ180N10T # tabula detection issue, better in browser
     # IRF150DM115XTMA1 # long ocr
 
     # IR680ADP-T1-RE3 # complex structured tables
+    # SIR578DP-T1-RE3.pdf # double Qg
+    # STP310N10F7 # Qgd labeled as gate-source
 
     # datasheets/littelfuse/IXTA160N10T7.pdf
     # 'datasheets/mcc/MCB70N10YA-TP.pdf'
+
+    # IAUTN08S5N012L lin
+    # IRFS7730TRL7PP tags="QrrMulti"
+
+
+    # BSC042NE7NS3GATMA1 vectorized text
 
 # ISC046N13NM6ATMA1
 # infineon/IQDH88N06LM5CGSCATMA1
