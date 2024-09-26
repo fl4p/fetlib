@@ -27,6 +27,17 @@ def normalize_dash(s:str)->str:
     return s
 
 def ocr_post_subs(s:str)->str:
-    return ','.join(map(lambda s: s.strip(' /'), s.replace('{', '|').replace('/', '|').split('|')))
+    s = ','.join(map(lambda s: s.strip(' /'), s.replace('{', '|').replace('/', '|').split('|')))
+    s = ','.join(map(lambda s: s.strip(' |/\'"'), s.split(',')))
+    return s
+
 def strip_no_print_latin(s:str)->str:
     return no_print_latin.sub('', s)
+
+
+_whitespaces = re.compile('\s+', re.MULTILINE)
+def whitespaces_to_space(s:str)->str:
+    return _whitespaces.sub(' ', s)
+
+def whitespaces_remove(s:str)->str:
+    return _whitespaces.sub('', s)
