@@ -141,7 +141,7 @@ def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs):
         # warnings.warn('no Vsd specified, assuming 1 V')
         vsd = 1
     else:
-        vsd = mf.Vsd
+        vsd = abs(mf.Vsd)
 
     return SwitchPowerLoss(
         P_on=(1 - dc.D_buck) * dc.Io_mean_squared_on * mf.Rds_on,

@@ -1,4 +1,6 @@
+import datetime
 import math
+import time
 import warnings
 from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast
@@ -12,7 +14,7 @@ def first(a):
 
 class Field():
     StatLiteral = Literal['min', 'max', 'typ']
-    Stats = cast(List[StatLiteral], ['min', 'typ', 'max'])
+    StatKeys = cast(List[StatLiteral], ['min', 'typ', 'max'])
 
     def __init__(self, symbol: str, min, typ, max, unit=None, mul=1, cond=None):
         self.symbol = symbol
@@ -35,7 +37,6 @@ class Field():
             mul = 1e6
             unit = 'pF'
 
-
         min = parse_field_value(min) * mul
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
@@ -56,6 +57,30 @@ class Field():
             warnings.warn('Vpl %s out of range, assuming /10' % typ)
             typ /= 10
 
+        mtm = (min, typ, max)
+
+        if symbol == 'Qrr' and (not unit or unit.lower() == 'c'):
+            # fix Qrr in uC -> nC
+            if sum(math.isnan(v) or 0.1 < v < 0.9 for v in mtm) == 3:
+                min *= 1e3
+                typ *= 1e3
+                max *= 1e3
+
+        if symbol in {'Qgd', 'Qgs', 'Qg', 'tRise', 'tFall'}:
+            if not math.isnan(max) and math.isnan(min) and math.isnan(typ):
+                typ = max
+                max = math.nan
+
+        if symbol == 'Vsd' and max < typ and (typ/max) < 1.5:
+            # Vsd confusion
+            a = max
+            max = typ
+            typ = a
+
+
+        if not math.isnan(max) and not math.isnan(typ):
+            assert 1 < max/typ < 5, (typ, max)
+
         self.min = min
         self.typ = typ
         self.max = max
@@ -63,6 +88,8 @@ class Field():
         self.unit = unit
 
         self.cond = cond
+
+        self.timestamp = time.time()
 
         assert not math.isnan(self.typ) or not math.isnan(self.min) or not math.isnan(
             self.max), 'all nan ' + self.__repr__()
@@ -101,8 +128,11 @@ class Field():
             raise NotImplemented()
             # TODO min, max updates?
 
-        for s in ('min', 'max', 'typ'):
-            if math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s)):
+        # if f has more values, use all of them
+        is_sup = len(f) > len(self)
+
+        for s in Field.StatKeys:
+            if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))):
                 setattr(self, s, getattr(f, s))
 
     def __getitem__(self, item):
@@ -111,6 +141,7 @@ class Field():
 
     def values(self) -> List[float]:
         return [self.min, self.typ, self.max]
+
 
     def __eq__(self, other):
         if isinstance(other, Field):
@@ -157,9 +188,46 @@ class DatasheetFields():
         if fields:
             self.add_multiple(fields)
 
+        self.timestamp = datetime.datetime.now()
+
     @property
     def ds_path(self):
         return self.part.get_ds_path()
+
+    def get_row(self):
+        ds = self
+        part = ds.part
+
+        try:
+            fet_specs = ds.get_mosfet_specs()
+        except Exception as e:
+            warnings.warn('failed to create fet specs: %s' %e)
+            fet_specs = None
+
+        return dict(
+            mfr=part.mfr,
+            mpn=part.mpn,
+            housing=part.package,
+
+            Vds_max=ds.get_max('Vds', True),
+            Rds_max=ds.get_max('Rds_on_10v', True) * 1000,
+            Id=ds.get_typ_or_max_or_min('ID_25', True),
+
+            Qg_max=ds.get_max('Qg'),
+            Qgs=ds.get_typ_or_max_or_min('Qgs'),
+            Qgd=ds.get_typ_or_max_or_min('Qgd'),
+            Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+
+
+            # C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
+
+            Vsd=ds.get_typ_or_max_or_min('Vsd'),
+            Qrr_typ=ds.get_typ('Qrr'),
+            Qrr_max=ds.get_max('Qrr'),
+
+            tRise_ns=round(fet_specs.tRise * 1e9, 1),
+            tFall_ns=round(fet_specs.tFall * 1e9, 1),
+        )
 
     def add(self, f: Field):
         assert not math.isnan(f.typ_or_max_or_min)
@@ -172,6 +240,18 @@ class DatasheetFields():
     def add_multiple(self, fields: Iterable[Field]):
         for f in fields:
             self.add(f)
+
+    def print(self, show_cond=False):
+        print('')
+        print(self.part.mfr, self.part.mpn)
+        print('Symbol         min   typ   max   unit   source',  '   cond' if show_cond else '',)
+        for f in self.fields_filled.values():
+            l = '%-12s %5.0f %5.0f %5.0f %-4s %10s %-20s' % (f.symbol, f.min, f.typ, f.max, f.unit,
+                                                          '/'.join(map(lambda s:str(s)[:2], f._sources.values())),
+                                                         ', '.join(f.cond.values() if f.cond else []) if show_cond else '')
+            l = l.replace('nan', ' - ')
+            l = l.replace(' None', '  -  ')
+            print(l)
 
     def get_mosfet_specs(self):
         mf_fields = [
@@ -265,7 +345,7 @@ class DatasheetFields():
         if not symbols:
             symbols = b.fields_filled.keys()
         for sym in symbols:
-            for stat in Field.Stats:
+            for stat in Field.StatKeys:
                 min_err = float('inf')
                 for f in b.fields_lists.get(sym, []):
                     rv = f[stat]
@@ -278,7 +358,7 @@ class DatasheetFields():
 
         return n
 
-    def show_diff(self, a: 'DatasheetFields', symbols=None, err_threshold=0.05, title=''):
+    def show_diff(self, a: 'DatasheetFields', symbols=None, err_threshold=0.001, title=''):
         assert 0 <= err_threshold < 0.2
 
         b = self

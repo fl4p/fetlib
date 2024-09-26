@@ -11,7 +11,9 @@ def rel_err(a, b, reg=1e-20):
     return (a - b) / (abs(b) + reg)
 
 
-QgsQgs2_ratio_estimate = 0.45  # 0.3 ... 0.6
+# the smaller this ratio, the greater Qg_th
+# .. and the smaller Qsw
+Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 
 
 class MosfetSpecs:
@@ -66,7 +68,7 @@ class MosfetSpecs:
                 assert Qgs > 0
             else:
                 self._Qg_th = math.nan  # TODO flag as estimate
-                Qg_th = (Qsw - Qgd) * (1 / QgsQgs2_ratio_estimate - 1)
+                Qg_th = (Qsw - Qgd) * (1 / Qgs2_Qgs_ratio_estimate - 1)
                 Qgs = Qg_th - Qgd - Qsw
 
         if not isnum(Qg_th) and isnum(Qgs2):
@@ -156,7 +158,7 @@ class MosfetSpecs:
             return self._Qgs2
         if not math.isnan(self.Qg_th):
             return self.Qgs - self.Qg_th
-        return self.Qgs * QgsQgs2_ratio_estimate  # TODO estimate
+        return self.Qgs * Qgs2_Qgs_ratio_estimate  # TODO estimate
 
     @property
     def Qsw(self):
@@ -165,7 +167,7 @@ class MosfetSpecs:
         return self.Qgd + self.Qgs2
 
     def __str__(self):
-        return f'MosfetSpecs({round(self.Vds,0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n Qsw={round(self.Qsw * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
+        return f'MosfetSpecs({round(self.Vds,0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9,0)}n Qsw={round(self.Qsw * 1e9,1)}n trf={round(self.tRise * 1e9,1)}/{round(self.tFall * 1e9,1)}n Qrr={round(self.Qrr * 1e9,1)}n)'
 
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
@@ -270,6 +272,11 @@ class DcDcSpecs:
         if topo == 'buck':
             return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f / 1000)
         raise ValueError(topo)
+
+    def select_mosfets(dcdc, parts):
+        return [p for p in parts if (
+                p.specs.Vds_max >= (dcdc.Vi * 1.1) and p.specs.Vds_max <= (dcdc.Vi * 4)
+                and p.specs.ID_25 > dcdc.Io_max * 1.2)]
 
 
 def tests():
