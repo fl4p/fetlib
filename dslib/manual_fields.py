@@ -1,7 +1,7 @@
 import math
 import sys
 from enum import Enum
-from typing import Dict, List
+from typing import Dict, List, cast
 
 from dslib.field import Field
 from dslib.store import Mfr, Mpn
@@ -20,6 +20,16 @@ def fallback_specs(mfr, mpn):
     return dict()
 
 def get_fields() ->  Dict[Mfr, Dict[Mpn, List[Field]]]:
+    fields = cast(Dict[Mfr, Dict[Mpn, List[Field]]], sys.modules[__name__].__dict__)
+    for a, ff in fields.items():
+        if not isinstance(ff, dict) or a[0] == '_':
+            continue
+        for fl in ff.values():
+            for f in fl:
+                for k in Field.StatKeys:
+                    if not math.isnan(f[k]):
+                        f._sources[k] = 'manual'
+
     return sys.modules[__name__].__dict__
 
 

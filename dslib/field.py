@@ -16,8 +16,9 @@ class Field():
     StatLiteral = Literal['min', 'max', 'typ']
     StatKeys = cast(List[StatLiteral], ['min', 'typ', 'max'])
 
-    def __init__(self, symbol: str, min, typ, max, unit=None, mul=1, cond=None):
+    def __init__(self, symbol: str, min, typ, max, unit=None, mul=1, cond=None, source=None):
         self.symbol = symbol
+        self._sources: Dict[Field.StatLiteral, str] = {k: source for k in Field.StatKeys}
 
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
             unit = 'ns'  # ocr confusion
@@ -134,6 +135,7 @@ class Field():
         for s in Field.StatKeys:
             if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))):
                 setattr(self, s, getattr(f, s))
+                self._sources[s] = f._sources[s]
 
     def __getitem__(self, item):
         assert item in {'min', 'max', 'typ'}

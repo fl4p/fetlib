@@ -86,6 +86,8 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
 
     assert mfr
 
+    source_name = os.path.basename(pdf_path)
+
     pat = expr.QRR.get(mfr)
 
     if pat:
@@ -117,7 +119,9 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
                                     i_f=qrr_d.get('if'),
                                     didt=qrr_d.get('didt'),
                                     vds=qrr_d.get('vds')),
-                                unit=qrr_d.get('unit')))  # vgs
+                                unit=qrr_d.get('unit'),
+                                source=[source_name, 'text']
+                                ))  # vgs
     else:
         if mfr:
             print('no Qrr pattern for ', mfr)
@@ -269,7 +273,8 @@ valid_range = dict(
 )
 
 
-def parse_field_csv(csv_line, dim, field_sym, cond=None) -> Field:
+def parse_field_csv(csv_line, dim, field_sym, cond=None, capture_match=False, source=None) \
+        -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
     range = valid_range.get(field_sym)
     err = []
     for r in dim_regs[dim]:
@@ -288,6 +293,7 @@ def parse_field_csv(csv_line, dim, field_sym, cond=None) -> Field:
                       mul=1,
                       cond=cond,
                       unit=vd.get('unit'))
+                      source=source)
             if range and not (check_range(f.min, range) and check_range(f.typ, range) and check_range(f.max, range)):
                 err.append((field_sym, 'field out of range', f, range))
                 continue
@@ -553,10 +559,12 @@ def right_strip_nan(v, n):
     return v
 
 
-def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbose=False) -> DatasheetFields:
+def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', verbose=False) -> DatasheetFields:
     assert mfr
     assert not ds_path or mfr in ds_path, (mfr, ds_path)
     fields_detect = get_field_detect_regex(mfr)
+
+    source_base = os.path.basename(ds_path) if ds_path else ''
 
     dim_units = dict(
         t={'us', 'ns', 'μs', 'ms'},
@@ -565,6 +573,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbos
         V={'mV', 'V'},
     )
 
+    # noinspection PyTypeChecker
     all_units = set(sum(map(list, dim_units.values()), []))
 
     fields = DatasheetFields()
@@ -577,6 +586,8 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbos
         col_idx.clear()
         unit = None
         col_typ = 0
+
+        source_name = df.index.name
 
         # ffill unit
         # df.mask(~df.isnumeric(), None).ffill()
@@ -603,9 +614,13 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbos
 
                 for col in other_cols:
                     is_h = low.startswith(col)
-                    if is_h.sum():
-                        assert is_h.sum() == 1
+                    if is_h.sum() == 1:
+                        # this can fail 'PSMN009-100P,127.pdf':7
+                        # assert is_h.sum() == 1, (row, col)
                         col_idx[col] = is_h.idxmax()
+                    elif is_h.sum() > 1:
+                        warnings.warn(f'{source_base} {df.index.name} {row.to_list()}'
+                                      f' potential header row has more than 1 {col}')
 
             m, field_sym = detect_fields(mfr, row.iloc[:4])
 
@@ -641,10 +656,12 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbos
                 # OCR
                 rl = ocr_post_subs(rl)
                 rl = strip_no_print_latin(rl)
+                rl = whitespaces_to_space(rl)
 
-                field = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()))
+                field = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()),
+                                        source=[source_base, source_name, 'parse_csv'])
 
-                if not field and len(row.dropna()) > 2:
+                if not field and len(list(filter(bool, row.dropna()))) > 2:
                     print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
 
                 if field:
@@ -661,7 +678,8 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path, verbos
                                 min=row_[col_idx['min']] if col_idx['min'] else math.nan,
                                 typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
                                 max=row_[col_idx['max']] if col_idx['max'] else math.nan,
-                                mul=1, cond=dict(row_.dropna()), unit=unit
+                                mul=1, cond=dict(row_.dropna()), unit=unit,
+                                source=[source_base, source_name, 'iter_table']
                             )
                             if verbose > 1:
                                 print('add row_ field', field, 'from', row_)

@@ -39,13 +39,14 @@ def ensure_ohm(s, min, max):
 
 
 class MosfetBasicSpecs():
-    def __init__(self, Vds_max, Rds_on_10v_max, ID_25, Vgs_th_max, Qg_typ, Qg_max):
+    def __init__(self, Vds_max, Rds_on_10v_max, ID_25, Vgs_th_max, Qg_typ, Qg_max, source):
         self.Vds_max = Vds_max
         self.Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 500)
         self.ID_25 = ID_25
         self.Vgs_th_max = Vgs_th_max
         self.Qg_typ_nC = ensure_nC(Qg_typ, .2, 2000, True)
         self.Qg_max_nC = ensure_nC(Qg_max, .2, 2000, True)
+        self.source = source
 
         assert not (self.Vgs_th_max > 15)
 
@@ -68,6 +69,8 @@ class MosfetBasicSpecs():
     def update(self, specs:'MosfetBasicSpecs'):
         assert self.Vds_max == specs.Vds_max
         def mean_chk_std(t, std, fn=np.nanmean):
+            if sum(~np.isnan(t)) == 0:
+                return math.nan
             assert not (np.nanstd(t)/np.nanmean(t)>std), (t, np.nanstd(t)/np.nanmean(t))
             return fn(t)
 
@@ -76,14 +79,14 @@ class MosfetBasicSpecs():
             self.Rds_on_10v_max = specs.Rds_on_10v_max
         self.ID_25 = mean_chk_std((self.ID_25, specs.ID_25), 0.4, fn=np.nanmin)
         self.Vgs_th_max = mean_chk_std((self.Vgs_th_max, specs.Vgs_th_max), 0.3, fn=np.nanmax)
-        self.Qg_typ_nC = mean_chk_std((self.Qg_typ_nC, specs.Qg_typ_nC), 0.01)
+        self.Qg_typ_nC = mean_chk_std((self.Qg_typ_nC, specs.Qg_typ_nC), 0.01, fn=np.nanmean)
         self.Qg_max_nC = mean_chk_std((self.Qg_max_nC, specs.Qg_max_nC), 0.2, fn=np.nanmax)
 
     def fields(self):
         n = math.nan
         def f(*args, **kwargs):
             try:
-                return Field(*args, **kwargs)
+                return Field(*args, **kwargs, source=self.source)
             except:
                 return None
 
@@ -166,6 +169,7 @@ async def ti_mosfets():
                 Vgs_th_max=math.nan,
                 Qg_typ=math.nan,
                 Qg_max=math.nan,
+                source='ti_products',
             ), package=row['Package type']
         ))
     return parts
@@ -208,6 +212,7 @@ async def infineon_mosfets():
                 Vgs_th_max=parse_field(row['VGS(th) max [V]'], float),
                 Qg_typ=parse_field(row['QG typ @10V [C]'], float),
                 Qg_max=parse_field(row['QG typ @10V max [C]'], float),
+                source='infineon_products',
             ), package=parse_field(row['Standard Package name'], str),
         ))
 
@@ -251,6 +256,7 @@ async def toshiba_mosfets():
                 Vgs_th_max=math.nan,
                 Qg_typ=float(cols['Qg(nC)'][i].value or 'nan'),  # nC
                 Qg_max=math.nan,
+                source='toshiba_products',
             ), package=cols['Toshiba Package Name'][i].value,
         ))
 
@@ -291,6 +297,7 @@ def digikey(csv_glob_path):
             Qg_typ=math.nan,
             ID_25=float(row['Current - Continuous Drain (Id) @ 25°C'].strip(' ,').split(',')[-1].strip().split(' ')[0].strip(' A')),
             Vgs_th_max=parse_field_value(row['Vgs(th) (Max) @ Id'].split('@')[0].strip(' V')),
+            source='digikey'
         ), package=row['Package / Case']))
 
     return parts
