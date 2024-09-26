@@ -4,6 +4,7 @@ import math
 import os.path
 import re
 import time
+import traceback
 from typing import Union, List
 
 import requests
@@ -37,7 +38,7 @@ def get_datasheet_url(mfr, mpn):
     # ))
 
 
-def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
+async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
     ds_url_alt = None
     if isinstance(ds_url, float) and math.isnan(ds_url):
         ds_url = None
@@ -59,8 +60,6 @@ def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         print(mfr, 'skip url to', ds_url)
         return None
 
-
-
     print('downloading', ds_url, datasheet_path)
     dp = os.path.dirname(datasheet_path)
     os.path.isdir(dp) or os.makedirs(dp)
@@ -68,9 +67,12 @@ def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         if not du:
             continue
         try:
-            #asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
-            asyncio.run(download_with_chromium(du, datasheet_path))
+            t = download_with_chromium(du, datasheet_path)
+            await t
+            # asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
+            # asyncio.run(download_with_chromium(du, datasheet_path))
         except Exception as e:
+            print(traceback.format_exc())
             print('ERROR', du, e)
 
 
@@ -113,8 +115,9 @@ https://stackoverflow.com/questions/50804931/how-to-download-a-pdf-that-opens-in
 
 _chromium_lock = asyncio.Lock()
 
+
 async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', close=False):
-    async with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
+    with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
         file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
 
         if isinstance(click, str):
