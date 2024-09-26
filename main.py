@@ -16,7 +16,7 @@ from dslib import write_csv
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
 from dslib.parts_discovery import DiscoveredPart
-from dslib.pdf2txt.parse import parse_datasheet, subsctract_needed_symbols
+from dslib.pdf2txt.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import DcDcSpecs
 from dslib.store import Part
@@ -94,7 +94,7 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache):
 
     if not os.path.exists(ds_path):
         if not os.path.exists(ds_path):
-            fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn)
+            asyncio.run(fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn))
 
     ds = DatasheetFields(part=part)
 
@@ -126,8 +126,9 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache):
             ds.timestamp = dsp.timestamp
             ds.add_multiple(dsp.all_fields())
         except Exception as e:
-            print(traceback.format_exc())
-            print(ds_path, 'error', e)
+            if not isinstance(e, (NoTabularData,TooManyPages,)):
+                print(traceback.format_exc())
+            print(ds_path, 'parse error', type(e).__name__, e)
 
     # try nexar api:
     if 1:
@@ -256,7 +257,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
         jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache) for p in parts_shuffled}
-        results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=50)
+        results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)
         dss: List[DatasheetFields] = list(results.values())
 
     dss = [d for d in dss if d != (None, None)]

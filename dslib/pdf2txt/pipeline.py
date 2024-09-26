@@ -1,11 +1,14 @@
+import logging
 import os
 import pathlib
 from typing import Literal, Union
 
-import PIL
 from ocrmypdf import hookimpl
 
 from dslib.cache import disk_cache
+
+_log = logging.getLogger('ocrmypdf._pipeline')
+_log.setLevel(logging.WARN)
 
 
 @disk_cache(ttl='14d', file_dependencies=[0], out_files=[1])
@@ -62,7 +65,6 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
     # custom wordlist
     # https://github.com/tesseract-ocr/test/blob/main/testing/eng.unicharset
     # https://vprivalov.medium.com/tesseract-ocr-tips-custom-dictionary-to-improve-ocr-d2b9cd17850b
-    import subprocess
     not os.path.isfile(out_path) or os.remove(out_path)
 
     cfg_file = ('tesseract-stuff/tesseract.cfg')  # os.path.realpath
@@ -185,10 +187,13 @@ def pdf2pdf(in_path, out_path, method):
     return dict(
         nop=lambda: None,
         sips=lambda: subprocess.run(['sips', '-s', 'format', 'pdf', in_path, '--out', out_path], check=True),
-        gs=lambda: subprocess.run(['gs', '-sDEVICE=pdfwrite',
-                                   '-dPDFSETTINGS=/printer',  # /screen /default
-                                   '-dPDFA=2',  # 1,2,3
-                                   '-o', out_path, in_path], check=True),  # TODO try decrypt
+        gs=lambda: subprocess.run(
+            ['gs', '-sDEVICE=pdfwrite',
+             '-dPDFSETTINGS=/printer',  # /screen /default
+             '-dPDFA=2',  # 1,2,3
+             '-o', out_path, in_path],
+            check=True,
+            stdout=subprocess.DEVNULL, ),  # TODO try decrypt
         cups=cups,
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),

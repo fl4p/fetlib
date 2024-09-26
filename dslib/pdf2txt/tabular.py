@@ -17,6 +17,14 @@ from dslib.cache import random_str, acquire_file_lock, disk_cache
 _tab_web_lock = threading.Lock()
 
 
+backend_logger = logging.getLogger('tabula.backend')
+backend_logger.setLevel(logging.ERROR) # ignore stderr from tabula-java
+
+
+class NoTextInPdfError(ValueError):
+    pass
+
+
 @disk_cache(ttl='99d', file_dependencies=[0], salt='v02', hash_func_code=True)
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
@@ -42,6 +50,8 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
                 res = s.get(f'http://127.0.0.1:8080/queue/{uid}/json?file_id={fid}&_={time.time()}').json()
                 assert res
                 if res['status'] == 'error':
+                    if 'no text data is contained' in res['message'].lower():
+                        raise NoTextInPdfError(res['message'])
                     raise ValueError(res['message'])
                 if res['status'] == 'completed':  # or 'complete' in res['messages']:
                     break
@@ -114,7 +124,7 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
             #print(pdf_path, 'tabula web extracted', len(dat), 'tables from', len(coords), 'rects extracted')
         except Exception as e:
             print(pdf_path, 'tabula web error', e)
-            raise
+            raise TimeoutError() from e
         finally:
             s.post(f"http://127.0.0.1:8080/pdf/{fid}", data=dict(_method='delete'))
 
