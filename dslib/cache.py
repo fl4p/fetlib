@@ -268,8 +268,10 @@ def hashable_to_sha224(obj):
 
 dict_keys_t = type({}.keys())
 
+
 def _sort_key(o):
     return str(o)
+
 
 def to_hashable(obj):
     if is_hashable(obj):
@@ -546,7 +548,9 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
 
     return decorate
 
+
 _disk_cache_disabled = False
+
 
 def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
                ignore_missing_inp_paths=False,
@@ -560,6 +564,7 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
     def decorate(target):
         import inspect
         mod = inspect.getmodule(target)
+        pwd = os.path.dirname(mod.__file__)
 
         source_code = inspect.getsource(target) if hash_func_code else None
 
@@ -576,6 +581,8 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                     arg_val = args[arg_name] if arg_name < len(args) else None
                 elif isinstance(arg_name, str) and ('.' in arg_name or '/' in arg_name):
                     arg_val = arg_name
+                    if not os.path.isabs(arg_val):
+                        arg_val = os.path.join(pwd, arg_val)
                 else:
                     arg_val = kwargs.get(arg_name)
                 if arg_val is None:
@@ -625,25 +632,54 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                 inv = True
 
             if out_files:
+                # TODO store times in cache and
                 assert file_dependencies
                 out_fns = get_file_names(args, kwargs, out_files)
+                out_mtimes = {fn: os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns}
+                out_sizes = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
+
+                # warnings.warn('out_files not checking for external change %s' % (out_fns))
                 in_fns = get_file_names(args, kwargs, file_dependencies)
-                out_mtime = min((os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns))
                 in_mtime = max(os.path.getmtime(fn) for fn in in_fns)
-                if in_mtime > out_mtime:
+                if in_mtime > min(out_mtimes.values()):
                     inv = True
+
+            def meta_valid(meta):
+                if out_files:
+                    for param, disk_state in {
+                       # 'mtimes':out_mtimes,
+                        'sizes':out_sizes
+                    }.items():
+                        m_out_files = meta.get('out_files_'+param)
+
+                        if not m_out_files:
+                            print('not meta data about out',param, 'cache is not valid', out_fns)
+                            return False
+
+                        for fn, mt in disk_state.items():
+                            if fn not in m_out_files or mt != m_out_files[fn]:
+                                print(fn, 'changed',param, 'cache=', m_out_files.get(fn), 'disk=', mt,
+                                      '(', round(mt - m_out_files.get(fn)), ')')
+                                return False
+                return True
 
             if not inv:
                 try:
                     cache_val = disk_cache_store.read(cache_key_str)
                     if cache_val is not None:
-                        ret, exp = cache_val
-                        if now() <= exp:
+                        if len(cache_val) == 2:
+                            ret, exp = cache_val
+                            meta = {}
+                        else:
+                            ret, exp, meta = cache_val
+                        if now() <= exp and meta_valid(meta):
                             return ret
                 except Exception as _e:
                     logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
 
             ret = target(*args, **kwargs)
+
+            meta = {}
 
             if out_files:
                 for fn in out_fns:
@@ -653,9 +689,11 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                         mt = os.stat(fn).st_mtime
                         if mt < in_mtime:
                             logger.warning('out file %s has mtime %s < input %s', mt, in_mtime)
+                meta['out_files_mtimes'] = {fn: os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns}
+                meta['out_files_sizes'] = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
 
             try:
-                disk_cache_store.write(cache_key_str, (ret, now() + ttl))
+                disk_cache_store.write(cache_key_str, (ret, now() + ttl, meta))
             except Exception as _e:
                 logger.warning('Disk cache: error storing: %s', _e)
                 pass
@@ -667,11 +705,13 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
 
     return decorate
 
-def disk_cache_disable(disable:bool):
+
+def disk_cache_disable(disable: bool):
     global _disk_cache_disabled
     if disable and not _disk_cache_disabled:
         logger.info('Disk cache disabled')
     _disk_cache_disabled = disable
+
 
 setattr(disk_cache, 'disable', disk_cache_disable)
 
@@ -685,6 +725,7 @@ class NopLock:
 
     def close(self):
         pass
+
 
 def acquire_file_lock(fn, kill_holder, max_time=10):
     if os.name == 'nt':
