@@ -12,8 +12,9 @@ scale very good. Might want to use more lenient regex.
 
 """
 import re
+from typing import Callable, List
 
-from dslib import mfr_tag
+from dslib import mfr_tag, dotdict
 from dslib.cache import mem_cache
 
 QRR = {
@@ -95,21 +96,42 @@ Source-Drain Recovery Charge
 }
 
 
-def field_value_regex_variations(head, unit, signed=False):
-    """
+class Dimension():
+    def __init__(self, head_regex, unit_regex, signed):
+        self.head_regex = head_regex
+        self.unit_regex = unit_regex
+        self.signed = signed
 
-    :param head:
-    :param unit:
-    :return:
-    """
 
+class NumValReSet():
+    def __init__(self, signed, nan_empty):
+        field = r'[0-9]+(\.[0-9]+)?'
+        if signed:
+            field = r'-?' + field
+
+        nane = r'[-=.\s_]*|nan|\.'  # empty or nan
+        if not nan_empty:
+            nan = r'[-=._]+|nan'
+        else:
+            nan = nane
+
+        self.val = field
+        self.val_nan = nan + r'|' + field
+        self.nan = nan
+
+        self.nane = nane # nan or empty
+        self.val_nane = nane + r'|' + field # empty, nan or val
+
+
+def field_value_regex_variations(d: Dimension):
     test_cond_broad = r'[-+\s=≈/a-z0-9äöü.,;:μΩ°(){}"\'<>]+'  # parameter lab testing conditions (temperature, I, U, didit,...)
 
-    field = r'[0-9]+(\.[0-9]+)?'
-    if signed:
-        field = r'-?' + field
-    nan = r'[-\s_]*|nan|\.'
-    field_nan = nan + r'|' + field
+    rs = NumValReSet(d.signed, nan_empty=True)
+    field = rs.val
+    field_nan = rs.val_nan
+    nan = rs.nan
+    head = d.head_regex
+    unit = d.unit_regex
 
     return [
         re.compile(  # min? typ max?,unit
@@ -229,7 +251,6 @@ def field_value_regex_variations(head, unit, signed=False):
             head + rf'({test_cond_broad})?,[-_.]+\s+(?P<typ>{field})\s+(?P<max>{field})\s+(?P<unit>{unit})(,|$)',
             re.IGNORECASE),
 
-
         # "VSDDiode forward voltage,ISD = 100 A, VGS = 0 V,0.91.1,V,nan,nan"
         # VSD,Source-to-Drain DiodeVoltage,ISD = 80 A,VGS = 0 VISD = 40 A,VGS = 0 V,,,1.251.2,V,
         re.compile(
@@ -237,17 +258,16 @@ def field_value_regex_variations(head, unit, signed=False):
             re.IGNORECASE),
 
         # 'Qg,Total Gate Charge,---,285,428,ID = 100A'
-        re.compile( #'Qg,Total Gate Charge,---,200,300,,,VDS = 38V,
+        re.compile(  # 'Qg,Total Gate Charge,---,200,300,,,VDS = 38V,
             # Output capacitance ON- and LINFET,C oss,ON+LIN,,,-,2100,2730,
             rf'(?P<broad_typ_max_nanN_unitN>=name)?{head},?({test_cond_broad},)?(?P<typ>{field}),(?P<max>{field})(,({nan}))?,?(?P<unit>' + unit + r')?(,|$)',
             re.IGNORECASE),
-
 
         # TODO move this down
         # 'QgGate charge total (10 V),VDS = 40 V,ID = 100 A,76,nC,,'
         #
         re.compile(  # typ only with (scrambled) testing conditions
-            rf'(?P<broad_typ_nanN_unitN>=name)?{head},?({test_cond_broad},)?(?P<typ>{field})(,({nan}))?(,(?P<unit>{unit}))?(,|$)',
+            rf'(?P<broad_typ_nanN_unitN>=name)?{head},?({test_cond_broad},)?[^a-z0-9](?P<typ>{field})(,({nan}))?(,(?P<unit>{unit}))?(,|$)',
             re.IGNORECASE),
 
         re.compile(  # typ surrounded by nan/-, unit
@@ -258,6 +278,254 @@ def field_value_regex_variations(head, unit, signed=False):
         re.compile(rf'{head},({nan}),(?P<typ>{field})(,({nan})){{1,2}}$',
                    re.IGNORECASE),
     ]
+
+
+def build_dim_regex_table(var_func: Callable[[Dimension], List[re.Pattern]]):
+    return {n: var_func(d) for n, d in DIMENSIONS.items() if d.head_regex is not None}
+
+
+def line_regex_variations(dim: Dimension):
+    rs = NumValReSet(dim.signed, nan_empty=False)
+
+    head = dim.head_regex
+    unit = dim.unit_regex
+    num_signed = NumValReSet(True, False).val
+
+    any_unit = '|'.join(d.unit_regex for d in DIMENSIONS.values())
+    any_head = '|'.join(d.head_regex for d in DIMENSIONS.values() if d.head_regex)
+
+    unit_suffix = '[/a-z0-9]{0,4}'  # VGS= 10 V, VDS = 0.5 VDSS, ID = 0.5 ID25    A/us
+
+    param_name_char = '[- .,()a-z0-9]'  # "Reverse transfer capacitance"
+    misc_ref = '[- \t_.,;:#*"\'()\[\]a-z0-9]'  # "see Figure 14; see Fig. 15", "(see Figure 14: "Test circuit for"
+    annotations = '[- *.,()0-9]'
+
+    cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_\s][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
+
+    test_cond = (rf'(?P<cond_sym>{cond_sym})\s*=\s*'
+                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[-+*/]? *)+'
+                 ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
+                 )
+    test_conds_delim_ml = (rf'({test_cond}\s*[;,\n\s]*)')
+    test_conds_delim = (rf'({test_cond}\s*[;,\s]*)')
+
+    head = r'^([^\n]*\n){0,2}' + f'{misc_ref}{{,30}}' + head  # should match within the first 2 lines of detection context
+
+    def rec(pat: str, flags):
+        # texts are normalized (horizontal_whitespace -> ' ')
+        pat = pat.replace(r'\s', ' ')
+        return re.compile(pat, flags=flags)
+
+    return [
+        # datasheets/nxp/PSMN3R3-80BS,118.pdf
+        rec((
+            '(?P<simple_minN_typ_maxN_unit>.)?'
+            rf'{head}{misc_ref}*\n'
+            rf'([a-z]{{1,4}}\n)?'  # add symbol that doesnt match head
+            rf'(?P<min>{rs.val_nane})\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nane})\n'
+            rf'(?P<unit>{unit})(\n|$|\s+\|)'),
+            re.IGNORECASE),
+
+        rec((
+            rf'(?P<cond_mtmu>=name)?{head}\s*{misc_ref}*\s*\n'
+            rf'({test_conds_delim_ml}+{misc_ref}*\n'
+            '' rf'({misc_ref}+\n){{0,3}})?'
+            rf'(?P<min>{rs.val_nan})\n'
+            rf'(?P<typ>{rs.val_nan})\n'
+            rf'(?P<max>{rs.val_nan})\n'
+            rf'(?P<unit>{unit})(\n|$)'),
+            re.IGNORECASE
+        ),
+
+        rec((
+            rf'(?P<cond_tM_unit>=name)?'
+            rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
+            # rf'([a-z]{{1,3}}\n)?'
+            rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
+            rf'((?P<typ>{rs.val_nane})\n)?'
+            rf'(?P<max>{rs.val})(\n| +)' # inline unit
+            rf'(?P<unit>{unit})'
+            rf'(\n|$| *[,|])'),
+            re.IGNORECASE
+        ),
+
+        rec((
+            rf'(?P<cond_Tm_unit>=name)?'
+            rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
+            # rf'([a-z]{{1,3}}\n)?'
+            rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'            
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nane})\n'
+            rf'(?P<unit>{unit})'
+            rf'(\n|$| *[,|])'),
+            re.IGNORECASE
+        ),
+
+        rec((
+            rf'(?P<mTm_unitTrailCond>=name)?'
+            rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
+            rf'([a-z]{{1,3}}\n)?'
+            rf'((?P<min>{rs.val_nane})\n)?'
+            rf'(?P<typ>{rs.val})\n'
+            rf'((?P<max>{rs.val_nane})\n)?'
+            rf'(?P<unit>{unit})'
+            '' rf'([ ,|]+{test_conds_delim}+{misc_ref}*)?'
+            '' rf'(\n|$| *[,|])'),
+            re.IGNORECASE
+        ),
+
+        rec(
+            rf'(?P<mTm_conds_next>=name)?'
+            rf'{head}\s*{misc_ref}*\s*\n'
+            rf'(?P<min>{rs.val_nan})\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nan})\n'
+            rf'{test_conds_delim}+{misc_ref}*\n'
+            rf'({param_name_char}+\s)?(?P<any_head>{any_head}){param_name_char}*(\n|$)',  # expect next symbol
+            re.IGNORECASE
+        ),
+
+        # QG(TH)
+        # VGS = 10 V, VDS = 40 V; ID = 50 A
+        # 15
+        # Gate-to-Source Charge
+        rec(
+            rf'(?P<cond_typ_next>=name)?'
+            rf'{head}\s*{misc_ref}*\s*\n'
+            rf'{test_conds_delim}+{misc_ref}*\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'({param_name_char}+\s)?(?P<any_head>{any_head}){param_name_char}*(\n|$)',  # expect next symbol
+            re.IGNORECASE
+        ),
+
+        # Vsd/0.7/1/V
+        rec((
+            rf'{head}\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nan})\n'
+            rf'(?P<unit>{unit})(\n|$)'),
+            re.IGNORECASE),
+
+        # Output capacitance
+        # Coss
+        # -
+        # 236
+        # -
+        # Reverse transfer capacitance
+        # Crss
+        rec((
+            rf'{head}\n'
+            rf'(?P<min>{rs.val_nan})\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'((?P<max>{rs.val_nan})\n)?'
+            rf'({param_name_char}+\s)?(?P<any_head>{any_head}){param_name_char}*(\n|$)'
+        ), re.IGNORECASE),
+
+        rec((
+            '(?P<min_typ_max_cond>.)?'
+            rf'{head}{misc_ref}*\n'
+            rf'(?P<min>{rs.val_nan})\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nan})\n'
+            rf'{test_conds_delim}+{misc_ref}*(\n|$)'
+        ),
+            re.IGNORECASE),
+
+        # "Qgd/80/nC"
+        rec((
+            '(?P<simple_typ_unit>.)?'
+            rf'{misc_ref}*{head}{misc_ref}*\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<unit>{unit})(\n|$)'
+        ), re.IGNORECASE),
+
+        # COSS
+        # 1059
+        # Reverse Transfer Capacitance
+        rec((
+            '(?P<simple_typ_next>.)?'
+            rf'{head}\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'({param_name_char}+\s)?(?P<any_head>{any_head}){param_name_char}*(\n|$)'
+        ), re.IGNORECASE),
+
+        rec((
+            rf'(?P<conds_mTm>=name)?{head}\s*{misc_ref}*\s*\n'
+            rf'({test_conds_delim_ml}+{misc_ref}*\n)?'
+            rf'(?P<min>{rs.val_nan})\n'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nan})\n'
+            rf'(\n|$)'),
+            re.IGNORECASE
+        ),
+
+        # Qr
+        # - 68 (136 nC | Vr=50 V, Ir=50A, dir/dt=100 A/uUs
+        # ) Defined by design. Not subject to production test.
+        # Final Data Sheet
+
+        rec((
+            '(?P<special1>.)?'
+            rf'{head}{misc_ref}*\n'
+            rf'([a-z]{{1,3}}\n)?'  # add symbol that doesnt match head
+            rf'(?P<min>{rs.val_nan}) +[,|()]? *'
+            rf'(?P<typ>{rs.val}) +[,|()]? *'
+            rf'(?P<max>{rs.val_nan}) +[,|()]? *'
+            rf'(?P<unit>{unit})'
+            rf'([ ,|]+{test_conds_delim}+{misc_ref}*)?'
+            rf'(\n|$| *[,|])'),
+            re.IGNORECASE),
+
+    ]
+
+
+DIMENSIONS = dotdict(
+    t=Dimension(
+        head_regex=r'(time|[tf][_\s]?[rf]?)',
+        unit_regex=r'[uμnm]s',
+        signed=False,
+    ),
+    C=Dimension(
+        head_regex=r'(capacitance|C[\s_]?[a-z]{1,3})',
+        unit_regex=r'[uμnp]F',
+        signed=False,
+    ),
+    V=Dimension(
+        head_regex=r'(((diode )?forward )?voltage|V[\s_]?[a-z]{1,8})',
+        unit_regex=r'[m]?Vv?',
+        signed=True,
+    ),
+    Q=Dimension(
+        head_regex=r'('
+                   r'charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|charge\s+at\s+threshold'
+                   r'|(total[\s-]+|gate[\s-]to[\s-](source|drain[\s-](\(?"*miller"*\)?)?)[\s-])?(gate[\s-]+)?charge'
+                   r'|reversed?[−\s+]recover[edy]{1,2}[−\s+]charge'
+                   r'|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
+
+        unit_regex=r'[uμnp]?C',
+        signed=False,
+    ),
+    I=Dimension(
+        head_regex=None,  # TODO
+        unit_regex=r'[muμn]?A',
+        signed=True,
+    ),
+
+    R=Dimension(
+        head_regex=r'(RthJC|(internal[-\s]+)?gate[-\s]+resistance|(^|[^a-z])R[ _]?G(_?\(?int\)?)?)',
+        unit_regex='[mkM]?(\u03a9|\u2126|O|Q|Ohm|W)',  # with OCR confusion
+        # \u03a9=greek omega, \u2126=ohm sign W datasheets/infineon/IPB083N10N3GATMA1.pdf
+        signed=False
+    ),
+
+    T=Dimension(  # temp
+        head_regex=None,
+        unit_regex=r'(°[CF]|K)',
+        signed=True,
+    )
+)
 
 
 # Time
@@ -281,7 +549,7 @@ def get_dimensional_regular_expressions():
                   r'(time|t[_\s]?[rf])\s*,?\s*(?P<min>nan|-*|[-0-9.]+)\s*,?\s*(?P<typ>nan|-*|[-0-9.]+)\s*,?\s*(?P<max>nan|-*|[-0-9.]+)\s*,?\s*(?P<unit>[uμnm]s)(,|$)',
                   re.IGNORECASE),
 
-          ] + field_value_regex_variations(r'(time|[tf][_\s]?[rf]?)', r'[uμnm]s'),  # f for OCR confusing t
+          ] + field_value_regex_variations(DIMENSIONS.t),  # f for OCR confusing t
         # Q=
         Q=[
 
@@ -309,12 +577,11 @@ def get_dimensional_regular_expressions():
                   re.IGNORECASE),
 
               # datasheets/vishay/SIR622DP-T1-RE3.pdf Qrr no value match Body diode reverse recovery charge Qrr -,350,680,nan,nC
-          ] + field_value_regex_variations(
-            r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|charge\s+at\s+threshold|charge|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
-            r'[uμnp]?C'),
+          ] + field_value_regex_variations(DIMENSIONS.Q),
 
-        C=field_value_regex_variations(r'(capacitance|C[\s_]?[a-z]{1,3})', r'[uμnp]F'),
-        V=field_value_regex_variations(r'(voltage|V[\s_]?[a-z]{1,8})', r'[m]?Vv?', signed=True)
+        C=field_value_regex_variations(DIMENSIONS.C),
+        V=field_value_regex_variations(DIMENSIONS.V),
+        R=field_value_regex_variations(DIMENSIONS.R)
     )
     return dim_regs
 
@@ -327,7 +594,7 @@ def get_field_detect_regex(mfr):
     qgs1 = ''
     if mfr == 'toshiba':
         # toshiba:      Qgs1* = Qg_th + Qgs2 charge from 0 to miller plateau start (Qgs)
-        #               Qgs2* = charger after miller plateau (not relevant and usually not specified)
+        #               Qgs2* = charger after miller plateau (infineon: Qg_odr, Qgodr)
         # IRF6644TRPBF: Qgs1* = Qg_th    (0|Qgs1|TH|Qgs2|Qgd)
         #               Qgs2* = Qgs
         # others:       Qgs1* = charge from Qg_th to miller plateau start (0 Qgs_th|TH|Qgs1|)
@@ -338,28 +605,40 @@ def get_field_detect_regex(mfr):
 
     # regex matched on cell contents
     fields_detect = dict(
-        tRise=(re.compile(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
-        tFall=(re.compile(r'(fall\s+time|^t\s?f($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
+        tRise=(re.compile(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'fall')),
+        # t=(re.compile(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
+        tFall=(re.compile(r'(fall\s+time|^t\s?f($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'rise')),
         Qrr=re.compile(
-            r'^((?!Peak)).*(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
+            r'^((?!Peak)).*(reversed?[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
             re.IGNORECASE),  # QRM
         Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?($|\sVGS))', re.IGNORECASE),
 
-        Qgs2=re.compile(r'(Gate[\s-]+Charge.+Plateau|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))', re.IGNORECASE),
-        Qg_th=(re.compile(
-            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})',
+        Rg=(re.compile(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ()),
+
+        Qgs2=(re.compile(
+            r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',
             re.IGNORECASE),
-               ('post-threshold',)),
+              ('pre-vth', 'pre-threshold')),
+        Qg_th=(re.compile(
+            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})',
+            re.IGNORECASE),
+               ('post-threshold', 'post-vth')),
         Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"*miller"*\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
         Qgs=(re.compile(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
-            re.IGNORECASE), ('Qgd',)),
+            re.IGNORECASE), ('Qgd', 'pre-vth', 'post-Vth')),
         Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
-        Qg=re.compile(  # this should be after all other gate charges
+        Qg=(re.compile(  # this should be after all other gate charges
             rf'(total[\s-]+gate[\s-]+charge|gate[\s-]+charge[\s-]+total|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)',
-            re.IGNORECASE),
+            re.IGNORECASE), ('sync', 'Qgd')),
+        Qg_sync=(re.compile(
+            rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?$)',
+            re.IGNORECASE), ()), # infineon
 
-        Vpl=re.compile(r'(gate\s+plate\s*au\s+voltage|V[ _]?(plateau|pl|gp)$)', re.IGNORECASE),
+        # VGS(pl), gate-source plateau
+        Vpl=re.compile(
+            r'(gate\s+plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?$)',
+            re.IGNORECASE),
 
         Vsd=re.compile(
             r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\sIF)|V[ _]?DS_?FW?D?)',
@@ -372,4 +651,5 @@ def get_field_detect_regex(mfr):
     return fields_detect
 
 
-dim_regs = get_dimensional_regular_expressions()
+dim_regs_csv = get_dimensional_regular_expressions()
+dim_regs_multiline = build_dim_regex_table(line_regex_variations)
