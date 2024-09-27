@@ -4,7 +4,7 @@
     <content url="file://$MODULE_DIR$">
       <excludeFolder url="file://$MODULE_DIR$/dslib/chromium-user-data-dir" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.9 (venv-arm)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="fetlib" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="fet-datasheets" />
   </component>

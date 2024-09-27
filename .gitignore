@@ -42,3 +42,9 @@ out/
 output.txt.txt
 
 *.lock
+
+
+#pix2text
+/*.md/
+
+output-*

@@ -54,7 +54,7 @@ BMRef('datasheets/vishay/SIR622DP-T1-RE3.pdf')
 BMRef('datasheets/infineon/IRF100B202.pdf')  # multi Qrr
 BMRef('datasheets/goford/GT016N10TL.pdf')  # from tests
 
-BMRef('datasheets/vishay/SUM60020E-GE3.pdf')  # "reverse recovery fall time"
+BMRef('datasheets/vishay/SUM60020E-GE3.pdf', tags='trr')  # "reverse recovery fall time"
 BMRef('datasheets/diodes/DMTH8003SPS-13.pdf')
 BMRef('datasheets/toshiba/TK6R9P08QM,RQ.pdf')
 BMRef('datasheets/toshiba/TK100E08N1,S1X.pdf')
@@ -96,8 +96,10 @@ if 'v2':
     BMRef('datasheets/onsemi/FDMS86368-F085.pdf', tags='VsdStacked')
     # SIRS5800DP-T1-GE3.pdf
     # IXTQ180N10T # tabula detection issue, better in browser
-    # IRF150DM115XTMA1 # long ocr
+    # IRF150DM115XTMA1 # tRise and tFall confusion? long ocr
 
+    IQE050N08NM5CGATMA1 #ocr
+    # IXFX360N15T2, 'Qrm
     # IR680ADP-T1-RE3 # complex structured tables
     # SIR578DP-T1-RE3.pdf # double Qg
     # STP310N10F7 # Qgd labeled as gate-source
@@ -110,6 +112,14 @@ if 'v2':
 
 
     # BSC042NE7NS3GATMA1 vectorized text
+    # PSMN3R3-80BS,118.pdf ,
+    BMRef("datasheets/infineon/IPP048N12N3GXKSA1.pdf", tags='weirdEnc')
+
+    BMRef('BSZ150N10LS3GATMA1.pdf', tags='trr')
+
+    # IRFS7730TRLPBF multi qrr (temperature)
+
+    # BSB028N06NN3GXUMA2 loos tables
 
 # ISC046N13NM6ATMA1
 # infineon/IQDH88N06LM5CGSCATMA1
