@@ -8,7 +8,7 @@ from ocrmypdf import hookimpl
 from dslib.cache import disk_cache
 
 _log = logging.getLogger('ocrmypdf._pipeline')
-_log.setLevel(logging.WARN)
+_log.setLevel(logging.ERROR)
 
 
 @disk_cache(ttl='14d', file_dependencies=[0], out_files=[1])
@@ -24,16 +24,39 @@ def convertapi(in_path, out_path, method: Literal['ocr', 'pdf', 'rasterize'] = '
     assert os.path.isfile(out_path)
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v200')
-def rasterize_pdf(in_path, out_path, dpi=400):
+@disk_cache(ttl='99d', file_dependencies=[0], out_files=[1], salt='v204', hash_func_code=True)
+def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
     # this breaks "encryption" e.g. FDP047N10.pdf
-    from pdf2image import convert_from_path
-    images = convert_from_path(in_path)
-    assert images
-    images[0].save(
-        out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
-    )
-    assert os.path.isfile(out_path)
+
+    """
+
+    for some reason tesseract performs bad on highly upsampled pdfs.
+
+    the lossy pdf2image apporach below produces better results than the fitz one
+
+    :param in_path:
+    :param out_path:
+    :param dpi:
+    :return:
+    """
+
+    if not fitz_method:
+        from pdf2image import convert_from_path
+        images = convert_from_path(in_path, dpi=dpi,fmt='png') # rm dpi?
+        assert images
+        images[0].save(
+            out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
+        )
+        assert os.path.isfile(out_path)
+    else:
+        import fitz
+        source = fitz.open(in_path)
+        target = fitz.open()
+        for page in source:
+            pix = page.get_pixmap(dpi=dpi)
+            tarpage = target.new_page(width=pix.width, height=pix.height)
+            tarpage.insert_image(tarpage.rect, stream=pix.pil_tobytes("PNG"))
+        target.ez_save(out_path)  # targetname = parameter
 
 
 @hookimpl
@@ -58,7 +81,12 @@ def add_options(parser):
 
 
 @disk_cache(ttl='14d',
-            file_dependencies=[0, 'tesseract-stuff/tesseract.cfg', 'tesseract-stuff/mosfet.user-words'],
+            file_dependencies=[
+                0,
+                '../../tesseract-stuff/tesseract.cfg',
+                '../../tesseract-stuff/mosfet.user-words',
+                '../../ocrmypdf_plugins.py',
+            ],
             out_files=[1],
             salt='v03')
 def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
@@ -67,10 +95,11 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
     # https://vprivalov.medium.com/tesseract-ocr-tips-custom-dictionary-to-improve-ocr-d2b9cd17850b
     not os.path.isfile(out_path) or os.remove(out_path)
 
-    cfg_file = ('tesseract-stuff/tesseract.cfg')  # os.path.realpath
+    pwd = os.path.realpath(os.path.dirname(__file__) + '/../../')
+    cfg_file = (pwd + '/tesseract-stuff/tesseract.cfg')  # os.path.realpath
     assert os.path.isfile(cfg_file)
 
-    uw_file = 'tesseract-stuff/mosfet.user-words'
+    uw_file = pwd+'/tesseract-stuff/mosfet.user-words'
     assert os.path.isfile(uw_file)
 
     # TESSDATA_PREFIX
@@ -88,7 +117,6 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
         ocrmypdf_.ocr(
             in_path, out_path,
             language='eng',
-            # image_dpi=
             output_type='pdf',
             # image_dpi=400, # for input images only !
             redo_ocr=not rasterize,
@@ -100,7 +128,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
             progress_bar=True,
             max_image_mpixels=500,  # 250 default
             # pages='1,2-4',
-            plugins='ocrmypdf_plugins.py',
+            plugins=pwd + '/ocrmypdf_plugins.py',
         )
     except Exception as e:
         if try_decrypt and ('is encrypted' in str(e) or isinstance(e, ocrmypdf_.EncryptedPdfError)):
@@ -197,11 +225,17 @@ def pdf2pdf(in_path, out_path, method):
         cups=cups,
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),
+        ocrmypdf_r250=lambda: ocrmypdf(in_path, out_path, rasterize=250),
         ocrmypdf_r400=lambda: ocrmypdf(in_path, out_path, rasterize=400),
         ocrmypdf_r600=lambda: ocrmypdf(in_path, out_path, rasterize=600),
+        ocrmypdf_r800=lambda: ocrmypdf(in_path, out_path, rasterize=800),
+
         r400_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=400),
         r600_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=600),
         r800_ocrmypdf=lambda: rasterize_ocrmypdf(in_path, out_path, dpi=800),
+
+        img2table_r400=lambda: img2table_ocr(in_path, out_path, dpi=400),
+
         ocrmypdf_redo=lambda: ocrmypdf(in_path, out_path, rasterize=False),
 
         convertapi_ocr=lambda: raster_ocr(in_path, out_path, 'convertapi'),
