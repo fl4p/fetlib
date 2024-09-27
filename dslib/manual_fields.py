@@ -1,9 +1,9 @@
 import math
 import sys
-from enum import Enum
-from typing import Dict, List, cast
+import warnings
+from typing import Dict, List, cast, Union
 
-from dslib.field import Field
+from dslib.field import Field, DatasheetFields, MpnMfr
 from dslib.store import Mfr, Mpn
 
 
@@ -19,7 +19,67 @@ def fallback_specs(mfr, mpn):
             return dict(tRise=2, tFall=2)
     return dict()
 
-def get_fields() ->  Dict[Mfr, Dict[Mpn, List[Field]]]:
+
+def reference_data(mfr: Union[str, MpnMfr], mpn=None):
+    nan = math.nan
+
+    if hasattr(mfr, 'mfr'):
+        mpn = mfr.mpn
+        mfr = mfr.mfr
+
+    ref = [
+
+        DatasheetFields("infineon", "BSC050N10NS5ATMA1",
+                        fields=[Field("Coss", nan, 490.0, 640.0, "pF"),
+                                Field("tRise", nan, 9.0, nan, "ns"),
+                                Field("tFall", nan, 7.0, nan, "ns"),
+                                Field("Qgs", nan, 16.0, nan, "nC"),
+                                Field("Qg_th", nan, 10.0, nan, "nC"),
+                                Field("Qgd", nan, 11.0, 16.0, "nC"),
+                                Field("Qsw", nan, 16.0, nan, "nc"),
+                                Field("Qg", nan, 49.0, 61.0, "nC"),
+                                Field("Vpl", nan, 4.7, nan, "V"),
+                                Field("Vsd", nan, 0.87, 1.1, "V"),
+                                Field("Qrr", nan, 68.0, 136.0, "nC")]),
+
+        DatasheetFields("infineon", "IRF150DM115XTMA1",  # r600_ocrmypdf
+                        fields=[Field("Coss", nan, 580.0, 780.0, "pF"),
+                                Field("tRise", nan, 21.0, nan, "ns"),
+                                Field("tFall", nan, 14.0, nan, "None"),
+                                Field("Qgs", nan, 13.2, nan, "nC"),
+                                Field("Qg_th", nan, 8.7, nan, "nC"),
+                                Field("Qgd", nan, 8.0, 12.0, "nC"),
+                                Field("Qsw", nan, 12.5, nan, "nC"),
+                                Field("Qg", nan, 33.0, 50.0, "nC"),
+                                Field("Vpl", nan, 5.7, nan, "V"),
+                                Field("Vsd", nan, 0.9, 1.2, "V"),
+                                Field("Qrr", nan, 47.0, 94.0, "nC")]),
+
+        DatasheetFields("infineon", "IRF6644TRPBF",
+                        fields=[Field("Qg", nan, 28.0, 42.0, "nC"),
+                                Field("Qgs", nan, 7.0, nan, "None"),
+                                Field("Qgs2", nan, 3.0, nan, "None"),
+                                Field("Qgd", nan, 9.0, nan, "None"),
+                                Field("Qsw", nan, 16.0, nan, "None"),
+                                Field("tRise", nan, 16.0, nan, "None"),
+                                Field("Rg", nan, 1.6, nan, "Ω"),
+                                Field("Qg_th", nan, 7.0, nan, "None"),
+                                Field("tFall", nan, 5.7, nan, "None"),
+                                Field("Coss", nan, 280.0, nan, "None"),
+                                Field("Vsd", nan, nan, 1.3, "V"),
+                                Field("Qrr", nan, 97.0, 146.0, "nC")])
+
+        #
+    ]
+
+    for d in ref:
+        if d.part.mfr == mfr and d.part.mpn == mpn:
+            return d
+
+    warnings.warn('no reference data for %s %s' % (mfr, mpn))
+
+
+def get_fields() -> Dict[Mfr, Dict[Mpn, List[Field]]]:
     fields = cast(Dict[Mfr, Dict[Mpn, List[Field]]], sys.modules[__name__].__dict__)
     for a, ff in fields.items():
         if not isinstance(ff, dict) or a[0] == '_':
@@ -33,14 +93,14 @@ def get_fields() ->  Dict[Mfr, Dict[Mpn, List[Field]]]:
     return sys.modules[__name__].__dict__
 
 
-#class FetCharSymbols(Enum):
+# class FetCharSymbols(Enum):
 #    Qg = 'Qg'
 #    Qgd = 'Qgd'
 #    Qgs = 'Qgs'
 #    Qgs2 = 'Qgs2'
 
 
-#FCS = FetCharSymbols
+# FCS = FetCharSymbols
 
 
 # need OCR datasheets/infineon/IRF150DM115XTMA1.pdf
@@ -104,7 +164,7 @@ infineon = {
         Field('Vpl', min=math.nan, typ=4.25, max=math.nan, unit='V'),
     ],
 
-    'IPB019N08N3GATMA1': [ # scrambled text
+    'IPB019N08N3GATMA1': [  # scrambled text
         Field('Qgd', min=math.nan, typ=30, max=math.nan, unit='nC'),
         Field('Qgs', min=math.nan, typ=50, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=50, max=math.nan, unit='nC'),
@@ -112,7 +172,7 @@ infineon = {
         Field('Vpl', min=math.nan, typ=4.6, max=math.nan, unit='V'),
     ],
 
-    'BSB056N10NN3GXUMA2': [ # Qgd label mistake
+    'BSB056N10NN3GXUMA2': [  # Qgd label mistake
         Field('Qgd', min=math.nan, typ=9.7, max=math.nan, unit='nC'),
         Field('Qsw', min=math.nan, typ=20, max=math.nan, unit='nC'),
     ]
@@ -265,7 +325,7 @@ ao = {
     'AOT66811L': [
         Field('Qgd', min=math.nan, typ=15, max=math.nan, unit='nC'),
         Field('Qgs', min=math.nan, typ=21, max=math.nan, unit='nC'),
-        #Field('Qg_th', min=math.nan, typ=15, max=math.nan, unit='nC'), # TODO?
+        # Field('Qg_th', min=math.nan, typ=15, max=math.nan, unit='nC'), # TODO?
         Field('Qoss', min=math.nan, typ=112, max=math.nan, unit='nC'),
         Field('Vpl', min=math.nan, typ=4.2, max=math.nan, unit='V'),
     ]
