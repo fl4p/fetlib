@@ -207,7 +207,7 @@ async def infineon_mosfets():
             ds_url=row['Data Sheet'],
             specs=MosfetBasicSpecs(
                 Vds_max=vds,
-                Rds_on_10v_max=parse_field(row['RDS (on) @10V max [Ω]'], float) * 1e-3,
+                Rds_on_10v_max=parse_field(row['RDS (on) @10V max [\u2126]'], float) * 1e-3,
                 ID_25=parse_field(row['ID  @25°C max [A]'], float),
                 Vgs_th_max=parse_field(row['VGS(th) max [V]'], float),
                 Qg_typ=parse_field(row['QG typ @10V [C]'], float),
@@ -251,7 +251,7 @@ async def toshiba_mosfets():
             ds_url=cols['Datasheet'][i].hyperlink and cols['Datasheet'][i].hyperlink.target,
             specs=MosfetBasicSpecs(
                 Vds_max=float(cols['VDSS(V)'][i].value or 'nan'),
-                Rds_on_10v_max=float(cols['RDS(ON)Max(Ω)|VGS|=10V'][i].value or 'nan'),  # ohm
+                Rds_on_10v_max=float(cols['RDS(ON)Max(\u03a9)|VGS|=10V'][i].value or 'nan'),  # ohm
                 ID_25=float(cols['ID(A)'][i].value or 'nan'),
                 Vgs_th_max=math.nan,
                 Qg_typ=float(cols['Qg(nC)'][i].value or 'nan'),  # nC

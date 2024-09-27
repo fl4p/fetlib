@@ -5,7 +5,7 @@ import warnings
 from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast
 
-from dslib.pdf2txt import normalize_dash
+from dslib.pdf2txt import normalize_text
 
 
 def first(a):
@@ -42,14 +42,15 @@ class Field():
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
 
-        fill_max_dims = {'Q', 't'}
+        fill_max_dims = {'Q', 't', 'Vsd', 'Coss'}
+        is_fill_max = symbol[0] in fill_max_dims or symbol in fill_max_dims
 
-        if symbol[0] in fill_max_dims and math.isnan(max) and not math.isnan(min) and not math.isnan(typ):
+        if is_fill_max and math.isnan(max) and not math.isnan(min) and not math.isnan(typ):
             max = typ
             typ = min
             min = math.nan
 
-        if symbol[0] in fill_max_dims and math.isnan(max) and not math.isnan(min) and math.isnan(typ):
+        if is_fill_max and math.isnan(max) and not math.isnan(min) and math.isnan(typ):
             typ = min
             min = math.nan
             max = math.nan
@@ -72,15 +73,14 @@ class Field():
                 typ = max
                 max = math.nan
 
-        if symbol == 'Vsd' and max < typ and (typ/max) < 1.5:
+        if symbol == 'Vsd' and max < typ and (typ / max) < 1.5:
             # Vsd confusion
             a = max
             max = typ
             typ = a
 
-
         if not math.isnan(max) and not math.isnan(typ):
-            assert 1 < max/typ < 5, (typ, max)
+            assert 1 < max / typ < 5, (typ, max)
 
         self.min = min
         self.typ = typ
@@ -137,13 +137,14 @@ class Field():
                 setattr(self, s, getattr(f, s))
                 self._sources[s] = f._sources[s]
 
+        # TODO dont fill (n,8,9) with (8,9,n)
+
     def __getitem__(self, item):
         assert item in {'min', 'max', 'typ'}
         return getattr(self, item)
 
     def values(self) -> List[float]:
         return [self.min, self.typ, self.max]
-
 
     def __eq__(self, other):
         if isinstance(other, Field):
@@ -163,13 +164,33 @@ class Field():
                     return False
         return True
 
+    def assert_values(self, min=None, typ=None, max=None):
+        if isinstance(min, (tuple, list)):
+            assert typ is None and max is None
+            return self.assert_value(*min)
+        elif isinstance(min, (dict)):
+            assert typ is None and max is None
+            return self.assert_value(**min)
+
+        for k, b in dict(min=min, typ=typ, max=max).items():
+            if b is None:
+                continue
+            a = self.__dict__[k]
+            if math.isnan(a) and math.isnan(b):
+                continue
+
+            assert a == b, (k, self, self.cond, self._sources)
+
+    def assert_value(self, min=None, typ=None, max=None):
+        return self.assert_values(min=min, typ=typ, max=max)
+
 
 def parse_field_value(s):
     if isinstance(s, (float, int)):
         return s
     if not s:
         return math.nan
-    s = normalize_dash(s.strip().strip('\x03').rstrip('L'))
+    s = normalize_text(s.strip().strip(' \x03').rstrip('L'))
     if not s or s == '-' or s == '.' or set(s) == {'-'}:
         return math.nan
     return float(s)
@@ -184,7 +205,7 @@ class MpnMfr:
 class DatasheetFields():
     def __init__(self, mfr=None, mpn=None, part: 'DiscoveredPart' = None, fields: Iterable[Field] = None):
         from dslib.parts_discovery import DiscoveredPart
-        self.part: Union[DiscoveredPart, MpnMfr] = part or MpnMfr(mpn, mfr)
+        self.part: Union[DiscoveredPart, MpnMfr] = part or MpnMfr(mfr, mpn)
         self.fields_filled: Dict[str, Field] = {}
         self.fields_lists: Dict[str, List[Field]] = {}
         if fields:
@@ -203,7 +224,7 @@ class DatasheetFields():
         try:
             fet_specs = ds.get_mosfet_specs()
         except Exception as e:
-            warnings.warn('failed to create fet specs: %s' %e)
+            warnings.warn('failed to create fet specs: %s' % e)
             fet_specs = None
 
         return dict(
@@ -219,7 +240,6 @@ class DatasheetFields():
             Qgs=ds.get_typ_or_max_or_min('Qgs'),
             Qgd=ds.get_typ_or_max_or_min('Qgd'),
             Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-
 
             # C_oss_pF=ds.get('Coss') and ds.get('Coss').max_or_typ_or_min,
 
@@ -243,14 +263,23 @@ class DatasheetFields():
         for f in fields:
             self.add(f)
 
-    def print(self, show_cond=False):
+    def print(self, show_cond=False, show_sources=False):
         print('')
         print(self.part.mfr, self.part.mpn)
-        print('Symbol         min   typ   max   unit   source',  '   cond' if show_cond else '',)
+        print('Symbol         min   typ   max   unit   source', '   cond' if show_cond else '', )
         for f in self.fields_filled.values():
-            l = '%-12s %5.0f %5.0f %5.0f %-4s %10s %-20s' % (f.symbol, f.min, f.typ, f.max, f.unit,
-                                                          '/'.join(map(lambda s:str(s)[:2], f._sources.values())),
-                                                         ', '.join(f.cond.values() if f.cond else []) if show_cond else '')
+
+            src = ''
+            if show_sources:
+                v = list('>'.join(v) for v in f._sources.values())
+                if len(set(v)) == 1:
+                    src = v[0]
+                else:
+                    src = ','.join(v)
+
+            l = '%-12s %5.1f %5.1f %5.1f %-4s %10s %-20s' % (
+                f.symbol, f.min, f.typ, f.max, f.unit, src,
+                ', '.join(map(str, f.cond.values() if f.cond else [])) if show_cond else '')
             l = l.replace('nan', ' - ')
             l = l.replace(' None', '  -  ')
             print(l)
@@ -324,7 +353,12 @@ class DatasheetFields():
             ff = getattr(self, 'fields_filled')
             if item in ff:
                 return ff[item]
+
+            print('trying to get %s, but only have %s' % (item, ', '.join(ff.keys())))
         raise AttributeError(item)
+
+    def shape(self):
+        return (len(self), 3)
 
     def __getitem__(self, item) -> Field:
         return self.fields_filled[item]
@@ -381,12 +415,18 @@ class DatasheetFields():
                         are = abs((v - rv) / rv)
                     max_err = max(max_err, are)
                 if max_err >= err_threshold:
-                    print('')
-                    print(title, self.part.mfr, self.part.mpn,
-                          f'err {round(max_err, 3)} > {err_threshold}',
-                          '\nref=', f,
-                          '\noth=', a.fields_filled.get(sym, None)
-                          )
+                    fo = a.fields_filled.get(sym, None)
+
+                    if fo:
+                        print('')
+                        print(title, self.part.mfr, self.part.mpn,
+                              f'err {round(max_err, 3)} > {err_threshold}',
+                              '\nref=', f,
+                              '\noth=', fo, fo and fo._sources,
+                              )
+                    else:
+                        print(title, self.part.mfr, self.part.mpn, sym, 'not in oth', 'ref=', f, )
+
                     n += 1
 
                 if max_err < min_err:

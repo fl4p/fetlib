@@ -9,9 +9,9 @@ import pandas as pd
 
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
-from dslib.pdf2txt import expr, normalize_dash, strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
-    whitespaces_remove
-from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs
+from dslib.pdf2txt import expr, strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
+    whitespaces_remove, normalize_text, ocr_strip_string
+from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline
 from dslib.pdf2txt.pipeline import convertapi, pdf2pdf
 from dslib.pdf2txt.tabular import NoTextInPdfError
 
@@ -66,7 +66,7 @@ def extract_text(pdf_path, try_ocr=False):
 
     pdf_document.close()
 
-    if try_ocr and len(pdf_text) < 20:
+    if try_ocr and (len(pdf_text) < 20 or try_ocr == 'force'):
         ocr_path = pdf_path + '.convertapi_ocr.pdf'
         if not os.path.exists(ocr_path):
             convertapi(pdf_path, ocr_path, 'ocr')
@@ -78,24 +78,95 @@ def extract_text(pdf_path, try_ocr=False):
     return pdf_text
 
 
-def normalize_pdf_text(pdf_text: str):
-    pdf_text = pdf_text.replace('\0x04', '\x03')  # utf8 b'\xe2\x80\x93' toshiba
-    pdf_text = pdf_text.replace('', '\x03')  # toshiba
-    pdf_text = pdf_text.replace('\0x03', '\x03')
-    pdf_text = pdf_text.replace('', '\x03')
-    pdf_text = normalize_dash(pdf_text)
-    return pdf_text
-
-
-def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
-    fields = []
-
+def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
     assert mfr
+    mpn = pdf_path.split('/')[-1].split('.')[0] if pdf_path else None
 
     source_name = os.path.basename(pdf_path)
 
-    pat = expr.QRR.get(mfr)
+    lines = pdf_text.split('\n')
+    lines = [normalize_text(ocr_strip_string(line)) for line in lines]
 
+    fields = DatasheetFields(mfr, mpn)
+    detected = set()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        m_detect, field_sym = detect_fields(mfr, [line])
+        if m_detect:
+            dim = field_sym[0]
+            detected.add(field_sym)
+
+            ctx_lines = lines[i:(i + 12)]
+            f, m_parse = parse_field_multiline(
+                '\n'.join(ctx_lines),
+                dim=dim,
+                field_sym=field_sym,
+                cond=ctx_lines,
+                capture_match=True,
+                source=[source_name, 'text'],
+                mfr=mfr,
+            )
+
+            if f:
+                fields.add(f)
+                i += max(1, m_parse[0].count('\n') - 1)  # step forward
+                continue
+            else:
+                def is_number(s):
+                    try:
+                        float(s)
+                        return True
+                    except ValueError:
+                        return False
+
+                def is_list(lines: List[str]):
+                    syms = {"Qgs","Qgs1","Qgd","Qsw","Qoss","trr","Qrr","Vdsf","Qgodr"}
+                    if len(lines) <= 3:
+                        return False
+                    nns = (
+                        sum(map(is_number, lines)),
+                        sum(s.startswith('•') for s in lines)
+                    )
+                    for nn in nns:
+                        if nn > 3 and nn >= (len(lines) - 2) * 0.6:
+                            return True
+
+                    lines = list(filter(bool, lines))
+
+                    if len(set(s[:1] for s in lines)) / (len(lines) - 2)  <= 0.4:
+                        return True
+
+                    if len({'0.1', '1', '10', '100', '100'} - set(lines)) == 0:
+                        return True
+
+                    return False
+
+                other_detected_in_context = set(detect_fields(mfr, [l])[1] for l in ctx_lines[:5]) - {field_sym, None}
+
+                if verbose and field_sym != 'Rg':
+                    print('\n', field_sym, 'not parsed', mfr, pdf_path)
+
+                    if other_detected_in_context:
+                        print('other_detected_in_context', other_detected_in_context)
+
+                    if len(ctx_lines) > 2 and len(other_detected_in_context) <= 2 and not is_list(ctx_lines):
+                        print('    v---v ')
+                        for l in ctx_lines: print(l)
+                        print('    ^---^ ')
+                        print('')
+
+                        if verbose == 'debug':
+                            print('regexs for dim', field_sym[0])
+                            for r in dim_regs_multiline[field_sym[0]]:
+                                print(field_sym, r.pattern.replace('"','\\"'))
+                            print('')
+
+        i += 1
+
+    # special Qrr case
+    pat = expr.QRR.get(mfr)
     if pat:
         rg = re.compile(pat, re.MULTILINE | re.IGNORECASE)
         qrr_ms = list(rg.finditer(pdf_text))
@@ -118,16 +189,16 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
                     qrr_d[k[:-1]] = v
                     del qrr_d[k]
 
-            fields.append(Field('Qrr',
-                                min=qrr_d.get('min'), typ=qrr_d.get('typ'), max=qrr_d.get('max'),
-                                mul=1,
-                                cond=dict(
-                                    i_f=qrr_d.get('if'),
-                                    didt=qrr_d.get('didt'),
-                                    vds=qrr_d.get('vds')),
-                                unit=qrr_d.get('unit'),
-                                source=[source_name, 'text']
-                                ))  # vgs
+            fields.add(Field('Qrr',
+                             min=qrr_d.get('min'), typ=qrr_d.get('typ'), max=qrr_d.get('max'),
+                             mul=1,
+                             cond=dict(
+                                 i_f=qrr_d.get('if'),
+                                 didt=qrr_d.get('didt'),
+                                 vds=qrr_d.get('vds')),
+                             unit=qrr_d.get('unit'),
+                             source=[source_name, 'text']
+                             ))  # vgs
     else:
         if mfr:
             print('no Qrr pattern for ', mfr)
@@ -137,27 +208,30 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path):
 
 def validate_datasheet_text(mfr, mpn, text):
     if len(text) < 60:
-        print('text too short ' + str(len(text)))
+        # print('text too short ' + str(len(text)))
         return False
 
-    if mpn.split(',')[0][:7].lower() not in whitespaces_remove(strip_no_print_latin(text)).lower():
+    _n = lambda s: whitespaces_remove(strip_no_print_latin(s.lower().replace('o', '0')))
+
+    if _n(mpn).split(',')[0][:7] not in _n(text):
         print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(text)[:30])
         return False
 
     return True
 
 
-regex_ver_salt = ('v42', dim_regs)
+regex_ver_salt = ('v46', dim_regs_csv, get_field_detect_regex('any'))
 
 
 class NoTabularData(ValueError):
     pass
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt=regex_ver_salt, ignore_missing_inp_paths=True)
+@disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
-                    need_symbols=None
+                    need_symbols=None,
+                    no_ocr=False,
                     ) -> DatasheetFields:
     if not pdf_path:
         assert mfr
@@ -175,11 +249,13 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     pdf_text = extract_text(pdf_path, try_ocr=False)
 
     if not validate_datasheet_text(mfr, mpn, pdf_text):
-        methods = ['qpdf_decrypt', 'ocrmypdf_redo', 'ocrmypdf_r400', 'r400_ocrmypdf']
+        methods = ['qpdf_decrypt']  # 'r400_ocrmypdf'
+        if not no_ocr:
+            methods += ['r600_ocrmypdf', 'ocrmypdf_redo', 'ocrmypdf_r400', ]
 
-        if not pdf_text:
-            methods.remove('ocrmypdf_redo')
-            methods.append('ocrmypdf_redo')  # move to end, because its intense
+            if not pdf_text:
+                methods.remove('ocrmypdf_redo')
+                methods.append('ocrmypdf_redo')  # move to end, because its intense
 
         for method in methods:
             try:
@@ -204,7 +280,10 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     if len(pdf_text) < 40:
         print(pdf_path, 'no/little text extracted')
 
-    pdf_text = normalize_pdf_text(pdf_text)
+    with open(pdf_path + '.txt', 'w') as f:
+        f.write(pdf_text)
+
+    pdf_text = normalize_text(pdf_text)
 
     # S19-0181-Rev. A, 25-Feb-2019, "S16-0163-Rev. A, 01-Feb-16"
     # "November 2021", "2021-01"
@@ -215,7 +294,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     ds = DatasheetFields(mfr, mpn)
 
     txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path)
-    ds.add_multiple(txt_fields)
+    ds.add_multiple(txt_fields.all_fields())
     # TODO do extract_fields_from_text again afet raster_ocr
 
     if need_symbols:
@@ -223,6 +302,9 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     else:
         need_symbols = None
 
+    if no_ocr:
+        assert not tabular_pre_methods
+        tabular_pre_methods = ('nop', 'gs', 'cups',)
     try:
         # if verbose:
         # print(pdf_path, 'tabular read ...  need=', need_symbols)
@@ -268,7 +350,7 @@ def tabula_pdf_dataframes(pdf_path=None):
     except NoTextInPdfError as e:
         print(pdf_path, e)
     except TimeoutError:
-        raise # these are fatal, should not happen
+        raise  # these are fatal, should not happen
     except Exception as e:
         last_e = e
         print(traceback.format_exc())
@@ -327,18 +409,37 @@ valid_range = dict(
 )
 
 
-def parse_field_csv(csv_line, dim, field_sym, cond=None, capture_match=False, source=None) \
+def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None) \
         -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
     range = valid_range.get(field_sym)
     err = []
-    for r in dim_regs[dim]:
+    m: Optional[re.Match] = None
+
+    det_re = get_field_detect_regex(mfr)[field_sym] if len(field_sym) > 1 else None
+    stop_words = det_re[1] if isinstance(det_re, tuple) else []
+
+    for r in regs:
         # print(csv_line, dim , r.pattern)
-        m: re.Match = next(r.finditer(csv_line), None)
+        m: re.Match = next(r.finditer(s), None)
         # print('done.')
         if m is None:
             continue
-
         vd = m.groupdict()
+
+        val_g = m.re.groupindex.get('typ') or m.re.groupindex.get('max') or m.re.groupindex.get('min')
+        head = vd.get('head') or s[:m.start(val_g)]
+        stop = False
+        for sw in stop_words:
+            if sw in head:
+                print('parsing', field_sym, 'in', s, 'but found stop word', sw, 'in match head:', head)
+                stop = True
+                break
+            if sw in m[0]:
+                warnings.warn(f'parsing {field_sym}: stop word `{sw}` in match `{m[0]}` but not in head `{head}`, ignoring')
+
+        if stop:
+            continue
+
         try:
             f = Field(symbol=field_sym,
                       min=(vd.get('min') or '').rstrip('-'),
@@ -357,13 +458,25 @@ def parse_field_csv(csv_line, dim, field_sym, cond=None, capture_match=False, so
 
             return f
         except Exception as e:
-            err.append((field_sym, 'error parsing field row', csv_line, 'dim=', dim, e))
+            err.append((field_sym, 'error parsing field row', s, e))
             continue
     for e in err:
         print(*e)
+
     if capture_match:
-        return None, None
+        return None, m
+
     return None
+
+
+def parse_field_csv(csv_line, dim, **kwargs) \
+        -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
+    return parse_field(csv_line, dim_regs_csv[dim], **kwargs)
+
+
+def parse_field_multiline(text, dim, field_sym, cond=None, capture_match=False, source=None, mfr=None) \
+        -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
+    return parse_field(text, dim_regs_multiline[dim], field_sym, cond, capture_match, source, mfr=mfr)
 
 
 def detect_fields(mfr, strings: Iterable[str]):
@@ -377,8 +490,7 @@ def detect_fields(mfr, strings: Iterable[str]):
             stop_words = []
 
         def detect_field(s):
-            s = normalize_dash(str(s)).strip(' -')
-            s = strip_no_print_latin(s)
+            s = normalize_text(str(s)).strip(' -')
             s = whitespaces_to_space(s)
 
             if len(s) > 80:
@@ -420,6 +532,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
         Q={'uC', 'nC', 'μC'},
         C={'uF', 'nF', 'μF'},
         V={'mV', 'V'},
+        R={'mΩ', 'Ω', 'kΩ', 'MΩ', 'mOhm', 'Ohm', 'kOhm', 'MOhm', 'megOhm'},
     )
 
     # noinspection PyTypeChecker
@@ -475,6 +588,10 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
 
             if m:
 
+                if verbose:
+                    print('field detected', field_sym, m, 'in row', i, 'of', df.index.name,
+                          '"' + ','.join(row.astype(str).to_list()))
+
                 dim = field_sym[0]
 
                 def _fill_unit(row, columns, fill_row, units):
@@ -498,24 +615,30 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
                     (_fill_unit(row, [-1, -2, -3], df_ffill.iloc[i], dim_units[dim]) or
                      _fill_unit(row, [-1, -2, -3], df_bfill.iloc[i], dim_units[dim]))
 
-                rl = normalize_dash(','.join(map(lambda v: str(v).strip(' ,\'"/|'), right_strip_nan(row, 2))))
-                rl_bf = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_bfill.iloc[i])))
-                rl_ff = normalize_dash(','.join(map(lambda v: str(v).strip(' ,'), df_ffill.iloc[i])))
+                rl = normalize_text(','.join(map(lambda v: str(v).strip(' ,\'"/|'), right_strip_nan(row, 2))))
+                rl_bf = normalize_text(','.join(map(lambda v: str(v).strip(' ,'), df_bfill.iloc[i])))
+                rl_ff = normalize_text(','.join(map(lambda v: str(v).strip(' ,'), df_ffill.iloc[i])))
 
                 # OCR
                 rl = ocr_post_subs(rl)
-                rl = strip_no_print_latin(rl)
                 rl = whitespaces_to_space(rl)
 
-                field = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()),
-                                        source=[source_base, source_name, 'parse_csv'])
+                field, parse_match = parse_field_csv(rl, dim, field_sym=field_sym, cond=dict(row.dropna()),
+                                                     capture_match=True,
+                                                     source=[source_base, source_name, 'parse_csv'],
+                                                     mfr=mfr,
+                                                     )
 
                 if not field and len(list(filter(bool, row.dropna()))) > 2:
                     print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
 
                 if field:
-                    if verbose > 1:
-                        print('add regex field', field, 'from', rl)
+                    if verbose > 0:
+                        print(field_sym, 'field values parsed', repr(field), 'from', rl,
+                              '\n   regex: ', parse_match.re.pattern,
+                              '\n   match: ',
+                              ' '.join(map('='.join, (t for t in parse_match.groupdict().items() if t[1]))),
+                              )
                     fields.add(field)
 
                 elif col_typ:
@@ -535,12 +658,13 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
                             fields.add(field)
                             break
                         except Exception as e:
-                            print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
-                            #print(row.values)
-                            print(rl, rl_ff, rl_bf)
-                            #print(rl_ff)
-                            #print(rl_bf)
-                            # raise
+                            if verbose:
+                                print(ds_path, 'error parsing field with col_idx', dict(**col_idx, typ=col_typ), e)
+                                # print(row.values)
+                                print(rl, rl_ff, rl_bf)
+                                # print(rl_ff)
+                                # print(rl_bf)
+                                # raise
                 else:
                     if verbose:
                         print(ds_path, 'found field tag but col_typ unknown', field_sym, list(row))
@@ -554,7 +678,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
 
 
 @disk_cache(ttl='99d', file_dependencies=[0], salt=regex_ver_salt)
-def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> DatasheetFields:
+def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=False) -> DatasheetFields:
     """
 
     nop
@@ -581,14 +705,16 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
         pre_process_methods = (
             # fix java.lang.IllegalArgumentException: lines must be orthogonal, vertical and horizontal:
             'nop',
-            'sips', 'gs', 'cups',
+            # 'sips',
+            'gs', 'cups',
+            'r600_ocrmypdf',
             'ocrmypdf_redo',
             # fix image datasheets, weird encoding
             'ocrmypdf_r400',
             'r400_ocrmypdf',
 
             'ocrmypdf_r600',
-            'r600_ocrmypdf',
+            # 'r600_ocrmypdf',
         )
     elif isinstance(pre_process_methods, str):
         pre_process_methods = (pre_process_methods,)
@@ -607,15 +733,14 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
 
     last_e = None
     for method in pre_process_methods:
-        f2 = ds_path + '.' + method + '.pdf'
+        f2 = ds_path + '.' + method + '.pdf' if method != 'nop' else ds_path
         try:
-
             pdf2pdf(ds_path, f2, method=method)
 
             dfs = tabula_pdf_dataframes(ds_path if method == 'nop' else f2)
 
             if len(dfs) > 0:
-                if method != 'nop':
+                if method != 'nop' and verbose:
                     print(ds_path, 'extracted', len(dfs), 'dataframes using method', method)
                 last_e = None
             else:
@@ -632,10 +757,10 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
             side_csv = ds_path + '.' + method + '.csv'
             # print('writing sidecar csv', side_csv)
             pd.concat(dfs, ignore_index=True, axis=0).map(
-                lambda s: (isinstance(s, str) and whitespaces_to_space(
-                    strip_no_print_latin(ocr_post_subs(normalize_dash(s))))) or s).to_csv(side_csv, header=False)
+                lambda s: (isinstance(s, str) and whitespaces_to_space(ocr_post_subs(normalize_text(s)))) or s).to_csv(
+                side_csv, header=False)
 
-        fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=ds_path)
+        fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=f2, verbose=verbose)
 
         if len(fields) > 0:
             combined_fields.add_multiple(fields.all_fields())
@@ -650,7 +775,8 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None) -> Datashe
                     return combined_fields
             return fields
         else:
-            print(ds_path, 'tabula no fields extracted with method', method)
+            if verbose:
+                print(ds_path, 'tabula no fields extracted with method', method)
 
     if need_symbols and combined_fields:
         missing = subsctract_needed_symbols(need_symbols, combined_fields.keys(), copy=True)
