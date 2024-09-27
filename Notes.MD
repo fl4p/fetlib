@@ -1,11 +1,19 @@
 # New approach
 
-5 types:
+5 doc types:
 - text as pdf, table grid vectors
 - text in pdf but broken enconding, tables grid vectors
 - vectorized text (need OCR), tables grid vectors
 - rasterized pdf
-- scanned pdf (very raw)
+- scanned pdf (very rare)
+
+
+1. detect tables and their bbox using (vector data or OCR)
+2. detect the table cells. consider borderless tables and implicit rows and columns (no lines)
+3. unwrap merged cell content (colspan, rowspan)
+4. iterate rows
+   5. iterate cells (columns).
+   6. if column text is empty, do OCR (aware of subscript, symbols units, SI-prefix, formulars, math operators)
 
 - find a tabular segmentation with merged cells
   - some tables have missing borders
@@ -14,6 +22,7 @@
     - tabula
     - tesseract with tables (TODO link)
     - pix2image 
+  - 
 
 img2table does a good job on rasterized tables.
 it is useful to add borders to tables and draw implicit row/column grid. 
@@ -21,6 +30,7 @@ it is useful to add borders to tables and draw implicit row/column grid.
 pdf2plumber and pymudf are similar.
 they work good with table grid vectors. does they work with rasterized?
 
+- todo string normalisation
 
 # Power Loss Model
 

@@ -10,12 +10,14 @@ from PIL import Image as PILImage
 from img2table.document import Image
 from img2table.ocr.base import OCRInstance
 
-from test.util import pixmap_to_pil
+
 
 
 def main():
     #pdf = PDF("../datasheets/littelfuse/IXTQ180N10T.pdf", pages=[1], detect_rotation=False, pdf_text_extraction=True)
-    img = Image("../datasheets/_samples/IXTQ180N10T_p2_400dpi.png")
+    #img = Image("../datasheets/_samples/IXTQ180N10T_p2_400dpi.png")
+    #img = Image("../datasheets/_samples/IXTQ180N10T_p2_400dpi.png")
+    img = Image("../datasheets/_samples/BSB028N06NN3GXUMA2_p3.png")
 
     doc = img
     tesseract = TesseractOCR()
@@ -23,19 +25,25 @@ def main():
     # Extract tables with Tesseract and PaddleOCR
     tables = doc.extract_tables(ocr=tesseract,
                                 borderless_tables=True,
-                                implicit_rows=True,
-                                implicit_columns=True
+                                implicit_rows=False,
+                                implicit_columns=True,
+                                min_confidence=50, # higher values: crops off borderless cells
                                 )
-    
-    draw_img = list(img.images)[0].copy()
+
+    # draw borders of borderless tables on bordered_img
+    bordered_img = list(img.images)[0].copy()
     for tb in tables:
+
+        cv2.rectangle(bordered_img, (tb.bbox.x1-1, tb.bbox.y1), (tb.bbox.x2-1, tb.bbox.y2+1),
+            (0, 0, 0), 1)
         for row in tb.content.values():
             for cell in row:
-                cv2.rectangle(draw_img, (cell.bbox.x1, cell.bbox.y1), (cell.bbox.x2, cell.bbox.y2),
+                cv2.rectangle(bordered_img, (cell.bbox.x1, cell.bbox.y1), (cell.bbox.x2, cell.bbox.y2),
                               (0, 0, 0), 1)
 
     bio = BytesIO()
-    PILImage.fromarray(draw_img).save(bio, format='PNG')
+    PILImage.fromarray(bordered_img).save(bio, format='PNG')
+    PILImage.fromarray(bordered_img).show('bordered')
 
     if 0:
         mudoc = pymupdf.open("PNG", bio)[0]
@@ -68,7 +76,7 @@ def main():
                                 borderless_tables=False,
                                 implicit_rows=False,
                                 implicit_columns=False,
-                                  min_confidence=90
+                                  min_confidence=60
                                 )
 
     disp_img = display_borderless_tables(img2, tables2)
@@ -136,5 +144,31 @@ def _etc():
             x2 = cell.bbox.x2
             y2 = cell.bbox.y2
             value = cell.value
+
+
+def pixmap_to_pil(pixmap):
+    """Write to image file using Pillow.
+
+    Args are passed to Pillow's Image.save method, see their documentation.
+    Use instead of save when other output formats are desired.
+    """
+    try:
+        from PIL import Image
+    except ImportError:
+        print("PIL/Pillow not installed")
+        raise
+
+    cspace = pixmap.colorspace
+    if cspace is None:
+        mode = "L"
+    elif cspace.n == 1:
+        mode = "L" if pixmap.alpha == 0 else "LA"
+    elif cspace.n == 3:
+        mode = "RGB" if pixmap.alpha == 0 else "RGBA"
+    else:
+        mode = "CMYK"
+
+    return Image.frombytes(mode, (pixmap.width, pixmap.height), pixmap.samples)
+
 
 main()

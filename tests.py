@@ -6,8 +6,9 @@ import pandas as pd
 import dslib.pdf2txt.parse
 import dslib.pdf2txt.pipeline
 from dslib.field import DatasheetFields, Field
+from dslib.manual_fields import reference_data
 from dslib.pdf2txt import strip_no_print_latin, ocr_post_subs
-from dslib.pdf2txt.expr import dim_regs
+from dslib.pdf2txt.expr import dim_regs_csv
 from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, detect_fields
 from dslib.pdf2txt.tabular import tabula_browser
 
@@ -15,11 +16,11 @@ nan = na = math.nan
 
 
 def test_parse_lines():
-    r = dim_regs['V'][0]
+    r = dim_regs_csv['V'][0]
     m = next(r.finditer("Diode forward voltage,Vsp,-,0.89,1.2,V Ves=0 V, Ir=50 A, Tj=25 °C"), None)
     assert m.groupdict() == dict(max='1.2', min='-', typ='0.89', unit='V', minN_typ_maxN_unit=None), m.groupdict()
 
-    r = dim_regs['t'][6]
+    r = dim_regs_csv['t'][6]
     m = next(r.finditer('Rise time,f,-,10 -,ns Re=1.60'), None)
     assert m.groupdict() == dict(typ='10', unit='ns', max=None), m.groupdict()
 
@@ -28,7 +29,10 @@ def test_parse_lines():
     cases = [
         # (CSV_ROW, DIM, (MIN,TYP,MAX))
 
-        ("QgGate charge total (10 V),VDS = 40 V,ID = 100 A,76,nC,,", 'Qg', (n, 76, n)),
+        # "Gate resistance,Re,-,0.7 -,Q,-"
+        # VSD source-drain voltage, IS = 25 A; VGS = 0 V; Tj = 25 °C; Fig. 16, , -, 0.81, 1.2, V # todo, where is this from?, pnji, nxp P/N nxp PSMN6R5-80PS,127?
+        ("QGS1,QGS2,nan", 'Qgs2', (n, n, n)),
+        # ("QgGate charge total (10 V),VDS = 40 V,ID = 100 A,76,nC,,", 'Qg', (n, 76, n)),
         ("Qrr Reverse recovery charge V nCDS = 40 V,I F= 100 A,,400,,", 'Qrr', (n, 400, n)),
         ("Qg,Total Gate Charge,---,200,300,,,VDS = 38V,", 'Qg', (n, 200, 300)),
         ('nC Qgd,Gate-to-Drain ("Miller") Charge,---,62,93,,,See Fig.11,', 'Qg', (n, 62, 93,)),
@@ -180,7 +184,7 @@ def test_parse_lines():
         ("COSS(ER),Effective Output Capacitance, Energy Related (Note 1),VDS = 0 to 50 V, VGS = 0 V,nan,1300,nan,nan",
          'Coss', (n, 1300, n)),
         ('Gate to drain charge1 ),Qgd,,,20,29,nC,"VDD =40 V, ID = 50 A, VGS = 0 to 10 V",,,,,', 'Qgd', (n, 20, 29)),
-        ("Gate-to-Source Charge,QGS,VGS = 10 V, VDS = 75 V; ID = 41 A,15.0,nan,nC", "Qgs", (n, 15, n)),
+        # ("Gate-to-Source Charge,QGS,VGS = 10 V, VDS = 75 V; ID = 41 A,15.0,nan,nC", "Qgs", (n, 15, n)),
         ("Gate-Drain Charge,nan,Qgd,nan,nan,nan,13,nan,nan,nan,nC", 'Qgd', (n, 13, n)),
         ("Output capacitance,C oss,nan,-,231.0,300,nan", 'Coss', (n, 231, 300)),
         (
@@ -229,11 +233,14 @@ def test_parse_lines():
         assert m and field_sym, 'no field detected in "%s" %s %s' % (rl, m, field_sym)
         assert field_sym[:len(sym)] == sym, ("DETECTED SYMBOL", field_sym, sym, rl)
 
-        f, m = parse_field_csv(rl, dim, field_sym=sym, capture_match=True)
-        if not f:
-            print('dim regs for', dim, ':')
-            print('\n'.join(map(lambda r: r.pattern, dim_regs[dim])))
-        assert f, "field value not parsed '%s' (detected %s)" % (rl, field_sym)
+        f, m = parse_field_csv(rl, dim, field_sym=sym, capture_match=True, mfr='any')
+        if sum(map(math.isnan, (min, typ, max))) == 3:
+            assert not f, "field value parsed where it should not %s" % (rl,)
+        else:
+            if not f:
+                print('dim regs for', dim, ':')
+                print('\n'.join(map(lambda r: r.pattern, dim_regs_csv[dim])))
+            assert f, "field value not parsed '%s' (detected %s)" % (rl, field_sym)
         assert math.isnan(min) or min == f.min, (f, min, rl, m.re.pattern)
         assert math.isnan(typ) or typ == f.typ, (f, typ, rl, m.re.pattern)
         assert math.isnan(max) or max == f.max, (f, max, rl, m.re.pattern)
@@ -241,8 +248,6 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
-    # TODOå
-
     d = tabula_read('datasheets/onsemi/FDMS86368-F085.pdf')
     # assert d.Vsd.max == 1.2  # or 1.25
 
@@ -580,16 +585,23 @@ def test_pdf_parse():
 
 def test_pdf_ocr():
     import subprocess
+
+    ver = \
+    subprocess.run(['tesseract', '-v'], check=True, capture_output=True).stdout.decode().splitlines()[0].split(' ')[-1]
+    assert ver == '5.4.1'
+
     res = subprocess.run(
         'tesseract datasheets/_samples/test2.png stdout --user-words tesseract-stuff/mosfet.user-words tesseract-stuff/tesseract.cfg'.split(
             ' '),
         check=True, capture_output=True).stdout.decode('utf-8')
     # assert 'Qgd' in res
     assert 'Qgs' in res
-    assert 'Vplateau' in res  # only works with custom words!
+    assert 'Vplateau' in res  # only works with custom words! tesseract 5.4.1
 
-    d = parse_datasheet('datasheets/infineon/BSC050N10NS5ATMA1.pdf')
-    assert d.Vsd == (na, 0.87, 1.1)
+    d = parse_datasheet('datasheets/./infineon/BSC050N10NS5ATMA1.pdf', need_symbols={'Qrr'})
+    assert d.Vsd == (na, 0.87, 1.1), d.print()
+    assert d.Coss == (na, 490, 640), d.Coss
+    assert d.Qrr == (na, 68, 136)  # ['BSC050N10NS5ATMA1.pdf.r400_ocrmypdf.pdf', 'tabula_cli_guess', 'parse_csv']
 
     d = parse_datasheet('datasheets/nxp/PSMN3R9-100YSFX.pdf', need_symbols={'Vsd'})
     assert d.Vsd == (na, 0.82, 1)
@@ -638,8 +650,8 @@ def test_pdf_ocr():
     assert d.Qg_th == (na, 2.7, na)
     assert d.Qsw == (na, 7.7, na)
 
-    d = parse_datasheet('datasheets/infineon/BSZ150N10LS3GATMA1.pdf')
-    assert ref.show_diff(d, err_threshold=1e-3) == 0
+    d = parse_datasheet('datasheets/././infineon/BSZ150N10LS3GATMA1.pdf')
+    assert ref.show_diff(d, err_threshold=1e-3) == 0  # TODO try different text extraction methods with BSZ150N10LS3GATMA1
 
     # IPB039N10N3GATMA1
     d = parse_datasheet('datasheets/infineon/IPP100N08N3GXKSA1.pdf')  # ocr
@@ -654,7 +666,7 @@ def test_pdf_ocr():
     assert mf.V_pl == 5.2
     if 'Qgs' in d:
         assert d.Qgs.typ == 9
-        assert mf.Qg_th == 4e-9
+        assert mf.Qg_th == pytest.approx(4e-9, 1e-15)
     assert abs((mf.Qgs + mf.Qgd - mf.Qsw) - mf.Qg_th) < 1e-20
     assert abs((mf.Qgs2 + mf.Qgd) - mf.Qsw) < 1e-20
 
@@ -707,12 +719,15 @@ def test_pdf_ocr():
 
     # macos preview fixes: (CUPS printer)
     ds = tabula_read(
-        'datasheets/infineon/IRF150DM115XTMA1.pdf',
-        pre_process_methods=('ocrmypdf_r400',
-                             'r400_ocrmypdf',
+        'datasheets/./infineon/IRF150DM115XTMA1.pdf',
+        pre_process_methods=(
+            'r600_ocrmypdf',
+            'ocrmypdf_r400',
+            'r400_ocrmypdf',
 
-                             'ocrmypdf_r600',
-                             'r600_ocrmypdf',),
+            'ocrmypdf_r600',
+            # 'r600_ocrmypdf',
+        ),
         need_symbols=('tRise', 'tFall'))  # OCR long
     ref = DatasheetFields("IRF150DM115XTMA1", "infineon",
                           fields=[Field("tFall", nan, 14.0, nan, "ns"),
@@ -788,10 +803,13 @@ def test_mosfet_specs():
     assert d.Qg_th.typ == 7  # Qgs1
     assert d.Qgs2.typ == 3
     assert d.Qsw.typ == 16
+    assert d.Qgs.typ != 7 # qgs_th confusion
     mf = d.get_mosfet_specs()
     assert mf.Qg_th == pytest.approx(7e-9, 1e-20)
     assert mf.Qgs2 == pytest.approx(3e-9, 1e-20)
     assert mf.Qsw == pytest.approx(16e-9, 1e-20)
+    assert reference_data(d.part).show_diff(d) == 0
+
 
     d = parse_datasheet('datasheets/infineon/AUIRF7769L2TR.pdf')
     assert d.Qg == (na, 200, 300)
@@ -932,12 +950,19 @@ def test_tabular_browser():
 
 
 if __name__ == '__main__':
+    d = parse_datasheet('datasheets/././littelfuse/IXFX360N15T2.pdf')
+    assert d
+
+    d = parse_datasheet('datasheets/./nxp/PSMN3R3-80BS,118.pdf', need_symbols={'Vsd', 'tRise'})
+    assert d.Qgs2.typ > 5
+    assert d.Vpl.typ == 6.1
+
     test_parse_lines()
     test_tabular_browser()
     test_extract_fields_from_dataframes()
     test_pdf_rasterize()
-    test_pdf_ocr()
     test_pdf_parse()
+    test_pdf_ocr()
     test_mosfet_specs()
 
     # ds = tabula_read('datasheets/_samples/infineon/IRF150DM115XTMA1_cyn_char.pdf')

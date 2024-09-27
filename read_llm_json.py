@@ -5,9 +5,7 @@ from collections import defaultdict
 from typing import Dict, Tuple
 
 from dslib.field import Field, DatasheetFields
-from dslib.pdf2txt import normalize_dash
 from dslib.pdf2txt.parse import parse_datasheet, detect_fields
-from dslib.pdf2txt.expr import get_field_detect_regex
 from dslib.store import Mpn, Mfr
 
 

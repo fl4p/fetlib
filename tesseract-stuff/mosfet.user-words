@@ -5,6 +5,8 @@ miller
 charge
 Threshold
 Voltage
+Resistance
+current
 Qsw
 QSW
 Qgd
@@ -19,6 +21,8 @@ Vplateau
 VPLATEAU
 Vsd
 VSD
+RG
+Rg
 forward
 Diode
 ns

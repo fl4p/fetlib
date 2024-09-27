@@ -9,3 +9,7 @@ tabula-py
 # macos: install https://www.azul.com/downloads/?package=jdk#zulu
 
 ocrmypdf
+
+#pdfminer.six>=20240706
+
+img2table

@@ -33,6 +33,7 @@ def main():
     parser.add_argument('--rg-total', default=6)  # total gate resistance
     parser.add_argument('--vpl-fallback', default=4.5)
     parser.add_argument('--no-cache', action='store_true')
+    parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--clean', action='store_true')
     args = parser.parse_args(sys.argv[1:])
 
@@ -76,8 +77,10 @@ def main():
 
     # parts = parts[:100]
 
-    # do all the magic: download datasheets, read them and compute power loss:
-    parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, args=args)
+    from wakepy import keep
+    with keep.running():
+        # do all the magic: download datasheets, read them and compute power loss:
+        parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, args=args)
 
     # show parts missing Qsw, no switching loss estimation is possible:
     no_qsw = [p for p in parts if math.isnan(p.specs.Qsw)]
@@ -86,7 +89,7 @@ def main():
         print(p.discovered.get_ds_path())
 
 
-def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache):
+def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -122,9 +125,11 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache):
     # parse datasheet (tabula and pdf2txt):
     if os.path.isfile(ds_path):
         try:
-            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols)
+            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols, no_ocr=no_ocr)
             ds.timestamp = dsp.timestamp
             ds.add_multiple(dsp.all_fields())
+        except (KeyError, AttributeError,  NameError): # Type, Timeout, TimeoutError,
+            raise
         except Exception as e:
             if not isinstance(e, (NoTabularData,TooManyPages,)):
                 print(traceback.format_exc())
@@ -177,7 +182,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
         print(mfr, mpn, 'error creating mosfet specs', e, type(e))
         print(traceback.format_exc())
         print(part, part.specs.__dict__)
-        print('\n'.join(map(str, ds.items())))
+        ds.print(show_cond=True, show_sources=True)
         parse_datasheet.invalidate(ds.ds_path, mfr=mfr, mpn=mpn)
         parse_datasheet.invalidate(ds.ds_path, mfr=mfr)
         parse_datasheet.invalidate(ds.ds_path)
@@ -256,7 +261,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
     else:
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache) for p in parts_shuffled}
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr) for p in parts_shuffled}
         results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)
         dss: List[DatasheetFields] = list(results.values())
 
