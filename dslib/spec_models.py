@@ -166,6 +166,18 @@ class MosfetSpecs:
             return self._Qsw
         return self.Qgd + self.Qgs2
 
+    @property
+    def Qg_sync(self):
+        # sync fet
+        return self.Qg - self.Qgd
+
+    def Qg_odr(self):
+        """
+        Gate Charge Overdrive. Charge after miller plateau until Vgs
+        :return:
+        """
+        return self.Qg - self.Qgd - self.Qgs
+
     def __str__(self):
         return f'MosfetSpecs({round(self.Vds,0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9,0)}n Qsw={round(self.Qsw * 1e9,1)}n trf={round(self.tRise * 1e9,1)}/{round(self.tFall * 1e9,1)}n Qrr={round(self.Qrr * 1e9,1)}n)'
 
