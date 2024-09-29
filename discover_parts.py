@@ -5,7 +5,7 @@ from typing import List, Dict, Tuple
 from dslib import parts_discovery
 from dslib.fetch import fetch_datasheet
 from dslib.parts_discovery import DiscoveredPart, benchmark_mpns
-from dslib.pdf2txt.parse import parse_datasheet
+
 
 
 def unique_parts(parts: List[DiscoveredPart]):
@@ -72,6 +72,8 @@ if __name__ == '__main__':
             continue
 
         fetch_datasheet(part.ds_url, part.get_ds_path(), mfr=part.mfr, mpn=part.mpn)
+
+    from dslib.pdf2txt.parse import parse_datasheet
 
     for part in parts:
         if os.path.exists(part.get_ds_path()):

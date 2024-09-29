@@ -60,7 +60,7 @@ class WriteBuffer():
 
 class ObjectDatabase(Generic[K, T]):
     def __init__(self, name, key_func: Optional[Callable[[T], K]] = None):
-        self._lib_path = os.path.realpath(os.path.dirname(__file__) + f'/../{name}.pkl')
+        self._lib_path = os.path.realpath(os.path.dirname(__file__) + f'/../data/{name}.pkl')
         self._lck_path = self._lib_path + '.lock'
 
         self._lib_mem: Optional[Dict[K, T]] = None

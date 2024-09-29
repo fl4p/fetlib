@@ -6,6 +6,5 @@
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/datasheets" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/tesseract-stuff/tessdata" vcs="Git" />
-    <mapping directory="$PROJECT_DIR$/tesseract-stuff/tessdata/tessconfigs" vcs="Git" />
   </component>
 </project>

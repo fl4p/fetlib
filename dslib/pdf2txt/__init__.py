@@ -1,7 +1,6 @@
 import re
 import unicodedata
 
-import deprecated
 import unidecode
 
 """
@@ -72,8 +71,10 @@ def custom_subs(s: str):
     return s
 
 
-@deprecated.deprecated
+#@deprecated.deprecated
 def normalize_dash(s: str) -> str:
+    raise NotImplementedError("deprecated")
+
     s = s.replace(' ', ' ')
     s = s.replace('‐', '-')  # utf8 b'\xe2\x80\x90'
     s = s.replace('‑', '-')  # utf8 b'\xe2\x80\x91'

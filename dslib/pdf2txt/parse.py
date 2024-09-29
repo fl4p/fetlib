@@ -13,7 +13,6 @@ from dslib.pdf2txt import expr, strip_no_print_latin, ocr_post_subs, whitespaces
     whitespaces_remove, normalize_text, ocr_strip_string
 from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline
 from dslib.pdf2txt.pipeline import convertapi, pdf2pdf
-from dslib.pdf2txt.tabular import NoTextInPdfError
 
 
 def _empty(s):
@@ -157,7 +156,7 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
                         print('    ^---^ ')
                         print('')
 
-                        if verbose == 'debug':
+                        if verbose: # == 'debug':
                             print('regexs for dim', field_sym[0])
                             for r in dim_regs_multiline[field_sym[0]]:
                                 print(field_sym, r.pattern.replace('"','\\"'))
@@ -341,7 +340,7 @@ def tabula_pdf_dataframes(pdf_path=None):
 
     dfs = []
 
-    from dslib.pdf2txt.tabular import tabula_browser
+    from dslib.pdf2txt.tabular import tabula_browser, NoTextInPdfError
 
     last_e = None
 

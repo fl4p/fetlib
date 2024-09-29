@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 
 from dslib import mfr_tag
-from dslib.fetch import download_with_chromium
+
 from dslib.field import parse_field_value, Field
 
 
@@ -124,6 +124,8 @@ class DiscoveredPart():
 
 
 async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], **kwargs):
+    from dslib.fetch import download_with_chromium
+
     os.makedirs('parts-lists/' + mfr, exist_ok=True)
     fn = datetime.datetime.now().strftime(f'parts-lists/{mfr}/mosfet-%Y-%m.{fn_ext}')
 

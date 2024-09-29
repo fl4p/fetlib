@@ -18,10 +18,10 @@ from pandas.core.generic import NDFrame
 
 from dslib import get_logger
 
-try:
-    from streamz.collection import Streaming
-except ImportError:
-    print('failed to import streamz module')
+#try:
+#    from streamz.collection import Streaming
+#except ImportError:
+#    print('failed to import streamz module')
 
 # from lib.data.util import concat, random_str
 # from lib.util import to_closed_time_range, setup_custom_logger, to_iso, timedelta_to_str

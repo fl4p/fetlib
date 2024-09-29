@@ -48,3 +48,7 @@ output.txt.txt
 /*.md/
 
 output-*
+
+
+
+__pycache__

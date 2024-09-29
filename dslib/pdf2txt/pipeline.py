@@ -3,7 +3,7 @@ import os
 import pathlib
 from typing import Literal, Union
 
-from ocrmypdf import hookimpl
+
 
 from dslib.cache import disk_cache
 
@@ -57,27 +57,6 @@ def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
             tarpage = target.new_page(width=pix.width, height=pix.height)
             tarpage.insert_image(tarpage.rect, stream=pix.pil_tobytes("PNG"))
         target.ez_save(out_path)  # targetname = parameter
-
-
-@hookimpl
-def rasterize_pdf_page(
-        input_file,
-        output_file,
-        raster_device,
-        raster_dpi,
-        pageno,
-        page_dpi,
-        rotation,
-        filter_vector,
-        stop_on_soft_error,
-):
-    raise NotImplemented()
-
-
-@hookimpl
-def add_options(parser):
-    print('')
-    pass
 
 
 @disk_cache(ttl='14d',

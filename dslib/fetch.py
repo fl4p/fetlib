@@ -8,7 +8,7 @@ import traceback
 from typing import Union, List
 
 import requests
-from pyppeteer.errors import PageError
+
 
 from dslib.cache import acquire_file_lock
 
@@ -83,13 +83,15 @@ def download(url, filename):
             fh.write(chunk)
 
 
-import pyppeteer
+
 
 browser_page = None
 browser = None
 
 
 async def get_browser_page():
+    import pyppeteer
+
     global browser, browser_page
     if browser is None:
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
@@ -117,6 +119,8 @@ _chromium_lock = asyncio.Lock()
 
 
 async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', close=False):
+    from pyppeteer.errors import PageError
+
     with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
         file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
 
