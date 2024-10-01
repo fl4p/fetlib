@@ -14,6 +14,8 @@ scale very good. Might want to use more lenient regex.
 import re
 from typing import Callable, List
 
+import regex
+
 from dslib import mfr_tag, dotdict
 from dslib.cache import mem_cache
 
@@ -300,9 +302,9 @@ def line_regex_variations(dim: Dimension):
     misc_ref = '[- \t_.,;:#*"\'()\[\]a-z0-9]'  # "see Figure 14; see Fig. 15", "(see Figure 14: "Test circuit for"
     annotations = '[- *.,()0-9]'
 
-    cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_\s][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
+    cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_ ][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
 
-    test_cond = (rf'(?P<cond_sym>{cond_sym})\s*=\s*'
+    test_cond = (rf'(?P<cond_sym>{cond_sym})\s*[=≈]\s*'
                  ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[-+*/]? *)+'
                  ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
                  )
@@ -314,7 +316,7 @@ def line_regex_variations(dim: Dimension):
     def rec(pat: str, flags):
         # texts are normalized (horizontal_whitespace -> ' ')
         pat = pat.replace(r'\s', ' ')
-        return re.compile(pat, flags=flags)
+        return regex.compile(pat, flags=flags)
 
     return [
         # datasheets/nxp/PSMN3R3-80BS,118.pdf
@@ -329,14 +331,15 @@ def line_regex_variations(dim: Dimension):
             re.IGNORECASE),
 
         rec((
+            # catastrophic BT
             rf'(?P<cond_mtmu>=name)?{head}\s*{misc_ref}*\s*\n'
-            rf'({test_conds_delim_ml}+{misc_ref}*\n'
+            rf'(?>{test_conds_delim_ml}+{misc_ref}*\n'
             '' rf'({misc_ref}+\n){{0,3}})?'
             rf'(?P<min>{rs.val_nan})\n'
             rf'(?P<typ>{rs.val_nan})\n'
             rf'(?P<max>{rs.val_nan})\n'
             rf'(?P<unit>{unit})(\n|$)'),
-            re.IGNORECASE
+            regex.IGNORECASE
         ),
 
         rec((
