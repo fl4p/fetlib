@@ -199,8 +199,9 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
                              source=[source_name, 'text']
                              ))  # vgs
     else:
-        if mfr:
-            print('no Qrr pattern for ', mfr)
+        pass
+        #if mfr:
+        #    print('no Qrr pattern for ', mfr)
 
     return fields
 

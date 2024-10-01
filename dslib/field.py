@@ -349,7 +349,7 @@ class DatasheetFields():
         return bool(self.fields_filled)
 
     def __getattr__(self, item) -> Field:
-        if item != 'fields_filled':
+        if item not in {'fields_filled','__getstate__'}:
             ff = getattr(self, 'fields_filled')
             if item in ff:
                 return ff[item]

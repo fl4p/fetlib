@@ -150,7 +150,7 @@ async def ti_mosfets():
         fn_ext='xlsx',
         click='ti-button.ti-selection-tool-action-bar-download')
 
-    df = pd.read_excel(fn, engine_kwargs=dict(data_only=False)).iloc[9:]
+    df = pd.read_excel(fn, engine='openpyxl', engine_kwargs=dict(data_only=False)).iloc[9:]
     df.columns = df.iloc[0]
     df = df.iloc[1:]
     df.to_csv(fn.replace('.xlsx', '.csv'), index=False)
@@ -183,7 +183,7 @@ async def infineon_mosfets():
         'https://www.infineon.com/cms/en/design-support/finder-selection-tools/product-finder/mosfet-finder/',
         fn_ext='xlsx',
         click='a[data-track-name="downloadLink"]',
-        close=True,
+        #close=True,
     )
 
     df = pd.read_excel(fn)

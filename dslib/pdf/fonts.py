@@ -16,6 +16,7 @@ from pdfminer.psparser import literal_name
 from dslib.cache import mem_cache, disk_cache
 
 
+@mem_cache(ttl='99h')
 def pdfminer_fix_custom_glyphs_encoding_monkeypatch():
     def PDFSimpleFont__init__2(
             self,

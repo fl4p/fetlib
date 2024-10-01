@@ -51,14 +51,15 @@ def move_low_voltage_datasheets(parts):
 def is_benchmark_part(part:DiscoveredPart):
     return (part.mfr, part.mpn) in benchmark_mpns() or (part.mfr, part.mpn2) in benchmark_mpns()
 
-if __name__ == '__main__':
 
-    parts = asyncio.run(discover_mosfets())
+async def main():
+    parts = await discover_mosfets()
 
     # move_low_voltage_datasheets(parts)
-    #exit(0)
+    # exit(0)
 
-    parts = [p for p in parts if (p.specs.Vds_max >= 60 and p.specs.Vds_max <= 200) or is_benchmark_part(p)] # 48V battery
+    parts = [p for p in parts if
+             (p.specs.Vds_max >= 60 and p.specs.Vds_max <= 200) or is_benchmark_part(p)]  # 48V battery
 
     download = [p for p in parts if not os.path.exists(p.get_ds_path()) and p.ds_url]
 
@@ -71,11 +72,8 @@ if __name__ == '__main__':
             os.rename('other-' + part.get_ds_path(), part.get_ds_path())
             continue
 
-        fetch_datasheet(part.ds_url, part.get_ds_path(), mfr=part.mfr, mpn=part.mpn)
+        await fetch_datasheet(part.ds_url, part.get_ds_path(), mfr=part.mfr, mpn=part.mpn)
 
-    from dslib.pdf2txt.parse import parse_datasheet
 
-    for part in parts:
-        if os.path.exists(part.get_ds_path()):
-            print(part.get_ds_path())
-            parse_datasheet(part.get_ds_path())
+if __name__ == '__main__':
+    asyncio.run(main())
