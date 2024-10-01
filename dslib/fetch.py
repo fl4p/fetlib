@@ -144,7 +144,7 @@ async def download_with_chromium(url, filename, click: Union[str, List[str]] = '
         try:
             os.path.isdir(dl_path) or os.makedirs(dl_path)
 
-            print('download folder', dl_path)
+            print(url, 'download folder', dl_path)
 
             page = await get_browser_page()
 

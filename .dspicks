@@ -1,0 +1,33 @@
+[dspicks]
+irf310=datasheets/infineon/IRFS3107TRLPBF.pdf
+
+;ipa29 wide spacing
+ipa29=datasheets/infineon/IPA029N06NXKSA1.pdf
+
+
+
+__=datasheets/littelfuse/IXFP110N15T2.pdf
+_=datasheets/onsemi/NTMFSC4D2N10MC.pdf
+fontName=datasheets/toshiba/TK35A08N1.pdf
+alotOfWS=datasheets/infineon/IPA050N10NM5SXKSA1.pdf
+cidFT2=datasheets/littelfuse/IXFH110N15T2.pdf.ocrmypdf_redo.pdf
+cidFT2_1=datasheets/littelfuse/IXFA180N10T2.pdf.gs.pdf
+
+exp=datasheets/infineon/BSL606SNH6327XTSA1.pdf
+ocr_scanned=datasheets/infineon/IRFP150NPBF.pdf.ocrmypdf_r400.pdf.cups.pdf
+ocr=datasheets/infineon/IPP100N08N3GXKSA1.pdf.r400_ocrmypdf.pdf
+
+in2n7=datasheets/infineon/2N7002DWH6327XTSA1.pdf
+on4d=datasheets/onsemi/NTMFSC4D2N10MC.pdf
+
+
+
+
+ixfp=datasheets/littelfuse/IXFP110N15T2.pdf
+
+; pdfminer review
+doubleChar=datasheets/vishay/SQM120N10-3M8_GE3.pdf
+
+
+; fontTroubles
+ft1=datasheets/infineon/IPF039N08NF2SATMA1.pdf

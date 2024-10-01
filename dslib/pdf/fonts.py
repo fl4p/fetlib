@@ -1,3 +1,4 @@
+import os
 import pathlib
 import subprocess
 import traceback
@@ -8,7 +9,7 @@ from typing import Mapping, Optional, Any, List, Dict
 import pymupdf
 from pdfminer.cmapdb import UnicodeMap, CMapParser, FileUnicodeMap
 from pdfminer.encodingdb import EncodingDB
-from pdfminer.pdffont import PDFSimpleFont, PDFFont, FontWidthDict, LITERAL_STANDARD_ENCODING, CFFFont
+from pdfminer.pdffont import PDFSimpleFont, PDFFont, FontWidthDict, LITERAL_STANDARD_ENCODING, CFFFont, TrueTypeFont
 from pdfminer.pdftypes import stream_value, list_value, resolve1
 from pdfminer.psparser import literal_name
 
@@ -32,7 +33,7 @@ def pdfminer_fix_custom_glyphs_encoding_monkeypatch():
         if isinstance(encoding, dict):
             name = literal_name(encoding.get("BaseEncoding", LITERAL_STANDARD_ENCODING))
             diff = list_value(encoding.get("Differences", []))
-            self.cid2glyph = diff # this is want we need
+            self.cid2glyph = diff  # this is want we need
             self.cid2unicode = EncodingDB.get_encoding(name, diff)
         else:
             self.cid2unicode = EncodingDB.get_encoding(literal_name(encoding))
@@ -46,10 +47,10 @@ def pdfminer_fix_custom_glyphs_encoding_monkeypatch():
 
     PDFSimpleFont.__init__ = PDFSimpleFont__init__2
 
-    #import pdfminer.encodingdb
-    #_name2unicode = pdfminer.encodingdb.name2unicode
+    # import pdfminer.encodingdb
+    # _name2unicode = pdfminer.encodingdb.name2unicode
 
-    #def name2unicode_new(s):
+    # def name2unicode_new(s):
     #    return _name2unicode(s)
 
 
@@ -71,23 +72,29 @@ def find_good_unicodes_for_name(name) -> List[int]:
     try:
         return [ord(unicodedata.lookup(name))]
     except LookupError:
-        from difflib import SequenceMatcher
-        def similar(a, b):
-            return SequenceMatcher(None, a.replace(' ', ''), b).ratio()
+        pass
 
-        print('looking for a good unicode name match for', repr(name), '..')
+    from difflib import SequenceMatcher
+    def similar(a, b):
+        return SequenceMatcher(None, a.replace(' ', ''), b).ratio()
 
-        name = name.upper().replace(' ', '')
-        names_ration = dict()
-        for n, u in unicode_names().items():
-            r = similar(n, name)
-            if r > 0.66:
-                names_ration[n] = r
+    print('looking for a good unicode name match for', repr(name), '..')
 
-        ranked = sorted(names_ration.items(), key=lambda x: x[1], reverse=True)
-        print('found unicode', ranked[0], 'for', name)
-        unames = unicode_names()
-        return list(unames[r[0]] for r in ranked)
+    name = name.upper().replace(' ', '')
+    names_ration = dict()
+    for n, u in unicode_names().items():
+        r = similar(n, name)
+        if r > 0.66:
+            names_ration[n] = r
+
+    if not names_ration:
+        print('no good unicode names found for %r' % name)
+        return list(range(0xE000, 0xF8FF))  # unicode private use area
+
+    ranked = sorted(names_ration.items(), key=lambda x: x[1], reverse=True)
+    print('found unicode', ranked[0], 'for', name)
+    unames = unicode_names()
+    return list(unames[r[0]] for r in ranked)
 
 
 class EmbeddedPdfFont():
@@ -108,11 +115,13 @@ class EmbeddedPdfFont():
     @property
     def path(self):
         assert self.ext != 'n/a', 'this font is not extractable'
-        return self.basefont + '.' + self.ext
+        pathlib.Path('data/out/fonts').mkdir(parents=True, exist_ok=True)
+        return 'data/out/fonts/' + self.basefont + '.' + self.ext
 
-    def css_import(self):
+    def css_import(self, doc_path):
         css_formats = dict(ttf='truetype', cff='opentype', otf='opentype')
-        return f" @font-face {{ font-family: '{self.basefont}'; src: url('{self.path}') format('{css_formats[self.ext]}'); }}\n"
+        p = os.path.relpath(self.path, doc_path)
+        return f" @font-face {{ font-family: '{self.basefont}'; src: url('{p}') format('{css_formats[self.ext]}'); }}\n"
 
     def decode_name(self, glyph_name):
         u = self.name2code_2[glyph_name]
@@ -123,12 +132,25 @@ class EmbeddedPdfFont():
 
     def probe_font(font):
 
-        if font.ext == 'cff':
-            with open(font.path, 'rb') as f:
-                cff = CFFFont(font.basefont, f)
-                assert cff
-                font.name2gid = {name.decode('utf-8') if isinstance(name, bytes) else name: gid for name, gid in cff.name2gid.items()}
-                font.gid2code = dict(cff.gid2code)
+        try:
+            if font.ext == 'cff':
+                with open(font.path, 'rb') as f:
+                    # capture custom encoding stored inside the PDF
+                    cff = CFFFont(font.basefont, f)
+                    assert cff
+                    font.name2gid = {name.decode('utf-8') if isinstance(name, bytes) else name: gid for name, gid in
+                                     cff.name2gid.items()}
+                    font.gid2code = dict(cff.gid2code)
+            elif font.ext == 'ttf':
+                with open(font.path, 'rb') as f:
+                    ttf = TrueTypeFont(font.basefont, f)
+                    # map_=ttf.create_unicode_map()
+                    assert ttf
+        except:
+            print('error reading font %s' % font.path)
+
+
+        probe_fail = False
         try:
             from fontTools import ttLib
             tt = ttLib.TTFont(font.path, checkChecksums=2, lazy=False)
@@ -137,8 +159,11 @@ class EmbeddedPdfFont():
             tt.close()
         except Exception as e:
             print(font, 'probing font file failed', e, '; trying to convert the file to .otf ...')
-            try:
-                converted_path = font.basefont + '.otf'  # .otf= opentype(CFF)
+            probe_fail = True
+
+        try:
+            if probe_fail:
+                converted_path = font.path[:-len(font.ext)] + 'otf'  # .otf= opentype(CFF)
                 convert_cff(in_path=font.path, out_path=converted_path)
                 assert os.path.isfile(converted_path)
 
@@ -147,21 +172,27 @@ class EmbeddedPdfFont():
                 best_cmap_inv = dict(((i[1], i[0]) for i in tt.getBestCmap().items()))
 
                 for t in tt.get('cmap').tables:
+                    if not t.cmap:
+                        print(font, 'empty cmap, format', t.format)
                     tv = set(t.cmap.values())
                     tk = set(t.cmap.keys())
                     for gn in tt.getGlyphOrder():
                         if gn in tv or gn == '.notdef':
                             continue
-                        u = EmbeddedPdfFont.glyph_unicode(tk, gn, best_cmap_inv)
+                        gid = tt.getGlyphID(gn)
+                        u = EmbeddedPdfFont.glyph_unicode(tk, gn, gid, best_cmap_inv)
 
                         if t.format == 0 and u > 255:
                             # ascii
                             continue
 
                         if u != 0:
+                            assert u not in t.cmap, (u, gn)
                             t.cmap[u] = gn
+                            tk.add(u)
                             print(font, 'add cmap for glyph %s#%d at code point %u (0x%02x) [%s] %s' % (
-                                repr(gn), tt.getGlyphID(gn), u, u, unicodedata.name(chr(u)), repr(chr(u))))
+                                repr(gn), tt.getGlyphID(gn), u, u, unicodedata.name(chr(u), '<no such name>'),
+                                repr(chr(u))))
 
                         else:
                             print(font, 'cant find unicode for glyph name %s' % repr(gn))
@@ -179,23 +210,34 @@ class EmbeddedPdfFont():
                         font.gid2code_2[gi] = u
                         font.name2code_2[gn] = u
 
-                print(font, 'conversion successful', converted_path, len(tt.getGlyphNames()), 'glyphs', tt.getGlyphNames()[:5])
                 tt.save(converted_path)
                 tt.close()
+                print(font, 'conversion successful', converted_path, len(tt.getGlyphNames()), 'glyphs',
+                      tt.getGlyphNames()[:5])
                 font.ext = 'otf'
-            except:
-                print(traceback.format_exc())
-                os.remove(font.path)
+        except (KeyboardInterrupt, TimeoutError, NameError, AttributeError):
+            raise
+        except:
+            print(traceback.format_exc())
+            os.remove(font.path)
 
     def __str__(self):
         return f'{self.basefont} {self.ext} {self.typ} {self.name} {self.enc}'
 
     @staticmethod
-    def glyph_unicode(table_keys, glyph_name: str, best_cmap_inv: Dict[str, int]):
-        if glyph_name[0] == 'C' and glyph_name[1:].isnumeric():
-            u = int(glyph_name[1:], 10)
-            assert u not in table_keys
-            return u
+    def glyph_unicode(table_keys, glyph_name: str, gid: int, best_cmap_inv: Dict[str, int]):
+
+        for prefix in ('C', 'glyph', 'G'):
+            if glyph_name.startswith(prefix) and glyph_name[len(prefix):].isnumeric():
+                u = int(glyph_name[len(prefix):], 10)
+                assert u not in table_keys
+                return u
+
+        #if glyph_name.startswith('glyph') and glyph_name[5:].isnumeric():
+        #    u = int(glyph_name[5:], 10)
+         #   assert u == gid, (glyph_name, u, gid)
+         #   assert u not in table_keys
+         #   return u
 
         if glyph_name in best_cmap_inv:
             u = best_cmap_inv[glyph_name]
@@ -211,10 +253,10 @@ class EmbeddedPdfFont():
 
 
 class PdfFonts():
-    def css(self):
+    def css(self, doc_path):
         css = ''
         for font in self.fonts:
-            css += font.css_import()
+            css += font.css_import(doc_path)
         return css
 
     def cid_map(self):
@@ -238,7 +280,6 @@ class PdfFonts():
         pdf = pymupdf.open(pdf_path)
         emb_fonts = sorted(set(sum((pdf.get_page_fonts(pno) for pno in range(len(pdf))), [])))
 
-
         font_objs = []
         for (xref, ext, typ, basefont, name_, enc) in emb_fonts:
             if '/' in ext:
@@ -256,3 +297,39 @@ class PdfFonts():
             font_objs.append(font)
 
         self.fonts = font_objs
+
+    @property
+    def font_map(self):
+        m = {}
+        for at in (
+                'basefont', 'name',
+                lambda f: ''.join(f.basefont.split('+')[1:2]).split('-')[0],
+                lambda f: f.basefont.split('-')[0],
+        ):
+            for f in self.fonts:
+                if isinstance(at, str):
+                    n = getattr(f, at)
+                else:
+                    n = at(f)
+                if n not in m:
+                    m[n] = f
+        return m
+
+
+@mem_cache(ttl='5min', synchronized=True)
+@disk_cache(ttl='99d')
+def get_font_default_enc(fontname) -> Dict[int, int]:
+    if fontname == 'Symbol':
+        import requests
+        url = 'https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt'
+        print('fetching', url)
+        tsv = requests.get(url).text
+        codes = list(filter(bool, map(lambda s: s.split('#')[0].strip(), tsv.split('\n'))))
+        codepoints = map(lambda l: list(map(lambda s: int(s, 16), l.split('\t'))), codes)
+        return dict(map(reversed, codepoints))
+
+        # https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt
+
+
+if __name__ == '__main__':
+    assert chr(get_font_default_enc('Symbol')[ord('W')]) == 'Ω'

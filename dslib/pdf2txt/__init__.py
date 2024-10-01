@@ -1,5 +1,6 @@
 import re
 import unicodedata
+import warnings
 
 import unidecode
 
@@ -23,6 +24,8 @@ no_print_latin_greek = re.compile('[^\s'
 hyphens = re.compile('[\u2010-\u2015]')  # HYPHEN-HORIZONTAL BAR
 # single_quotes = re.compile('[\u2018-\u201B]')
 _whitespaces = re.compile('\s+', re.MULTILINE)
+
+CONTROL = re.compile("[\x00-\x08\x0b-\x0c\x0e-\x1f]")
 
 
 def patch_unidecode():
@@ -73,7 +76,7 @@ def custom_subs(s: str):
 
 #@deprecated.deprecated
 def normalize_dash(s: str) -> str:
-    raise NotImplementedError("deprecated")
+    warnings.warn("deprecated")
 
     s = s.replace(' ', ' ')
     s = s.replace('‐', '-')  # utf8 b'\xe2\x80\x90'

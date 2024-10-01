@@ -64,7 +64,7 @@ def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
                 0,
                 '../../tesseract-stuff/tesseract.cfg',
                 '../../tesseract-stuff/mosfet.user-words',
-                '../../ocrmypdf_plugins.py',
+                '../../dslib/ocr/hooks_ocrmypdf.py',
             ],
             out_files=[1],
             salt='v03')
@@ -107,7 +107,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
             progress_bar=True,
             max_image_mpixels=500,  # 250 default
             # pages='1,2-4',
-            plugins=pwd + '/ocrmypdf_plugins.py',
+            plugins=pwd + '/dslib/ocr/hooks_ocrmypdf.py',
         )
     except Exception as e:
         if try_decrypt and ('is encrypted' in str(e) or isinstance(e, ocrmypdf_.EncryptedPdfError)):

@@ -31,14 +31,21 @@ def test_strip_no_print_latin():
     assert strip_no_print_latin('μ') == 'μ'
     assert unidecode.unidecode('μ', errors='preserve') == 'μ'
 
+    assert strip_no_print_latin('≈') == '≈'
+
 
 def test_unidecode():
     # assert unidecode.unidecode('°') == 'deg'
     patch_unidecode()
     assert unidecode.unidecode('°') == '°'
+    assert unidecode.unidecode('≈') == '≈'
 
 def test_normalize_dash_and_new():
     s = '°!"§$%&/())))=?`*\'_:;'
     s += 'ƒ‐ ‑ − – —'
     s += '-+\s=≈/a-z0-9.,;:μΩ°(){}"\'<>'
     assert normalize_dash(s) == normalize_text(s)
+
+def test_normalize_text():
+    s = '≈μ°'
+    assert normalize_text(s) == s

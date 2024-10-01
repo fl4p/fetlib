@@ -121,7 +121,7 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
                         return False
 
                 def is_list(lines: List[str]):
-                    syms = {"Qgs","Qgs1","Qgd","Qsw","Qoss","trr","Qrr","Vdsf","Qgodr"}
+                    syms = {"Qgs", "Qgs1", "Qgd", "Qsw", "Qoss", "trr", "Qrr", "Vdsf", "Qgodr"}
                     if len(lines) <= 3:
                         return False
                     nns = (
@@ -134,7 +134,7 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
 
                     lines = list(filter(bool, lines))
 
-                    if len(set(s[:1] for s in lines)) / (len(lines) - 2)  <= 0.4:
+                    if len(set(s[:1] for s in lines)) / (len(lines) - 2) <= 0.4:
                         return True
 
                     if len({'0.1', '1', '10', '100', '100'} - set(lines)) == 0:
@@ -156,10 +156,10 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
                         print('    ^---^ ')
                         print('')
 
-                        if verbose: # == 'debug':
+                        if verbose == 'debug':
                             print('regexs for dim', field_sym[0])
                             for r in dim_regs_multiline[field_sym[0]]:
-                                print(field_sym, r.pattern.replace('"','\\"'))
+                                print(field_sym, r.pattern.replace('"', '\\"'))
                             print('')
 
         i += 1
@@ -419,7 +419,15 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
 
     for r in regs:
         # print(csv_line, dim , r.pattern)
-        m: re.Match = next(r.finditer(s), None)
+        try:
+            # print(r.pattern.replace('\'', '\\\''),'\non\n', repr(s),'..')
+            m: re.Match = next(r.finditer(s), None)
+            # print('..done.')
+        except:
+            print(traceback.format_exc())
+            print("finding '%s' in %r" % (r.pattern.replace('\'', '\\\''), s))
+            raise
+
         # print('done.')
         if m is None:
             continue
@@ -434,7 +442,8 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
                 stop = True
                 break
             if sw in m[0]:
-                warnings.warn(f'parsing {field_sym}: stop word `{sw}` in match `{m[0]}` but not in head `{head}`, ignoring')
+                warnings.warn(
+                    f'parsing {field_sym}: stop word `{sw}` in match `{m[0]}` but not in head `{head}`, ignoring')
 
         if stop:
             continue

@@ -52,3 +52,8 @@ output-*
 
 
 __pycache__
+
+*.ttf
+*.woff
+*.cff
+*.otf

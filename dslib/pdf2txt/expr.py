@@ -484,7 +484,7 @@ def line_regex_variations(dim: Dimension):
 DIMENSIONS = dotdict(
     t=Dimension(
         head_regex=r'(time|[tf][_\s]?[rf]?)',
-        unit_regex=r'[uμnm]s',
+        unit_regex=r'([uμnm]s|㎱|㎲|㎳)',
         signed=False,
     ),
     C=Dimension(
