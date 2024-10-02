@@ -1,17 +1,155 @@
 import unicodedata
 import warnings
 from collections import defaultdict
-from typing import List, Dict, Sequence
+from typing import List, Dict, Sequence, Iterable
 
 import pdfminer
 import pymupdf
 from pdfminer.layout import LAParams, LTTextBox, LTTextLine, LTAnno, LTImage, LTCurve, LTChar, \
-    LTTextLineHorizontal, LTLine
+    LTTextLineHorizontal
 from pdfminer.pdffont import PDFType1Font, PDFCIDFont
 from pdfminer.pdfinterp import PDFPageInterpreter
 from pdfminer.utils import get_bound, Rect, Matrix, MATRIX_IDENTITY
 
-from dslib.pdf.fonts import get_font_default_enc
+from dslib.pdf.fonts import get_font_default_enc, is_symbol_font, EmbeddedPdfFont
+
+
+def bbox_union(bbox1, bbox2=None):
+    if bbox2 is None:
+        return bbox_union_list(bbox1)
+
+    ret = (
+        min(bbox1[0], bbox2[0]),
+        min(bbox1[1], bbox2[1]),
+        max(bbox1[2], bbox2[2]),
+        max(bbox1[3], bbox2[3]),
+    )
+    return ret
+
+
+def bbox_union_list(bbox: Iterable[tuple]):
+    assert isinstance(bbox, list)
+    ret = (
+        min(b[0] for b in bbox),
+        min(b[1] for b in bbox),
+        max(b[2] for b in bbox),
+        max(b[3] for b in bbox),
+    )
+    return ret
+
+
+def has_custom_embed_enc(c, fontname, fonts_enc):
+    if (fontname in fonts_enc) and hasattr(fonts_enc[fontname], 'cid2glyph') and fonts_enc[
+        fontname].cid2glyph:
+        u = ord(c)
+        m = fonts_enc[fontname].cid2glyph
+        if u < len(m) and m[u] != u:
+            return True
+    return False
+
+
+class Char:
+
+    def __init__(self, c: str, fontname):
+        self.c = c
+        self.fontname = fontname
+        self.cid = 0
+        self.gn = None  # glyph name
+        self.u = None  # unicode
+        self.span_font = None  # need a font for display (CID)
+
+    def decode(self, line, fonts: EmbeddedPdfFont, fonts_enc):
+        c = self.c
+
+        if len(c) not in {1, 2}:
+            # import pdfminer.converter
+            # see converter.py @ handle_undefined_char
+            #
+            assert c.startswith('(cid:') and c.endswith(')'), (c, repr(line.get_text()))
+            cid = int(c[5:-1])
+            assert cid > 0
+            self.cid = cid
+            c = self.decode_cid_char(cid, fonts, fonts_enc)  # this can update.self.fontname
+            # now we should use a font span
+
+        fontname = self.fontname  # decode_cid_char() can unset fontname
+
+        if not has_custom_embed_enc(c, fontname, fonts_enc) and try_decode_to_unicode(c, fontname):
+            c = try_decode_to_unicode(c, fontname)
+            self.fontname = None
+            self.span_font = None
+
+        else:
+            if c in {'\x02'}:  # infineon
+                c = ' '  # <\\x2>' # TODO
+            if not (c.isprintable() or c.isspace()):
+                if fontname and is_symbol_font(fontname, fonts[fontname], fonts_enc[fontname]):
+                    # c = hex(ord(c)).replace('0x', '\\u')
+                    if isinstance(fonts_enc[fontname], PDFCIDFont):
+                        # TODO for some reason need to un-do the CID resolution
+                        u2cid = {v: k for k, v in fonts_enc[fontname].unicode_map.cid2unichr.items()}
+                        c = chr(u2cid[c]) if u2cid[c] else c
+                    c = c
+                else:
+                    print('in line %r' % line.get_text())
+                    raise ValueError('not printable %r (%d, 0x%02x, %s) with font %s in line %r' % (
+                        c, ord(c), ord(c), unicodedata.name(c, '?'), fontname, line.get_text()))
+
+        # assert len(c) == 1, repr(c)
+        assert c not in {'\t', '\r'}, "char is %s" % repr(c)
+        assert not c.isspace() or c in {' ', '\n'}, "char is space %r %s within %r" % (
+            c, unicodedata.name(c, '?'), line.get_text())
+
+        if c in {'\x02'}:
+            warnings.warn('char %s in %s' % (c, repr(line.get_text())))
+
+        return c
+
+    def decode_cid_char(self, cid, fonts, fonts_enc):
+        fontname = self.fontname
+
+        if fontname not in fonts_enc:
+            raise ValueError(fontname)
+
+        font = fonts_enc[fontname]
+        if isinstance(font, PDFType1Font):
+            if hasattr(font, 'cid2glyph'):
+                glyph = font.cid2glyph[cid - 1]
+                self.gn = glyph.name
+                u = fonts[fontname].decode_name(glyph.name)
+                self.u = u
+                # gid2code_2[5]
+                if u in font.cid2unicode:
+                    c = font.cid2unicode[u]  # or just chr ?
+                else:
+                    c = chr(u)
+                    # c = fonts[fontname].gid2code_2[u] # TODO is this
+            else:
+                print('font has no cid2glyph')
+                raise NotImplementedError()
+        else:
+            raise NotImplementedError(
+                "decoding_cid_char(%s) not implemented for this font type %s" % (cid, type(font)))
+
+        uc = not has_custom_embed_enc(c, fontname, fonts_enc) and try_decode_to_unicode(c, fontname)
+        if uc:
+            # yay this way we dont need that font for displays !
+            self.fontname = None
+            return uc
+
+        if is_symbol_font(fontname, fonts[fontname], fonts_enc):
+            self.span_font = fonts[fontname].basefont if fontname in fonts else fontname
+
+        return c
+
+    def html_span(self, c):
+        assert self.span_font
+        kwargs = dict(cid=self.cid, u=self.u, gn=self.gn)
+        data_attr = ' '.join(f'data-{k}="{v}"' for k, v in kwargs.items() if v is not None)
+        return f'<span style="font-family:\'{self.span_font}\'" {data_attr}>{c.replace("<", "&lt;")}</span>'
+
+    def get(self):
+        return self.c
 
 
 class Word:
@@ -25,23 +163,6 @@ class Word:
 
     def __str__(self):
         return self.s
-
-
-def bbox_union(bbox1, bbox2):
-    ref = get_bound([
-        (bbox1[0], bbox1[1]),
-        (bbox1[2], bbox1[3]),
-        (bbox2[0], bbox2[1]),
-        (bbox2[2], bbox2[3]),
-    ])
-    ret = (
-        min(bbox1[0], bbox2[0]),
-        min(bbox1[1], bbox2[1]),
-        max(bbox1[2], bbox2[2]),
-        max(bbox1[3], bbox2[3]),
-    )
-    assert ref == ret
-    return ret
 
 
 class Line:
@@ -106,6 +227,7 @@ class Block:
 
 
 def pdf_blocks_pymupdf(pdf_path) -> List[Block]:
+    # pymupdf has no control over block/line/word agg params
     all_blocks = []
 
     pdf = pymupdf.open(pdf_path)
@@ -118,37 +240,10 @@ def pdf_blocks_pymupdf(pdf_path) -> List[Block]:
     return all_blocks
 
 
-def is_symbol_font(basefont: str, font: 'EmbeddedPdfFont', font_pdf: pdfminer.pdffont.PDFFont = None) -> bool:
-    if 'Symbol' in basefont:
-        return True
-
-    if 'Wingdings' in basefont or 'Webdings' in basefont or 'Dingbats' in basefont or 'Emoji' in basefont:
-        return True
-
-    if font and font.gid2code:
-        return True
-
-    if 'Arial' in basefont:
-        return False
-
-    if 'EUDC' in basefont:
-        return True
-
-    return False
-
-
-def remove_whitespaces(obj: object):
-    try:
-        iter(obj)
-    except:
-        return  # raise
-    for sub in obj:
-        remove_whitespaces(sub)
-
-
-class PDFPageInterpreter_NOWS(PDFPageInterpreter):
+class PDFPageInterpreter_NO_WS(PDFPageInterpreter):
 
     # TODO write test for this
+    # noinspection PyUnresolvedReferences
     def render_contents(
             self,
             resources: Dict[object, object],
@@ -166,8 +261,18 @@ class PDFPageInterpreter_NOWS(PDFPageInterpreter):
         return r
 
 
-def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'EmbeddedPdfFont']) -> Dict[
-    int, List[Block]]:
+def try_decode_to_unicode(c, fontname):
+    if fontname is None:
+        return None
+    enc = get_font_default_enc(fontname)
+    if enc:
+        u = enc.get(ord(c))
+        if u:
+            return chr(u)
+
+
+def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'EmbeddedPdfFont'], html_spans=False) -> \
+        Dict[int, List[Block]]:
     fp = open(pdf_path, 'rb')
     from pdfminer.pdfinterp import PDFResourceManager
     from pdfminer.converter import PDFPageAggregator
@@ -175,19 +280,16 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
 
     rsrcmgr = PDFResourceManager()
     device = PDFPageAggregator(rsrcmgr, laparams=laparams)
-    interpreter = PDFPageInterpreter_NOWS(rsrcmgr, device)
+    interpreter = PDFPageInterpreter_NO_WS(rsrcmgr, device)
     pages = PDFPage.get_pages(fp)
-
-    # interpreter.fontmap
 
     blocks = defaultdict(list)
     page_no = 0
     page_block_cnt = 0
 
-    INF = pdfminer.utils.INF
+    inf_ = pdfminer.utils.INF
 
     for page in pages:
-        remove_whitespaces(page)
         interpreter.process_page(page)
         # print(page.pageid, page.cropbox, page.mediabox)
 
@@ -195,43 +297,10 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
 
         # TODO pdfminer how to access fonts, open discussion
         for fid, f in rsrcmgr._cached_fonts.items():
+            # noinspection PyUnresolvedReferences
             if f.fontname not in fonts and hasattr(f, 'basefont') and f.basefont in fonts:
                 fonts[f.fontname] = fonts[f.basefont]
             fonts_enc[f.fontname] = f
-
-        def font_span(s, font_family, **kwargs):
-            font_family = fonts[font_family].basefont if font_family in fonts else font_family
-            data_attr = ' '.join(f'data-{k}="{v}"' for k, v in kwargs.items())
-            return f'<span style="font-family:\'{font_family}\'" {data_attr}>{s.replace("<", "&lt;")}</span>'
-
-        def decode_cid_char(cid, fontname):
-            if fontname not in fonts_enc:
-                raise ValueError(fontname)
-
-            font = fonts_enc[fontname]
-            if isinstance(font, PDFType1Font):
-                if hasattr(font, 'cid2glyph'):
-                    glyph = font.cid2glyph[cid - 1]
-                    gn = glyph.name
-                    u = fonts[fontname].decode_name(glyph.name)
-                    # gid2code_2[5]
-                    if u in font.cid2unicode:
-                        c = font.cid2unicode[u]  # or just chr ?
-                    else:
-                        c = chr(u)
-                        #c = fonts[fontname].gid2code_2[u] # TODO is this
-                else:
-                    print('font has no cid2glyph')
-                    raise NotImplementedError()
-            else:
-                raise NotImplementedError(
-                    "decoding_cid_char(%s) not implemented for this font type %s" % (cid, type(font)))
-
-            return font_span(c, fontname, cid=cid, u=u, gn=gn)
-
-            # TODO render the CID with the given font, maybe find the name?
-            # or use OCR to translate to unicode tech symbol? Ohm, mu , etc.
-            # ref: https://www.helpandmanual.com/help/hm_working_pdf_cid.html
 
         def _traverse(lobj):
             nonlocal page_block_cnt
@@ -245,7 +314,7 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
 
                 for line in lobj:
                     height = line.bbox[3] - line.bbox[1]
-                    if height < 0.1:
+                    if height < 0.1:  # invisible lines
                         return
 
                     line: LTTextLine
@@ -259,48 +328,12 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
                     for ch in line._objs:
                         c = ch.get_text()
 
-                        if len(c) not in {1, 2}:
-                            # import pdfminer.converter
-                            # see converter.py @ handle_undefined_char
-                            #
-                            assert c.startswith('(cid:') and c.endswith(')'), (c, repr(line.get_text()))
-                            cid = int(c[5:-1])
-                            c = decode_cid_char(cid, ch.fontname)
+                        if not isinstance(ch, LTAnno):
+                            char = Char(c, ch.fontname)
+                            c = char.decode(line, fonts, fonts_enc)
 
-                        if c in {'\x02'}:  # infineon
-                            c = ' '  # <\\x2>' # TODO
-
-                        # assert len(c) == 1, repr(c)
-                        assert c not in {'\t', '\r'}, "char is %s" % repr(c)
-                        assert not c.isspace() or c in {' ', '\n'}, "char is %s" % repr(c)
-
-                        if not isinstance(ch, LTAnno) and ch.fontname not in fonts and get_font_default_enc(ch.fontname):
-                            enc = get_font_default_enc(ch.fontname)
-                            if enc:
-                                u = enc.get(ord(c))
-                                if u:
-                                    c = chr(u)
-
-                        elif not (c.isprintable() or c.isspace()):
-                            # print(repr(c), repr(line.get_text()), ch.fontname)
-                            if ch.fontname and is_symbol_font(ch.fontname, fonts[ch.fontname], fonts_enc[ch.fontname]):
-                                # c = hex(ord(c)).replace('0x', '\\u')
-                                if isinstance(fonts_enc[ch.fontname], PDFCIDFont):
-                                    # TODO for some reason need to un-do the CID resolution
-                                    u2cid = {v: k for k, v in fonts_enc[ch.fontname].unicode_map.cid2unichr.items()}
-                                    c = chr(u2cid[c]) if u2cid[c] else c
-                                c = c
-                            else:
-                                print('in line %r' % line.get_text())
-                                raise ValueError('not printable %r (%d, 0x%02x, %s) with font %s' % (
-                                    c, ord(c), ord(c), unicodedata.name(c, '?'), ch.fontname))
-
-                        if c in {'\x02'}:
-                            warnings.warn('char %s in %s' % (c, repr(line.get_text())))
-
-                        if len(c) == 1 and not isinstance(ch, LTAnno):
-                            if is_symbol_font(ch.fontname, fonts.get(ch.fontname), fonts_enc.get(ch.fontname)):
-                                c = font_span(c, ch.fontname)
+                            if html_spans and char.span_font:
+                                c = char.html_span(c)
 
                         if c == ' ' or c == '\n':
                             if c == '\n':
@@ -312,14 +345,15 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
                                 word_pts.clear()
                             else:
                                 pass
-                                # raise ValueError('empty word?')
+
                         else:
                             if ch.fontname == 'unknown':
                                 print('warning', page.pageid, lobj.index, 'unknown font for char', c)
 
                             # assert c.isprintable()
-                            if max(ch.bbox) >= INF or min(ch.bbox) <= -INF:
+                            if max(ch.bbox) >= inf_ or min(ch.bbox) <= -inf_:
                                 print(c, 'has infinite bbox')
+
                             word_pts.append((ch.bbox[0], ch.bbox[1]))
                             word_pts.append((ch.bbox[2], ch.bbox[3]))
                             word_text += c
@@ -386,9 +420,10 @@ def vertical_merge(elements, ):
     i = 1
     while i < len(elements):
         el = elements[i]
-        dy = m_el.bbox[1] - el.bbox[1]
-        h = min(m_el.bbox[3]-m_el.bbox[1],el.bbox [3]- el.bbox[1])
-        if abs(dy) < h/10: #y_max / 600:  # param: merge line threshold
+        assert el.bbox[1] < el.bbox[3]
+        dy = min(m_el.bbox[1] - el.bbox[1], m_el.bbox[3] - el.bbox[3])
+        h = min(m_el.bbox[3] - m_el.bbox[1], el.bbox[3] - el.bbox[1])
+        if abs(dy) < h / 10:  # y_max / 600:  # param: merge line threshold
             # same line
             m_el += elements.pop(i)
         else:

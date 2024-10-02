@@ -6,6 +6,7 @@ import unicodedata
 from io import BytesIO
 from typing import Mapping, Optional, Any, List, Dict
 
+import pdfminer
 import pymupdf
 from pdfminer.cmapdb import UnicodeMap, CMapParser, FileUnicodeMap
 from pdfminer.encodingdb import EncodingDB
@@ -34,7 +35,7 @@ def pdfminer_fix_custom_glyphs_encoding_monkeypatch():
         if isinstance(encoding, dict):
             name = literal_name(encoding.get("BaseEncoding", LITERAL_STANDARD_ENCODING))
             diff = list_value(encoding.get("Differences", []))
-            self.cid2glyph = diff  # this is want we need
+            self.cid2glyph = diff  # this is want we need (custom encoding) TODO rename?
             self.cid2unicode = EncodingDB.get_encoding(name, diff)
         else:
             self.cid2unicode = EncodingDB.get_encoding(literal_name(encoding))
@@ -114,6 +115,20 @@ class EmbeddedPdfFont():
         self.name2code_2 = {}
 
     @property
+    def is_cid(self):
+        raise NotImplementedError()
+
+    @property
+    def has_custom_encoding(self):
+        return self.enc == ''
+
+    def is_embedded(self):
+        return self.ext != 'n/a'
+
+    def is_unicode(self):
+        raise NotImplementedError()
+
+    @property
     def path(self):
         assert self.ext != 'n/a', 'this font is not extractable'
         pathlib.Path('data/out/fonts').mkdir(parents=True, exist_ok=True)
@@ -149,7 +164,6 @@ class EmbeddedPdfFont():
                     assert ttf
         except:
             print('error reading font %s' % font.path)
-
 
         probe_fail = False
         try:
@@ -234,11 +248,11 @@ class EmbeddedPdfFont():
                 assert u not in table_keys
                 return u
 
-        #if glyph_name.startswith('glyph') and glyph_name[5:].isnumeric():
+        # if glyph_name.startswith('glyph') and glyph_name[5:].isnumeric():
         #    u = int(glyph_name[5:], 10)
-         #   assert u == gid, (glyph_name, u, gid)
-         #   assert u not in table_keys
-         #   return u
+        #   assert u == gid, (glyph_name, u, gid)
+        #   assert u not in table_keys
+        #   return u
 
         if glyph_name in best_cmap_inv:
             u = best_cmap_inv[glyph_name]
@@ -318,19 +332,42 @@ class PdfFonts():
 
 
 @mem_cache(ttl='5min', synchronized=True)
-@disk_cache(ttl='99d')
+@disk_cache(ttl='99d', hash_func_code=True)
 def get_font_default_enc(fontname) -> Dict[int, int]:
-    if fontname == 'Symbol':
+    def parse_tsv(tsv):
+        return list(filter(bool, map(lambda s: s.split('#')[0].strip(), tsv.split('\n'))))
+
+    if fontname == 'Symbol': # or '+Symbol' in fontname:
         import requests
         url = 'https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt'
         print('fetching', url)
         tsv = requests.get(url).text
-        codes = list(filter(bool, map(lambda s: s.split('#')[0].strip(), tsv.split('\n'))))
+        codes = parse_tsv(tsv)
         codepoints = map(lambda l: list(map(lambda s: int(s, 16), l.split('\t'))), codes)
         return dict(map(reversed, codepoints))
 
+    if 'Wingdings' in fontname:
+        tsv = pathlib.Path(__file__).parent.joinpath('unicode_mappings').joinpath('Wingdings.txt').read_text()
+        codes = parse_tsv(tsv)
+        codepoints = map(lambda l: list(map(lambda s: int(s, 10), l.split('\t'))), codes)
+        return dict(codepoints)
         # https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt
 
 
-if __name__ == '__main__':
-    assert chr(get_font_default_enc('Symbol')[ord('W')]) == 'Ω'
+def is_symbol_font(basefont: str, font: 'EmbeddedPdfFont', font_pdf: pdfminer.pdffont.PDFFont = None) -> bool:
+    if 'Symbol' in basefont:
+        return True
+
+    if 'Wingdings' in basefont or 'Webdings' in basefont or 'Dingbats' in basefont or 'Emoji' in basefont:
+        return True
+
+    if font and font.gid2code:
+        return True
+
+    if 'Arial' in basefont:
+        return False
+
+    if 'EUDC' in basefont:
+        return True
+
+    return False

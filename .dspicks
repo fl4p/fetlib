@@ -1,4 +1,6 @@
 [dspicks]
+rohm=datasheets/rohm/RS6P100BHTB1.pdf
+
 irf310=datasheets/infineon/IRFS3107TRLPBF.pdf
 
 ;ipa29 wide spacing
@@ -31,3 +33,18 @@ doubleChar=datasheets/vishay/SQM120N10-3M8_GE3.pdf
 
 ; fontTroubles
 ft1=datasheets/infineon/IPF039N08NF2SATMA1.pdf
+
+
+
+; backfill units
+; datasheets/infineon/IRFP3710PBF.pdf
+; datasheets/vishay/SQJ184EP-T1_GE3.pdf
+; datasheets/infineon/IRFP150NPBF.pdf
+; BSC146N10LS5ATMA1.pdf
+; RS6P100BHTB1.pdf.cups.pdf
+
+; ffill symbol
+; IPP048N12N3GXKSA1.pdf.r400.pdf
+
+; ffill symbol with unseperated/confusing conditions
+; BSC146N10LS5ATMA1.pdf

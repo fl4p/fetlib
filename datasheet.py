@@ -9,31 +9,14 @@ import sys
 import traceback
 from typing import Literal
 
-import pathlib
 import pymupdf
 
 from dslib.pdf2txt import normalize_text, whitespaces_to_space
 from dslib.pdf2txt.parse import extract_text
+from dslib.util import open_file_with_default_app, unique_stable
 
 
 # from dslib.pdf2txt.parse import extract_text
-
-
-def open_file_with_default_app(filepath):
-    import subprocess, os, platform
-    if platform.system() == 'Darwin':  # macOS
-        subprocess.call(('open', filepath))
-    elif platform.system() == 'Windows':  # Windows
-        os.startfile(filepath)
-    else:  # linux variants
-        subprocess.call(('xdg-open', filepath))
-
-
-def unique_stable(l, pop_none=False):
-    d = dict(zip(l, l))
-    if pop_none:
-        d.pop(None, None)
-    return list(d.keys())
 
 
 async def main():
@@ -106,7 +89,7 @@ async def main():
     elif args.command == 'html':
 
         from dslib.pdf.to_html import pdf_to_html
-        html_path = pdf_to_html(ds_path, merge_lines=False)
+        html_path = pdf_to_html(ds_path, merge_lines=True)
         open_file_with_default_app(html_path)
 
     elif args.command == 'html-pm':
