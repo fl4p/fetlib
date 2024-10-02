@@ -13,3 +13,12 @@ ocrmypdf
 #pdfminer.six>=20240706
 
 img2table
+
+pytest
+
+timeout-decorator
+
+xlrd>=2
+openpyxl>=3
+
+pdfminer.six
