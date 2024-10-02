@@ -2,6 +2,32 @@ import math
 
 test_stream_todo = """
 
+Qgs
+Test Condition
+VDD ≈ 40 V, VGS = 10 V, ID = 35 A
+-
+77
+100
+nC
+>Qgs=(n,77,100)
+
+
+Total Gate Charge at 10 V
+VDS = 75 V, ID = 100 A, VGS = 10 V
+(Note 4)
+-
+77
+100
+nC
+Qgs
+Gate to Source Gate Charge
+-
+26
+-
+> Qgs=(n,77,100)
+
+
+
 Total Gate Charge Sync. (Qg - Qgd)
 ---
 275
@@ -340,7 +366,7 @@ Reverse Recovery Current
 """
 
 
-def test_from_stream():
+def test_cases_from_stream():
     for case in test_stream.split('\n\n\n'):
         lines = [s.strip() for s in case.split('\n')]
         if len(list(filter(lambda s: s and not s.startswith('#'), lines))) == 0:
@@ -353,8 +379,13 @@ def test_from_stream():
 
         lines = list(filter(lambda s: not s or s[0] != '>', lines))
         ds = extract_fields_from_text('\n'.join(lines), 'any', verbose='debug')
+        assert sym in ds, lines
         ds[sym].assert_value(ref_val)
 
+
+def test_catasthasthrophic():
+    s = "'Figure 9. Diode Forward Voltage vs. Current\nVGS = 0V\nTJ= -55°C\nTJ= 25°C\nTJ= 85°C\nTJ= 125°C\nTJ= 150°C\nTJ= 175°C\n10\n100\n1000\n10000'"
+    assert not extract_fields_from_text(s, 'any')
 
 def test_extract_text():
     """

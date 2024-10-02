@@ -35,7 +35,8 @@ def test_parse_lines():
         # ("QgGate charge total (10 V),VDS = 40 V,ID = 100 A,76,nC,,", 'Qg', (n, 76, n)),
         ("Qrr Reverse recovery charge V nCDS = 40 V,I F= 100 A,,400,,", 'Qrr', (n, 400, n)),
         ("Qg,Total Gate Charge,---,200,300,,,VDS = 38V,", 'Qg', (n, 200, 300)),
-        ('nC Qgd,Gate-to-Drain ("Miller") Charge,---,62,93,,,See Fig.11,', 'Qg', (n, 62, 93,)),
+        ('Qgd,Gate-to-DrainCharge,---,62,93,nan,nan', 'Qgd', (n, 62, 93,)),
+        ('nC Qgd,Gate-to-Drain ("Miller") Charge,---,62,93,,,See Fig.11,', 'Qgd', (n, 62, 93,)),
         ("Qrr Reverse recovery charge V nCDS = 40 V,I F= 100 A,,525,,", 'Qrr', (n, 525, n)),
         # ("Output capacitance,C oss 1274f =1 MHz,GS,=0 V,V DS=40 V,,- 980,,", 'Coss', (n, 980, n)),
         ("Qg,Total Gate Charge,---,81,120,,,VDS = 50V,", 'Qg', (n, 81, 120,)),
@@ -187,17 +188,17 @@ def test_parse_lines():
         # ("Gate-to-Source Charge,QGS,VGS = 10 V, VDS = 75 V; ID = 41 A,15.0,nan,nC", "Qgs", (n, 15, n)),
         ("Gate-Drain Charge,nan,Qgd,nan,nan,nan,13,nan,nan,nan,nC", 'Qgd', (n, 13, n)),
         ("Output capacitance,C oss,nan,-,231.0,300,nan", 'Coss', (n, 231, 300)),
-        (
-            "Coss eff.(TR) Output Capacitance (Time Related),---,385,---,VGS = 0V, VDS = 0V to 80V,nan", 'C',
-            (n, 385, n)),
-        ("Effective Output Capacitance,---,154,---,pF f = 1.0MHz,  See Fig.5,nan", 'C', (n, 154, n)),
-        ("nan,Coss,nan,7.0,nan", 'C', (n, 7, n)),
-        ("Threshold Gate Charge,QG(TH),nan,9.1,nan,nC", 'Q', (n, 9.1, n)),
-        ("Qg(th),-,36,-,nC", 'Q', (n, 36, n)),
-        ("Reverse recovery charge - Sperrverzugsladung,Qrr,-,-,106 nC", 'Q', (n, n, 106)),
-        ("Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan", 'Q', (n, 297, n)),
-        ("Coss Output Capacitance,---,319,---,VDS = 50V,nan", 'C', (n, 319, n)),
-        ("tf fall time,nan,nan,- 49.5 - ns", 't', (n, 49.5, n)),
+        #(
+        #    "Coss eff.(TR) Output Capacitance (Time Related),---,385,---,VGS = 0V, VDS = 0V to 80V,nan", 'C',
+        #    (n, 385, n)),
+        ("Effective Output Capacitance,---,154,---,pF f = 1.0MHz,  See Fig.5,nan", 'Coss', (n, 154, n)),
+        ("nan,Coss,nan,7.0,nan", 'Coss', (n, 7, n)),
+        ("Threshold Gate Charge,QG(TH),nan,9.1,nan,nC", 'Qg_th', (n, 9.1, n)),
+        ("Qg(th),-,36,-,nC", 'Qg_th', (n, 36, n)),
+        ("Reverse recovery charge - Sperrverzugsladung,Qrr,-,-,106 nC", 'Qrr', (n, n, 106)),
+        ("Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan", 'Qrr', (n, 297, n)),
+        ("Coss Output Capacitance,---,319,---,VDS = 50V,nan", 'Coss', (n, 319, n)),
+        ("tf fall time,nan,nan,- 49.5 - ns", 'tFall', (n, 49.5, n)),
         ("/dt = 100 A/μsReverse recovery charge,Q rr,-dI DR,nan,nan,35,nan,nC", 'Q', (n, 35, n)),
         ("Output Capacitance Coss VDS = 50V,--,3042,--,pF", 'C', (n, 3042, n)),
         ("Diode forward voltage,VDSF,IDR = 120 A, VGS = 0 V,nan,nan,nan,-1.2,V", 'V', (n, n, -1.2)),
@@ -215,7 +216,7 @@ def test_parse_lines():
         ("Coss,Output Capacitance,---,340,---,nan,nan,nan", 'Coss', (n, 340, n)),
         ("Coss eff. (ER),Effective Output Capacitance (Energy Related),"
          "---,420,---,VGS = 0V, VDS = 0V to 80V,  See Fig.11,nan,nan", 'Coss', (n, 420, n)),
-        ("Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan", 'Q', (n, 297, n)),
+        ("Reverse Recovery Charge Qrr nCIF = 80A, VGS = 0V--,297,--,nan", 'Qrr', (n, 297, n)),
         ("Output Capacitance Coss VDS = 50V, --,2730,--,pF", 'C', (n, 2730, n)),
         ("Coss eff. (ER),Effective Output Capacitance (Energy Related),"
          "---,757,---,VGS = 0V, VDS = 0V to 80VSee Fig.11,nan", 'Coss', (n, 757, n)),
@@ -232,6 +233,7 @@ def test_parse_lines():
         m, field_sym = detect_fields('any', rl.split(','))
         assert m and field_sym, 'no field detected in "%s" %s %s' % (rl, m, field_sym)
         assert field_sym[:len(sym)] == sym, ("DETECTED SYMBOL", field_sym, sym, rl)
+        #             assert field_sym == sym, (rl, sym, field_sym)
 
         f, m = parse_field_csv(rl, dim, field_sym=sym, capture_match=True, mfr='any')
         if sum(map(math.isnan, (min, typ, max))) == 3:

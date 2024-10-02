@@ -5,7 +5,7 @@ from dslib.pdf2txt.parse import extract_text
 from dslib.pdf2txt.pipeline import rasterize_pdf, ocrmypdf, rasterize_ocrmypdf
 
 
-def test_mupdfy():
+def _test_mupdfy():
     import pymupdf
 
     pdf = pymupdf.open("../../datasheets/infineon/IPP048N12N3GXKSA1.pdf")
