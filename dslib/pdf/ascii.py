@@ -12,7 +12,7 @@ from dslib.pdf.tree import vertical_sort, vertical_merge, pdf_blocks_pdfminer_si
 from dslib.pdf2txt import whitespaces_to_space
 
 
-@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True)
+@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt='v02')
 def pdf_to_ascii(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', sort_vert=True, spacing=50,
                  overwrite=False,
                  line_overlap=0.3, char_margin=2.0,
@@ -101,10 +101,11 @@ def pdf_to_ascii(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', 
         return ascii_lines
 
 class Row():
-    def __init__(self, text, elements:Dict[int, Word]):
+    def __init__(self, text, elements:Dict[int, Word],page):
         self.text = text
         self.elements = elements
         self.bbox = bbox_union([el.bbox for el in elements.values()])
+        self.page = page
 
     def element_by_tpos(self, pos) -> Tuple[int, Word]:
         sel = -1, None
@@ -208,7 +209,7 @@ def process_page(blocks, grouping, sort_vert: bool, spacing: float, overwrite: b
         else:
             empty_rows = 0
 
-        rows.append(Row(row_text, row_objs))
+        rows.append(Row(row_text, row_objs, page=blocks[0].page))
 
     # print(blocks[0].page_num, 'max_x', round(max_x), 'max_len', max_len, 'spacing=', spacing)
 

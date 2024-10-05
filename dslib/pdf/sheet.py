@@ -5,9 +5,14 @@ ideas:
 - virtually increase distance between elements that are separted by a line. char_margin=2 -> should be more than that
 
 """
+import os
 import re
 from collections import defaultdict
-from typing import List
+from typing import List, Dict
+
+import PIL.Image
+import cv2
+import numpy as np
 
 from dslib.pdf.ascii import pdf_to_ascii, Row
 from dslib.pdf.to_html import pdf_to_html, Annotation
@@ -124,17 +129,60 @@ def read_sheet(pdf_file):
 
                 if table_bbox[2] - table_bbox[0] < table_min_width:
                     continue
-                annotations[pn].append(Annotation('table ' + ','.join(r.symbol for r in table), table_bbox, ''))
+                annotations[pn].append(Annotation(
+                    'table ' + ','.join(r.symbol for r in table), table_bbox, '',
+                page_bbox=table[0].row.page.mediabox))
 
     html_file = pdf_to_html(pdf_file, 'line', annotations=annotations)
     from dslib.util import open_file_with_default_app
-    open_file_with_default_app(html_file)
+    #open_file_with_default_app(html_file)
+
+    open_file_with_default_app(pdf_raster_annot(pdf_file, 250, annotations))
 
     """
     - for each detected field, do a local table analysis
     - horizontal pane intersection with table structure to find out-of-line units and testing conditions
     - 
     """
+
+
+def draw_annotations(image: PIL.Image.Image, page_annotations: List[Annotation]):
+
+    rgb = np.array(image)# .convert('RGB')
+    # Convert RGB to BGR
+    #bgr = rgb[:, :, ::-1].copy()
+
+    pb =  page_annotations[0].page_bbox
+
+    s = rgb.shape[0] / pb[3]
+    rint = lambda f: int(round(s * f))
+
+    for a in page_annotations:
+        cv2.rectangle(rgb, (rint(a.bbox[0])-1, rint(pb[3]-a.bbox[3])-1), (rint(a.bbox[2])+1, rint(pb[3]-a.bbox[1])+1), (255, 0, 0), 2)
+        #cv2.putText(img, a.name, )
+
+    return PIL.Image.fromarray(rgb)
+
+
+def pdf_raster_annot(pdf_path, dpi, annotations: Dict[int, List[Annotation]]):
+    from pdf2image import convert_from_path
+    images = convert_from_path(pdf_path, dpi=dpi, fmt='png')  # rm dpi?
+    assert images
+
+    images2 = []
+
+    for pn, page_annotations in annotations.items():
+        print('draw annotations on page', pn, len(page_annotations))
+        images2.append(draw_annotations(images[pn], page_annotations))
+
+    images = images2
+
+    out_path = pdf_path + '.annot.pdf'
+    images[0].save(
+        out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
+    )
+    assert os.path.isfile(out_path)
+    return out_path
 
 
 def detect_tables(pdf_path):
@@ -148,6 +196,6 @@ def detect_tables(pdf_path):
 
 
 if __name__ == '__main__':
-    #read_sheet('../../datasheets/infineon/IRFS3107TRLPBF.pdf')
-    read_sheet('../../datasheets/infineon/IPA029N06NXKSA1.pdf')
+    read_sheet('../../datasheets/infineon/IRFS3107TRLPBF.pdf')
+    #read_sheet('../../datasheets/infineon/IPA029N06NXKSA1.pdf')
     # read_sheet(sys.argv[1])

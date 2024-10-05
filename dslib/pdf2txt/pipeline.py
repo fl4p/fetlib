@@ -40,15 +40,7 @@ def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
     :return:
     """
 
-    if not fitz_method:
-        from pdf2image import convert_from_path
-        images = convert_from_path(in_path, dpi=dpi,fmt='png') # rm dpi?
-        assert images
-        images[0].save(
-            out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
-        )
-        assert os.path.isfile(out_path)
-    else:
+    if fitz_method:
         import fitz
         source = fitz.open(in_path)
         target = fitz.open()
@@ -57,6 +49,14 @@ def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
             tarpage = target.new_page(width=pix.width, height=pix.height)
             tarpage.insert_image(tarpage.rect, stream=pix.pil_tobytes("PNG"))
         target.ez_save(out_path)  # targetname = parameter
+    else:
+        from pdf2image import convert_from_path
+        images = convert_from_path(in_path, dpi=dpi,fmt='png') # rm dpi?
+        assert images
+        images[0].save(
+            out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
+        )
+        assert os.path.isfile(out_path)
 
 
 @disk_cache(ttl='14d',

@@ -12,10 +12,11 @@ from dslib.pdf.tree import vertical_sort, pdf_blocks_pdfminer_six, Block, vertic
 
 
 class Annotation():
-    def __init__(self, name, bbox, text):
+    def __init__(self, name, bbox, text, page_bbox):
         self.name = name
         self.bbox = bbox
         self.text = text
+        self.page_bbox = page_bbox
 
 def pdf_to_html(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', merge_lines=False, return_html=False,
                 annotations:Optional[Dict[int, List[Annotation]]]=None                ):
