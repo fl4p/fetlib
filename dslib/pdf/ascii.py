@@ -3,6 +3,7 @@ the name ascii.py refers more to ascii art technique, presenting the contents of
 chars.
 """
 import os
+from copy import copy
 from typing import Literal, Dict, List, Union, Tuple
 
 from pdfminer.layout import LAParams
@@ -12,11 +13,16 @@ from dslib.pdf.tree import vertical_sort, vertical_merge, pdf_blocks_pdfminer_si
 from dslib.pdf2txt import whitespaces_to_space
 
 
-@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt='v02')
-def pdf_to_ascii(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', sort_vert=True, spacing=50,
+@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt='v10')
+def pdf_to_ascii(pdf_path,
+                 grouping: Literal['block', 'line', 'word'] = 'line',
+                 sort_vert=True,
+                 spacing: int = 50,
                  overwrite=False,
+
                  line_overlap=0.3, char_margin=2.0,
-                 output: Literal['html', 'lines', 'rows_by_page'] = 'html') -> Union[str, List[str], Dict[int, List['Row']]]:
+                 output: Literal['html', 'lines', 'rows_by_page'] = 'html') -> Union[
+    str, List[str], Dict[int, List['Row']]]:
     assert output in {'html', 'lines', 'rows_by_page'}
 
     from dslib.pdf.fonts import pdfminer_fix_custom_glyphs_encoding_monkeypatch
@@ -38,13 +44,12 @@ def pdf_to_ascii(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', 
 
     pagenos = set(blocks.keys())
 
-    rows_by_page:Dict[int, List[Row]] = dict()
+    rows_by_page: Dict[int, List[Row]] = dict()
     for page_num in sorted(pagenos):
         rows = process_page(blocks[page_num], grouping, sort_vert, spacing, overwrite)
         rows_by_page[page_num] = rows
 
     ascii_lines = []
-
 
     for pn, rows in rows_by_page.items():
         ascii_lines += [r.text for r in rows]
@@ -100,8 +105,9 @@ def pdf_to_ascii(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', 
     else:
         return ascii_lines
 
+
 class Row():
-    def __init__(self, text, elements:Dict[int, Word],page):
+    def __init__(self, text: str, elements: Dict[int, Word], page):
         self.text = text
         self.elements = elements
         self.bbox = bbox_union([el.bbox for el in elements.values()])
@@ -118,6 +124,20 @@ class Row():
                 break
         return sel
 
+    def elements_by_range(self, start, end) -> List[Word]:
+        assert end > start
+
+        sel = []
+        el_starts = list(self.elements.keys())
+        for i, el_start in enumerate(el_starts):
+            el = self.elements[el_start]
+            # el_end = el_starts[i + 1] if i + 1 < len(el_starts) else len(self.text)
+            el_end = el_start + len(el.s)
+            if start <= el_start < end or start < el_end <= end:
+                sel.append(el)
+
+        return sel
+
     def __str__(self):
         return whitespaces_to_space(self.text)
 
@@ -126,6 +146,26 @@ class Row():
 
     def el(self, i):
         return list(self.elements.values())[i]
+
+    def to_phrases(self, word_distance):
+        els = list(self.elements.values())
+        offsets = list(self.elements.keys())
+        phrases = []
+        for i in range(0, len(els)):
+            if i == 0:
+                d = float('inf')
+                h = 1
+            else:
+                d = els[i].bbox.x1 - phrases[-1][-1].bbox.x2
+                h = max(els[i].bbox.height, phrases[-1][-1].bbox.height)
+            w: Word = copy(els[i])
+            w.line_offset = offsets[i]
+
+            if d / h <= word_distance:
+                phrases[-1].append(w)
+            else:
+                phrases.append([w])
+        return phrases
 
 
 def process_page(blocks, grouping, sort_vert: bool, spacing: float, overwrite: bool):
@@ -174,29 +214,38 @@ def process_page(blocks, grouping, sort_vert: bool, spacing: float, overwrite: b
             if line.bbox[0] > max_x:
                 max_x = line.bbox[0]
 
-            ci = int((line.bbox[0] - 30) / (100 / spacing))
-            pad = max(1, ci - len(row_text))
+            if isinstance(spacing, str):
+                pad = 1
+                pad_char = ' '
+            else:
 
-            if ci <= len(row_text) - ow_th:
+                ci = int((line.bbox[0] - 30) / (100 / spacing))
+                pad = max(1, ci - len(row_text))
+                pad_char = ' '
 
-                if len(row_text) - ci > 20:
-                    print('WARNING', 'more than 20 chars overlap, elements might not be h-sorted')
+                if ci <= len(row_text) - ow_th:
 
-                if overwrite:
-                    row_text = row_text[:(ci)] + '…'
-                    pad = 0
+                    if len(row_text) - ci > 20:
+                        print('WARNING', 'more than 20 chars overlap, elements might not be h-sorted')
 
-            annot = f'x{round(line.bbox[0])} i{i} l{len(row_text) + pad} p{pad}'
+                    if overwrite:
+                        row_text = row_text[:(ci)] + '…'
+                        pad = 0
+
+            # annot = f'x{round(line.bbox[0])} i{i} l{len(row_text) + pad} p{pad}'
+
             s = str(line)
             assert '\n' not in s, s
             # f"""<span class="annot" style="">{annot}</span>"""
             row_objs[len(row_text) + pad] = line
-            row_text += ' ' * pad + s
-
+            row_text += pad_char * pad + s
 
             if len(row_text) > max_len:
                 max_len = len(row_text)
             i += 1
+
+        if isinstance(spacing, str):
+            row_text += spacing  # line spacer
 
         # if len(row) > 500:
         #    print(el.page_num, el.index, 'long row', len(row), repr(row.strip()[:40]))

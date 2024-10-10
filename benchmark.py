@@ -14,13 +14,13 @@ class BMRef():
 # scrambled text (new)
 BMRef('datasheets/infineon/IPP028N08N3GXKSA1.pdf', [
 
-])
+], tags='weirdEnc')
 
-BMRef('datasheets/infineon/IPP180N10N3GXKSA1.pdf', [])
+BMRef('datasheets/infineon/IPP180N10N3GXKSA1.pdf', [], tags='weirdEnc')
 
 # scrambled text (old)
 BMRef('datasheets/infineon/IPP057N08N3GHKSA1.pdf', [
-])
+], tags='weirdEnc')
 
 BMRef('datasheets/infineon/IPP65R420CFDXKSA2.pdf')
 BMRef('datasheets/infineon/IMT40R036M2HXTMA1.pdf')  # 400v, 2024-04

@@ -200,7 +200,7 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
                              ))  # vgs
     else:
         pass
-        #if mfr:
+        # if mfr:
         #    print('no Qrr pattern for ', mfr)
 
     return fields

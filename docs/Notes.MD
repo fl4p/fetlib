@@ -259,8 +259,8 @@ A docu
 - subscript in symbols like Q_gd can fall into a new line if `line_overlap` is too high. TODO write test
   NTMFSC4D2N10MC:
 - ![img_1.png](NTMFSC4D2N10MC_Qg.png)
-- ![img_1.png](img_1.png)
-- ![img_2.png](img_2.png)
+- ![img_1.png](qg_tot_cell.png)
+- ![img_2.png](qg_tot_bbox.png)
 - Remember that PDF has no fluent text, just individual chars at absolute positins. Subscript chars just are just a bit
   lower.
 - with `line_overlap=0.5` this renders to `"Q\nG(TOT)"`,
@@ -268,6 +268,11 @@ A docu
 
 ![img_3.png](IPA029N06NXKSA1_3.png)
 ^in between lines "Drain-source on resistance"
+
+![img_5.png](img_5.png)
+
+![img_3.png](img_3.png)
+^ RS6P100BHTB1 multiline parameter
 
 ## pymupdf (wraps mupdf C code)
 
@@ -504,3 +509,20 @@ pdffonts ../datasheets/onsemi/NTMFSC4D2N10MC.pdf
 ```
 
 https://shapecatcher.com/
+
+
+## why no tables
+
+table borderless, no grids
+
+if detection misses a column or splits tables in two verticall cabln be hard to recover
+
+estract tables makes more sense in other cases., e.g. when we have relational items.
+
+we already know what we are looking for. we just need to find the location where
+
+
+# pdf2html
+https://blog.idrsolutions.com/how-to-convert-pdf-to-html-in-java-tutorial/
+
+

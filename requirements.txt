@@ -10,7 +10,7 @@ tabula-py
 
 ocrmypdf
 
-#pdfminer.six>=20240706
+pdfminer.six>=20240706
 
 img2table
 
@@ -21,4 +21,4 @@ timeout-decorator
 xlrd>=2
 openpyxl>=3
 
-pdfminer.six
+#pdfminer.six
