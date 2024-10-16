@@ -305,6 +305,20 @@ def digikey(csv_glob_path):
     return parts
 
 
+async def qorvo_sic_fets():
+    # TODO https://www.qorvo.com/products/discrete-transistors/sic-jfets
+    fn = await download_parts_list(
+        'qorvo',
+        url="https://www.qorvo.com/products/discrete-transistors/sic-fets",
+        fn_ext='xlsx',
+        click='a.pst-export',
+    )
+
+    raise NotImplementedError()
+
+    #u =
+
+
 def benchmark_mpns():
     return {
         ('infineon', 'IPP65R420CFDXKSA2'),
