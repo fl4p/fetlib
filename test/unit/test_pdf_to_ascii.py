@@ -52,12 +52,14 @@ def test_test_merge_lines():
     assert len(sum((re.compile('3\.0\s+3\.5').findall(l) for l in lines), [])) == 0
 
 
-def test_strip_whitespace():
+def _test_strip_whitespace():
+    from dslib.pdf.ascii import pdf_to_ascii
+    lines = pdf_to_ascii('../../datasheets/littelfuse/IXFP110N15T2.pdf', output='lines')
     # ixfp dspick (33 ... ns)
     raise NotImplementedError()
 
 
-def test_char_margin():
+def _test_char_margin():
     'RS6P100BHTB1'
     raise NotImplementedError()
 
@@ -107,7 +109,21 @@ def test_word_line():
     assert re.compile(r'RG\s+Internal Gate Resistance\s+–+ +1.2 +–+').search(txt)
     assert re.compile(r'RG\s+Internal Gate Resistance\s+–+ +1.2 +–+\s+Ω').search(txt)
 
-    rows = pdf_to_ascii('../../datasheets/infineon/IRFS3107TRLPBF.pdf', output='rows_by_page', spacing=20)[1]
+    rows = pdf_to_ascii('../../datasheets/infineon/IRFS3107TRLPBF.pdf', output='rows', spacing=20)[1]
+    assert rows
+
+
+    txt = '\n'.join(pdf_to_ascii('../../datasheets/rohm/RX3P07CBHC16.pdf', output='lines', spacing=20))
+    assert ' Ciss ' in txt
+    assert 'td(on)*' in txt
+    assert ' tr*' in txt
+    assert ' tf*' in txt
+    assert ' Qgs*' in txt
+    assert ' VSD* ' in txt
+    assert ' Qrr* ' in txt
+
+
+    rows = pdf_to_ascii('../../datasheets/rohm/RX3P07CBHC16.pdf', output='rows_by_page', spacing=100)[2]
     assert rows
 
 

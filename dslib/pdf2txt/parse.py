@@ -3,7 +3,7 @@ import os.path
 import re
 import traceback
 import warnings
-from typing import Iterable, List, Tuple, Union, Optional
+from typing import List, Tuple, Union, Optional
 
 import pandas as pd
 
@@ -488,8 +488,19 @@ def parse_field_multiline(text, dim, field_sym, cond=None, capture_match=False, 
     return parse_field(text, dim_regs_multiline[dim], field_sym, cond, capture_match, source, mfr=mfr)
 
 
-def detect_fields(mfr, strings: Iterable[str]):
+class DetectedSymbol:
+    def __init__(self, index: int, match: re.Match, symbol: str):
+        self.index = index
+        self.match = match
+        self.symbol = symbol
+
+
+def detect_fields(mfr, strings: List[str]) -> Optional[DetectedSymbol]:
+    # strings = [whitespaces_to_space(s).strip(' -') for s in strings]
+    # normalize_text(str(s)).strip(' -')
+
     fields_detect = get_field_detect_regex(mfr)
+
     for field_sym, field_re in fields_detect.items():
         if isinstance(field_re, tuple):
             stop_words = field_re[1]
@@ -498,23 +509,20 @@ def detect_fields(mfr, strings: Iterable[str]):
         else:
             stop_words = []
 
-        def detect_field(s):
-            s = normalize_text(str(s)).strip(' -')
-            s = whitespaces_to_space(s)
+        for i in range(len(strings)):
+            s = strings[i]
 
             if len(s) > 80:
-                return False
-            if not field_re.search(s):
-                return False
+                continue
+
             if stop_words and max(map(lambda sw: sw in s, stop_words)):
-                return False
-            return True
+                continue
 
-        m = next(filter(detect_field, strings), None)
-        if m is not None:
-            return m, field_sym
+            m = field_re.search(s)
 
-    return None, None
+            if m:
+                return DetectedSymbol(i, m, field_sym)
+    return None
 
 
 def right_strip_nan(v, n):

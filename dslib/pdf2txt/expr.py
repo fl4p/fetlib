@@ -99,10 +99,11 @@ Source-Drain Recovery Charge
 
 
 class Dimension():
-    def __init__(self, head_regex, unit_regex, signed):
+    def __init__(self, head_regex, unit_regex, signed, name=None):
         self.head_regex = head_regex
         self.unit_regex = unit_regex
         self.signed = signed
+        self.name = name
 
 
 class NumValReSet():
@@ -121,8 +122,8 @@ class NumValReSet():
         self.val_nan = nan + r'|' + field
         self.nan = nan
 
-        self.nane = nane # nan or empty
-        self.val_nane = nane + r'|' + field # empty, nan or val
+        self.nane = nane  # nan or empty
+        self.val_nane = nane + r'|' + field  # empty, nan or val
 
 
 def field_value_regex_variations(d: Dimension):
@@ -308,7 +309,7 @@ def line_regex_variations(dim: Dimension):
                  ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[-+*/]? *)+'
                  ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
                  )
-    test_conds_delim_ml = (rf'({test_cond}\s*[;,\n\s]*)')
+    test_conds_delim_ml = (rf'(?P<conds_ml>{test_cond}\s*[;,\n\s]*)')
     test_conds_delim = (rf'({test_cond}\s*[;,\s]*)')
 
     head = r'^([^\n]*\n){0,2}' + f'{misc_ref}{{,30}}' + head  # should match within the first 2 lines of detection context
@@ -333,12 +334,14 @@ def line_regex_variations(dim: Dimension):
         rec((
             # catastrophic BT
             rf'(?P<cond_mtmu>=name)?{head}\s*{misc_ref}*\s*\n'
-            rf'(?>{test_conds_delim_ml}+{misc_ref}*\n'
+            rf'(?=(\n|.)+({unit})(\n|$))'  # positive look-ahead before complex conds ex
+            rf'(({test_conds_delim_ml}+){misc_ref}*\n'
             '' rf'({misc_ref}+\n){{0,3}})?'
             rf'(?P<min>{rs.val_nan})\n'
             rf'(?P<typ>{rs.val_nan})\n'
             rf'(?P<max>{rs.val_nan})\n'
-            rf'(?P<unit>{unit})(\n|$)'),
+            rf'(?P<unit>{unit})(\n|$)'
+        ),
             regex.IGNORECASE
         ),
 
@@ -346,9 +349,10 @@ def line_regex_variations(dim: Dimension):
             rf'(?P<cond_tM_unit>=name)?'
             rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
             # rf'([a-z]{{1,3}}\n)?'
+            rf'(?=(\n|.)+({unit})(\n|$))'  # positive look-ahead before complex conds ex
             rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
             rf'((?P<typ>{rs.val_nane})\n)?'
-            rf'(?P<max>{rs.val})(\n| +)' # inline unit
+            rf'(?P<max>{rs.val})(\n| +)'  # inline unit
             rf'(?P<unit>{unit})'
             rf'(\n|$| *[,|])'),
             re.IGNORECASE
@@ -358,7 +362,8 @@ def line_regex_variations(dim: Dimension):
             rf'(?P<cond_Tm_unit>=name)?'
             rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
             # rf'([a-z]{{1,3}}\n)?'
-            rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'            
+            rf'(?=(\n|.)+({unit})(\n|$))'  # positive look-ahead before complex conds ex
+            rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
             rf'(?P<typ>{rs.val})\n'
             rf'(?P<max>{rs.val_nane})\n'
             rf'(?P<unit>{unit})'
@@ -511,19 +516,29 @@ DIMENSIONS = dotdict(
         signed=False,
     ),
     I=Dimension(
+        name='Current',
         head_regex=None,  # TODO
         unit_regex=r'[muμn]?A',
         signed=True,
     ),
 
     R=Dimension(
+        name='Resistance',
         head_regex=r'(RthJC|(internal[-\s]+)?gate[-\s]+resistance|(^|[^a-z])R[ _]?G(_?\(?int\)?)?)',
-        unit_regex='[mkM]?(\u03a9|\u2126|O|Q|Ohm|W)',  # with OCR confusion
+        unit_regex='[mkM]?(\u03a9|\u2126|O|Q|Ohm|W)',  # with OCR confusion and encoding confusion
         # \u03a9=greek omega, \u2126=ohm sign W datasheets/infineon/IPB083N10N3GATMA1.pdf
         signed=False
     ),
 
+    g=Dimension(
+        name='Transconductance',
+        head_regex=r'(gfs)', # TODO
+        unit_regex='[k]?(S)',
+        signed=False
+    ),
+
     T=Dimension(  # temp
+        name='Temperature',
         head_regex=None,
         unit_regex=r'(°[CF]|K)',
         signed=True,
@@ -606,48 +621,70 @@ def get_field_detect_regex(mfr):
         qgs += '([^1]|$)'  # dont match Qgs1
         qgs1 = r'|^Q[ _]?gs[ _]?1$'
 
+    def rec(pat: str, flags):
+        # texts are normalized (horizontal_whitespace -> ' ')
+        pat = pat.replace(r'\s', ' ')
+        pat = f'(?P<detect>{pat})'
+        return regex.compile(pat, flags=flags)
+
     # regex matched on cell contents
     fields_detect = dict(
-        tRise=(re.compile(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'fall')),
-        # t=(re.compile(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
-        tFall=(re.compile(r'(fall\s+time|^t\s?f($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'rise')),
-        Qrr=re.compile(
+
+        Rds_on=(rec(r'(^R[ _]*DS[ _]*\(?on\)?|(Static[- ]+)?Drain([- ]+to)?[ -]+Source On([ -]+state)?[ -]+Resistance)', re.IGNORECASE)),
+        gfs=(rec(r'(^g[ _]*fs|forward transconductance)', re.IGNORECASE)),
+
+        tDon=(rec(r'(Turn[−\s+]On[−\s+]Delay[−\s+]Time|^t[\s_]?d[\s_]?\(\s?on\s?\))', re.IGNORECASE),
+              ('rise', 'fall', 'off', 'forward')),  # not to be confused with diode forward ton
+        tDoff=(rec(r'(Turn[−\s+]Off[−\s+]Delay[−\s+]Time|^t[\s_]?d[\s_]?\(\s?off\s?\))', re.IGNORECASE),
+               ('rise', 'fall', 'on')),
+        tRise=(rec(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'fall')),
+        # t=(rec(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
+        tFall=(rec(r'(fall\s+time|^t\s?f($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'rise')),
+        Qrr=rec(
             r'^((?!Peak)).*(reversed?[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
             re.IGNORECASE),  # QRM
-        Coss=re.compile(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?($|\sVGS))', re.IGNORECASE),
 
-        Rg=(re.compile(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ()),
+        Coss_TR=(
+            rec(r'(effective\s+output\s+capacitance\s+\(time related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?TR\)?)($|\s))',
+                re.IGNORECASE), ('energy',)),
+        Coss=rec(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?($|\sVGS))', re.IGNORECASE),
+        Ciss=rec(r'(input\s+capacitance|^C[ _]?iss($|\s))', re.IGNORECASE),
+        Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s))', re.IGNORECASE),
 
-        Qgs2=(re.compile(
+        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('=',)),
+
+        Qgs2=(rec(
             r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',
             re.IGNORECASE),
               ('pre-vth', 'pre-threshold')),
-        Qg_th=(re.compile(
+        Qg_th=(rec(
             rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})',
             re.IGNORECASE),
                ('post-threshold', 'post-vth')),
-        Qgd=re.compile(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"*miller"*\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
-        Qgs=(re.compile(
+        Qsync=(rec(r'(total[\s-]+gate[\s-]+charge[\s-]+sync\.?|^Q[ _]?sync\.?)', re.IGNORECASE)),
+        Qgd=(rec(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"*miller"*\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
+             ('sync',)),
+        Qgs=(rec(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE), ('Qgd', 'pre-vth', 'post-Vth')),
-        Qsw=re.compile(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
-        Qg=(re.compile(  # this should be after all other gate charges
+        Qsw=rec(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
+        Qg=(rec(  # this should be after all other gate charges
             rf'(total[\s-]+gate[\s-]+charge|gate[\s-]+charge[\s-]+total|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)',
             re.IGNORECASE), ('sync', 'Qgd')),
-        Qg_sync=(re.compile(
+        Qg_sync=(rec(
             rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?$)',
-            re.IGNORECASE), ()), # infineon
+            re.IGNORECASE), ()),  # infineon
 
         # VGS(pl), gate-source plateau
-        Vpl=re.compile(
+        Vpl=rec(
             r'(gate\s+plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?$)',
             re.IGNORECASE),
 
-        Vsd=re.compile(
+        Vsd=rec(
             r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\sIF)|V[ _]?DS_?FW?D?)',
             re.IGNORECASE),
         # plate au
-        # Qrr=re.compile(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
+        # Qrr=rec(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
 
     )

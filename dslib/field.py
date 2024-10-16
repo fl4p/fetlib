@@ -80,7 +80,8 @@ class Field():
             typ = a
 
         if not math.isnan(max) and not math.isnan(typ):
-            assert 1 < max / typ < 5, (typ, max)
+            max_typ_ratio = 30 if symbol == 'Crss' else 5
+            assert 1 < max / typ < max_typ_ratio, (typ, max)
 
         self.min = min
         self.typ = typ
@@ -191,9 +192,13 @@ def parse_field_value(s):
     if not s:
         return math.nan
     s = normalize_text(s.strip().strip(' \x03').rstrip('L'))
-    if not s or s == '-' or s == '.' or set(s) == {'-'}:
+    if not s or s in {'-', '.', '"', "'", '#'} or set(s) == {'-'}:
         return math.nan
-    return float(s)
+    try:
+        return float(s)
+    except:
+        print('string is %r' % s)
+        raise
 
 
 class MpnMfr:
@@ -277,11 +282,11 @@ class DatasheetFields():
                 else:
                     src = ','.join(v)
 
-            l = '%-12s %5.1f %5.1f %5.1f %-4s %10s %-20s' % (
+            l = '%-12s %5.1f %5.1f %5.1f   %-4s %10s %-20s' % (
                 f.symbol, f.min, f.typ, f.max, f.unit, src,
-                ', '.join(map(str, f.cond.values() if f.cond else [])) if show_cond else '')
-            l = l.replace('nan', ' - ')
-            l = l.replace(' None', '  -  ')
+                ', '.join(map(str, (f.cond.values() if isinstance(f.cond,dict) else f.cond) if f.cond else [])) if show_cond else '')
+            l = l.replace('nan', ' ⎵ ')
+            l = l.replace(' None', '  ⎵  ')
             print(l)
 
     def get_mosfet_specs(self):
@@ -349,7 +354,7 @@ class DatasheetFields():
         return bool(self.fields_filled)
 
     def __getattr__(self, item) -> Field:
-        if item not in {'fields_filled','__getstate__'}:
+        if item not in {'fields_filled', '__getstate__'}:
             ff = getattr(self, 'fields_filled')
             if item in ff:
                 return ff[item]

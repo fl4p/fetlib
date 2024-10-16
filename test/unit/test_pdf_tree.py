@@ -20,3 +20,25 @@ def test_bbox():
     b3 = Bbox(10, 10, 20, 20)
     assert b1.h_overlap(b3) == 0
     assert b1.v_overlap(b3) == 0
+
+
+def test_bbox2():
+    from dslib.pdf.tree import Bbox
+    b1 = Bbox(0, 0, 10, 10)
+    b2 = Bbox(5, 5, 10, 10)
+    b3 = Bbox(0, 0, 10, 10)
+
+    assert b1
+    assert b2
+    assert  b1 != b2
+    assert b3 == b1
+
+
+    s = set()
+    s.add(b1)
+    assert b1 in s
+    assert b2 not in s
+    assert b3 in s
+
+
+

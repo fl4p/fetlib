@@ -9,21 +9,22 @@ from typing import Literal, Dict, List, Union, Tuple
 from pdfminer.layout import LAParams
 
 from dslib.cache import disk_cache
-from dslib.pdf.tree import vertical_sort, vertical_merge, pdf_blocks_pdfminer_six, bbox_union, Word
+from dslib.pdf.tree import vertical_sort, vertical_merge, pdf_blocks_pdfminer_six, bbox_union, Word, GraphicBlock, \
+    TextBlock
 from dslib.pdf2txt import whitespaces_to_space
 
 
-@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt='v10')
+@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt=('v10', pdf_blocks_pdfminer_six.__code__.co_code))
 def pdf_to_ascii(pdf_path,
                  grouping: Literal['block', 'line', 'word'] = 'line',
                  sort_vert=True,
-                 spacing: int = 50,
+                 spacing: Union[int, str] = 50,
                  overwrite=False,
-
                  line_overlap=0.3, char_margin=2.0,
-                 output: Literal['html', 'lines', 'rows_by_page'] = 'html') -> Union[
+                 output: Literal['html', 'lines', 'rows', 'rows_graphics'] = 'html'
+                 ) -> Union[
     str, List[str], Dict[int, List['Row']]]:
-    assert output in {'html', 'lines', 'rows_by_page'}
+    assert output in {'html', 'lines', 'rows', 'rows_graphics'}
 
     from dslib.pdf.fonts import pdfminer_fix_custom_glyphs_encoding_monkeypatch
     pdfminer_fix_custom_glyphs_encoding_monkeypatch()
@@ -31,22 +32,31 @@ def pdf_to_ascii(pdf_path,
     from dslib.pdf.fonts import PdfFonts
     fonts = PdfFonts(pdf_path)
 
-    blocks = pdf_blocks_pdfminer_six(pdf_path, LAParams(
-        # https://pdfminersix.readthedocs.io/en/latest/topic/converting_pdf_to_text.html
-        line_overlap=line_overlap,  # higher will produce more lines 0.4 is too high (NTMFSC4D2N10MC)
-        char_margin=char_margin,
-        line_margin=0.5,  # lower values → more lines (only matters when grouping = 'block')
-        # boxes_flow=-1.0 # -1= H-only   1=V
-        all_texts=True,  # needed for OCRed (ocrmypdf) files
-    ), fonts=fonts.font_map, html_spans=output == 'html')
+    blocks = pdf_blocks_pdfminer_six(
+        pdf_path,
+        LAParams(
+            # https://pdfminersix.readthedocs.io/en/latest/topic/converting_pdf_to_text.html
+            line_overlap=line_overlap,  # higher will produce more lines 0.4 is too high (NTMFSC4D2N10MC)
+            char_margin=char_margin,
+            line_margin=0.5,  # lower values → more lines (only matters when grouping = 'block')
+            # boxes_flow=-1.0 # -1= H-only   1=V
+            all_texts=True,  # needed for OCRed (ocrmypdf) files
+        ),
+        fonts=fonts.font_map,
+        html_spans=output == 'html',
+        other_visuals=True
+    )
 
-    print(repr(blocks))
+    # print(repr(blocks))
 
     pagenos = set(blocks.keys())
 
     rows_by_page: Dict[int, List[Row]] = dict()
     for page_num in sorted(pagenos):
-        rows = process_page(blocks[page_num], grouping, sort_vert, spacing, overwrite)
+        text_blocks = [b for b in blocks[page_num] if isinstance(b, TextBlock)]
+        rows = process_page(text_blocks, grouping, sort_vert, spacing, overwrite)
+        if output == 'rows_graphics':
+            rows += [b for b in blocks[page_num] if isinstance(b, GraphicBlock)]
         rows_by_page[page_num] = rows
 
     ascii_lines = []
@@ -100,10 +110,38 @@ def pdf_to_ascii(pdf_path,
 
         return html_path
 
-    if output == 'rows_by_page':
+    if output.startswith('rows'):
         return rows_by_page
     else:
         return ascii_lines
+
+
+class Phrase:
+    """
+    A collection of words that are spatially close.
+    """
+
+    def __init__(self, words: List[Word], parent=None):
+        self.words = words
+        self.bbox = bbox_union(list(w.bbox for w in words))
+        self.parent:Row = parent
+
+    def __iter__(self):
+        return iter(self.words)
+
+    def __getitem__(self, idx):
+        return self.words[idx]
+
+    def __str__(self):
+        return ' '.join(w.s for w in self.words)
+
+    def __repr__(self):
+        return f'{self.__class__.__name__}({self.words})'
+
+    def extend_bbox(self, bbox):
+        c = copy(self)
+        c.bbox = self.bbox.union(bbox)
+        return c
 
 
 class Row():
@@ -147,7 +185,7 @@ class Row():
     def el(self, i):
         return list(self.elements.values())[i]
 
-    def to_phrases(self, word_distance):
+    def to_phrases(self, word_distance=0.5) -> List[Phrase]:
         els = list(self.elements.values())
         offsets = list(self.elements.keys())
         phrases = []
@@ -165,7 +203,7 @@ class Row():
                 phrases[-1].append(w)
             else:
                 phrases.append([w])
-        return phrases
+        return list(map(lambda wl: Phrase(wl, parent=self), phrases))
 
 
 def process_page(blocks, grouping, sort_vert: bool, spacing: float, overwrite: bool):
@@ -176,6 +214,9 @@ def process_page(blocks, grouping, sort_vert: bool, spacing: float, overwrite: b
         elements = sum(map(list, blocks), [])
     else:
         raise ValueError(grouping)
+
+    if not elements:
+        return []
 
     # sort & merge lines (or blocks) vertically
     # sometimes not sorting can result more tidy tables

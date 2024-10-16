@@ -337,7 +337,7 @@ def get_font_default_enc(fontname) -> Dict[int, int]:
     def parse_tsv(tsv):
         return list(filter(bool, map(lambda s: s.split('#')[0].strip(), tsv.split('\n'))))
 
-    if fontname == 'Symbol': # or '+Symbol' in fontname:
+    if fontname == 'Symbol' or fontname.endswith('+Symbol'): # or '+Symbol' in fontname:
         import requests
         url = 'https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt'
         print('fetching', url)

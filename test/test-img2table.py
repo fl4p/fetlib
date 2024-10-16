@@ -14,12 +14,15 @@ from img2table.ocr.base import OCRInstance
 
 
 def main():
-    #pdf = PDF("../datasheets/littelfuse/IXTQ180N10T.pdf", pages=[1], detect_rotation=False, pdf_text_extraction=True)
+    pdf = PDF("../datasheets/littelfuse/IXTQ180N10T.pdf", pages=[1], detect_rotation=False, pdf_text_extraction=True)
     #img = Image("../datasheets/_samples/IXTQ180N10T_p2_400dpi.png")
     #img = Image("../datasheets/_samples/IXTQ180N10T_p2_400dpi.png")
-    img = Image("../datasheets/_samples/BSB028N06NN3GXUMA2_p3.png")
+    #img = Image("../datasheets/_samples/BSB028N06NN3GXUMA2_p3.png")
 
+
+    img = pdf
     doc = img
+
     tesseract = TesseractOCR()
 
     # Extract tables with Tesseract and PaddleOCR
@@ -29,6 +32,8 @@ def main():
                                 implicit_columns=True,
                                 min_confidence=50, # higher values: crops off borderless cells
                                 )
+
+    tables = tables[1]
 
     # draw borders of borderless tables on bordered_img
     bordered_img = list(img.images)[0].copy()

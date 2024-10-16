@@ -8,15 +8,17 @@ from typing import Literal, List, Optional, Dict
 import pdfminer.pdfpage
 from pdfminer.layout import LAParams
 
-from dslib.pdf.tree import vertical_sort, pdf_blocks_pdfminer_six, Block, vertical_merge
+from dslib.pdf.tree import vertical_sort, pdf_blocks_pdfminer_six, TextBlock, vertical_merge
 
 
 class Annotation():
-    def __init__(self, name, bbox, text, page_bbox):
+    def __init__(self, name, bbox, text='', page_bbox=None, color=(255, 0, 0), thickness=2):
         self.name = name
         self.bbox = bbox
         self.text = text
         self.page_bbox = page_bbox
+        self.color = color
+        self.thickness = thickness
 
 def pdf_to_html(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', merge_lines=False, return_html=False,
                 annotations:Optional[Dict[int, List[Annotation]]]=None                ):
@@ -34,7 +36,7 @@ def pdf_to_html(pdf_path, grouping: Literal['block', 'line', 'word'] = 'line', m
         line_margin=1.5,  # lower values → more lines (only matters when grouping = 'block')
         # boxes_flow=-1.0 # -1= H-only   1=V
         all_texts=True,  # will extract text from figures, needed for OCRed (ocrmypdf) files
-    ), fonts=fonts.font_map)
+    ), fonts=fonts.font_map,         html_spans=True,)
 
     #print(repr(blocks))
 
@@ -136,7 +138,7 @@ def el_div(el, class_, page, rel=None):
     h += '>'
     return h
 
-def process_page(html, page: pdfminer.pdfpage.PDFPage, blocks: List[Block], grouping, merge_lines=False):
+def process_page(html, page: pdfminer.pdfpage.PDFPage, blocks: List[TextBlock], grouping, merge_lines=False):
     # apply grouping
     if grouping == 'block':
         elements = blocks
