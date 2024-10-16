@@ -10,7 +10,7 @@ import pandas as pd
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
 from dslib.pdf2txt import expr, strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
-    whitespaces_remove, normalize_text, ocr_strip_string
+    whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
 from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline
 from dslib.pdf2txt.pipeline import convertapi, pdf2pdf
 
@@ -495,11 +495,15 @@ class DetectedSymbol:
         self.symbol = symbol
 
 
-def detect_fields(mfr, strings: List[str]) -> Optional[DetectedSymbol]:
+def detect_fields(mfr, strings: List[str], multi=False) -> Union[Optional[DetectedSymbol], List[DetectedSymbol]]:
     # strings = [whitespaces_to_space(s).strip(' -') for s in strings]
     # normalize_text(str(s)).strip(' -')
 
+    #strings = [whitespace_to_space(s) for s in strings]
+    strings = [whitespace_to_space(s).lower() for s in strings]
+
     fields_detect = get_field_detect_regex(mfr)
+    detected = []
 
     for field_sym, field_re in fields_detect.items():
         if isinstance(field_re, tuple):
@@ -521,8 +525,12 @@ def detect_fields(mfr, strings: List[str]) -> Optional[DetectedSymbol]:
             m = field_re.search(s)
 
             if m:
-                return DetectedSymbol(i, m, field_sym)
-    return None
+                ds =  DetectedSymbol(i, m, field_sym)
+                if multi:
+                    detected.append(ds)
+                else:
+                    return ds
+    return detected if multi else None
 
 
 def right_strip_nan(v, n):
