@@ -23,13 +23,14 @@ no_print_latin_greek = re.compile('[^\s'
                                   ']')
 hyphens = re.compile('[\u2010-\u2015\u23af\u23bc\u23e4]')  # HYPHEN-HORIZONTAL BAR
 # single_quotes = re.compile('[\u2018-\u201B]')
+_whitespace = re.compile('\s')
 _whitespaces = re.compile('\s+', re.MULTILINE)
 
 CONTROL = re.compile("[\x00-\x08\x0b-\x0c\x0e-\x1f]")
 
 
 def patch_unidecode():
-    preserve = '°μ§\u03a9'  # '\u03a9'='Ω'=greek letter
+    preserve = '≈°μ§\u03a9'  # '\u03a9'='Ω'=greek letter
     unidecode.unidecode(preserve)  # load the tables
     for c in preserve:
         codepoint = ord(c)
@@ -113,6 +114,9 @@ def strip_no_print_latin(s: str) -> str:
 
 def whitespaces_to_space(s: str) -> str:
     return _whitespaces.sub(' ', s)
+
+def whitespace_to_space(s: str) -> str:
+    return _whitespace.sub(' ', s)
 
 
 def whitespaces_remove(s: str) -> str:
