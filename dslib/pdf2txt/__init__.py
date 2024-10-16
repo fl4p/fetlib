@@ -21,7 +21,7 @@ no_print_latin_greek = re.compile('[^\s'
                                   ' -Ͽ'  # .. greek
                                   '℀-⏿'  # letterlike, num, math, .. misc tech
                                   ']')
-hyphens = re.compile('[\u2010-\u2015]')  # HYPHEN-HORIZONTAL BAR
+hyphens = re.compile('[\u2010-\u2015\u23af\u23bc\u23e4]')  # HYPHEN-HORIZONTAL BAR
 # single_quotes = re.compile('[\u2018-\u201B]')
 _whitespaces = re.compile('\s+', re.MULTILINE)
 
