@@ -509,7 +509,7 @@ DIMENSIONS = dotdict(
         head_regex=r'('
                    r'charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th)?|charge\s+at\s+threshold'
                    r'|(total[\s-]+|gate[\s-]to[\s-](source|drain[\s-](\(?"*miller"*\)?)?)[\s-])?(gate[\s-]+)?charge'
-                   r'|reversed?[−\s+]recover[edy]{1,2}[−\s+]charge'
+                   r'|reversed?[−\s]+recover[edy]{1,2}[−\s]+charge'
                    r'|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
 
         unit_regex=r'[uμnp]?C',
@@ -523,7 +523,7 @@ DIMENSIONS = dotdict(
     ),
 
     R=Dimension(
-        name='Resistance',
+        name='Electrical Resistance',
         head_regex=r'(RthJC|(internal[-\s]+)?gate[-\s]+resistance|(^|[^a-z])R[ _]?G(_?\(?int\)?)?)',
         unit_regex='[mkM]?(\u03a9|\u2126|O|Q|Ohm|W)',  # with OCR confusion and encoding confusion
         # \u03a9=greek omega, \u2126=ohm sign W datasheets/infineon/IPB083N10N3GATMA1.pdf
@@ -531,16 +531,22 @@ DIMENSIONS = dotdict(
     ),
 
     g=Dimension(
-        name='Transconductance',
-        head_regex=r'(gfs)', # TODO
+        name='Electrical Transconductance',
+        head_regex=r'(gfs)',  # TODO
         unit_regex='[k]?(S)',
         signed=False
     ),
 
+    r=Dimension(name='Thermal Resistance',
+                head_regex=r'(Rth[a-z]{1,4}|thermal resistance)',
+                unit_regex='(°C|℃)/W',
+                signed=False,
+                ),
+
     T=Dimension(  # temp
         name='Temperature',
         head_regex=None,
-        unit_regex=r'(°[CF]|K)',
+        unit_regex=r'(°[CF]|K|℃|℉)',
         signed=True,
     )
 )
@@ -618,47 +624,54 @@ def get_field_detect_regex(mfr):
         # others:       Qgs1* = charge from Qg_th to miller plateau start (0 Qgs_th|TH|Qgs1|)
         qgs += '1?'
     else:
-        qgs += '([^1]|$)'  # dont match Qgs1
-        qgs1 = r'|^Q[ _]?gs[ _]?1$'
+        qgs += '([^1]|($|\*))'  # dont match Qgs1
+        qgs1 = r'|^Q[ _]?gs[ _]?1($|\*)'
 
     def rec(pat: str, flags):
         # texts are normalized (horizontal_whitespace -> ' ')
-        pat = pat.replace(r'\s', ' ')
+        pat = pat.replace(r'\s', r' ') # dont match \n in \s 
         pat = f'(?P<detect>{pat})'
         return regex.compile(pat, flags=flags)
 
     # regex matched on cell contents
     fields_detect = dict(
 
-        Rds_on=(rec(r'(^R[ _]*DS[ _]*\(?on\)?|(Static[- ]+)?Drain([- ]+to)?[ -]+Source On([ -]+state)?[ -]+Resistance)', re.IGNORECASE)),
-        gfs=(rec(r'(^g[ _]*fs|forward transconductance)', re.IGNORECASE)),
+        Rds_on=(rec(r'(^R[ _]*DS[ _]*\(?on\)?|(Static[- ]+)?Drain([- ]+to)?[ -]+Source On([ -]+state)?[ -]+Resistance)',
+                    re.IGNORECASE)),
+        gfs=(rec(r'(^\|?[Yg][ _]*fs\|?|forward transconductance|Forward Transfer Admittance)', re.IGNORECASE)),
 
-        tDon=(rec(r'(Turn[−\s+]On[−\s+]Delay[−\s+]Time|^t[\s_]?d[\s_]?\(\s?on\s?\))', re.IGNORECASE),
+        tDon=(rec(r'(Turn[−\s]+On[−\s]+Delay[−\s]+Time|^t[\s_]?d[\s_]?\(\s?on\s?\))', re.IGNORECASE),
               ('rise', 'fall', 'off', 'forward')),  # not to be confused with diode forward ton
-        tDoff=(rec(r'(Turn[−\s+]Off[−\s+]Delay[−\s+]Time|^t[\s_]?d[\s_]?\(\s?off\s?\))', re.IGNORECASE),
+        tDoff=(rec(r'(Turn[−\s]+Off[−\s]+Delay[−\s]+Time|^t[\s_]?d[\s_]?\(\s?off\s?\))', re.IGNORECASE),
                ('rise', 'fall', 'on')),
-        tRise=(rec(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'fall')),
+        tRise=(rec(r'(rise\s+time|^t\s?r($|\*|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'fall', 'turn-on')),
         # t=(rec(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
-        tFall=(rec(r'(fall\s+time|^t\s?f($|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'rise')),
+        tFall=(rec(r'(fall\s+time|^t\s?f($|\*|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'rise', 'turn-off')),
+        trr=(rec(r'(^t\s?rr($|\*|\s)|reverse recovery time)', re.IGNORECASE), ()),
         Qrr=rec(
-            r'^((?!Peak)).*(reversed?[−\s+]recover[edy]{1,2}[−\s+]charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\s+recover))',
+            r'^((?!Peak)).*((reversed?|source-drain)[−\s]+recover[edy]{1,2}[−\s]+charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\*|\s+recover))',
             re.IGNORECASE),  # QRM
 
         Coss_TR=(
-            rec(r'(effective\s+output\s+capacitance\s+\(time related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?TR\)?)($|\s))',
+            rec(r'(effective\s+output\s+capacitance[\s,]+\(?time related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?TR\)?)($|\*|\s))',
                 re.IGNORECASE), ('energy',)),
-        Coss=rec(r'(output\s+capacitance|^C[ _]?oss([ _]?eff\.?\s*\(?ER\)?)?($|\sVGS))', re.IGNORECASE),
+        Coss_ER=(
+        # EPC: CossER, is a fixed capacitance that gives the same stored energy as Cos while Vos si rising from 0 to 50% BV_dss
+            rec(r'(effective\s+output\s+capacitance[\s,]+\(?energy related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\s))',
+                re.IGNORECASE), ('time',)),
+        #Coss_ER=(rec(r'(output\s+capacitance|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\sVGS))', re.IGNORECASE),('time',)),
+        Coss=(rec(r'(output\s+capacitance|^C[ _]?oss($|\*|\sVGS))', re.IGNORECASE), ('time', 'energy', 'eff',)),
         Ciss=rec(r'(input\s+capacitance|^C[ _]?iss($|\s))', re.IGNORECASE),
-        Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s))', re.IGNORECASE),
+        Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s|\*))', re.IGNORECASE),
 
-        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('=',)),
+        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('=','external')),
 
         Qgs2=(rec(
             r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',
             re.IGNORECASE),
               ('pre-vth', 'pre-threshold')),
         Qg_th=(rec(
-            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$){qgs1})',
+            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$|\*){qgs1})',
             re.IGNORECASE),
                ('post-threshold', 'post-vth')),
         Qsync=(rec(r'(total[\s-]+gate[\s-]+charge[\s-]+sync\.?|^Q[ _]?sync\.?)', re.IGNORECASE)),
@@ -667,24 +680,28 @@ def get_field_detect_regex(mfr):
         Qgs=(rec(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE), ('Qgd', 'pre-vth', 'post-Vth')),
-        Qsw=rec(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw$)', re.IGNORECASE),
-        Qg=(rec(  # this should be after all other gate charges
-            rf'(total[\s-]+gate[\s-]+charge|gate[\s-]+charge[\s-]+total|^Q[ _]?g([\s_]?\(?(tota?l?|on)\)?)?$)',
-            re.IGNORECASE), ('sync', 'Qgd')),
+        Qsw=rec(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw($|\*))', re.IGNORECASE),
         Qg_sync=(rec(
-            rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?$)',
+            rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?($|\*))',
             re.IGNORECASE), ()),  # infineon
+        Qoss=(rec(
+            rf'(^Q[ _]?oss($|\s|\*)|output charge)',
+            re.IGNORECASE), ()),
+
+        Qg=(rec(  # this should be after all other gate charges
+            rf'(total[\s-]+gate[\s-]+charge|gate[\s-]+charge[\s-]+total|^Q[ _]?g([\s_]?\(?(tota?l?|on|10V)\)?)?($|\*))',
+            re.IGNORECASE), ('sync', 'Qgd')),
 
         # VGS(pl), gate-source plateau
         Vpl=rec(
-            r'(gate\s+plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?$)',
+            r'(gate\s+plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?($|\*))',
             re.IGNORECASE),
 
         Vsd=rec(
-            r'(diode[\s-]+forward[\s-]+voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\sIF)|V[ _]?DS_?FW?D?)',
+            r'(diode[\s-]+forward[\s-]+voltage|forward diode voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
             re.IGNORECASE),
         # plate au
-        # Qrr=rec(r'(reverse[−\s+]recover[edy]{1,2}[−\s+]charge|^Q[ _]?rr?($|\srecover))',
+        # Qrr=rec(r'(reverse[−\s]+recover[edy]{1,2}[−\s]+charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
 
     )
