@@ -21,4 +21,6 @@ timeout-decorator
 xlrd>=2
 openpyxl>=3
 
+wakepy
+
 #pdfminer.six
