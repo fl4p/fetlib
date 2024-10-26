@@ -270,7 +270,7 @@ def field_value_regex_variations(d: Dimension):
         # 'QgGate charge total (10 V),VDS = 40 V,ID = 100 A,76,nC,,'
         #
         re.compile(  # typ only with (scrambled) testing conditions
-            rf'(?P<broad_typ_nanN_unitN>=name)?{head},?({test_cond_broad},)?[^a-z0-9](?P<typ>{field})(,({nan}))?(,(?P<unit>{unit}))?(,|$)',
+            rf'(?P<broad_typ_nanN_unitN>=name)?{head},?({test_cond_broad},)?[^\-*a-z0-9](?P<typ>{field})(,({nan}))?(,(?P<unit>{unit}))?(,|$)',
             re.IGNORECASE),
 
         re.compile(  # typ surrounded by nan/-, unit
@@ -524,7 +524,7 @@ DIMENSIONS = dotdict(
 
     R=Dimension(
         name='Electrical Resistance',
-        head_regex=r'(RthJC|(internal[-\s]+)?gate[-\s]+resistance|(^|[^a-z])R[ _]?G(_?\(?int\)?)?)',
+        head_regex=r'(RthJC|(internal[-\s]+)?gate[-\s]+resistance|on[ -]+resistance|(^|[^a-z])R[ _]?G(_?\(?int\)?)?)',
         unit_regex='[mkM]?(\u03a9|\u2126|O|Q|Ohm|W)',  # with OCR confusion and encoding confusion
         # \u03a9=greek omega, \u2126=ohm sign W datasheets/infineon/IPB083N10N3GATMA1.pdf
         signed=False
@@ -661,11 +661,11 @@ def get_field_detect_regex(mfr):
             rec(r'(effective\s+output\s+capacitance[\s,]+\(?energy related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\s))',
                 re.IGNORECASE), ('time',)),
         #Coss_ER=(rec(r'(output\s+capacitance|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\sVGS))', re.IGNORECASE),('time',)),
-        Coss=(rec(r'(output\s+capacitance|^C[ _]?oss($|\*|\sVGS))', re.IGNORECASE), ('time', 'energy', 'eff',)),
+        Coss=(rec(r'(output\s+capacitance|^C[ _]?oss($|\*|\sVGS))', re.IGNORECASE), ('time', 'energy',)), # eff
         Ciss=rec(r'(input\s+capacitance|^C[ _]?iss($|\s))', re.IGNORECASE),
         Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s|\*))', re.IGNORECASE),
 
-        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('=','external')),
+        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('Rg=','ext=','external')),
 
         Qgs2=(rec(
             r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',
@@ -681,7 +681,7 @@ def get_field_detect_regex(mfr):
         Qgs=(rec(
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE), ('Qgd', 'pre-vth', 'post-Vth')),
-        Qsw=rec(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw($|\*))', re.IGNORECASE),
+        Qsw=(rec(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw($|\*))', re.IGNORECASE), ('Qg',)),
         Qg_sync=(rec(
             rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?($|\*))',
             re.IGNORECASE), ()),  # infineon
