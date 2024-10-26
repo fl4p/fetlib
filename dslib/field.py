@@ -131,7 +131,7 @@ class Field():
             # TODO min, max updates?
 
         # if f has more values, use all of them
-        is_sup = len(f) > len(self)
+        is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
 
         for s in Field.StatKeys:
             if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))):
@@ -264,8 +264,11 @@ class DatasheetFields():
         self.fields_lists[f.symbol].append(f)
         self.fields_filled[f.symbol].fill(f)
 
-    def add_multiple(self, fields: Iterable[Field]):
+    def add_multiple(self, fields: Iterable[Field], source=None):
         for f in fields:
+            if source:
+                f = copy(f)
+                f._sources = {k: copy(source) for k in Field.StatKeys}
             self.add(f)
 
     def print(self, show_cond=False, show_sources=False):

@@ -103,7 +103,7 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
 
     # place manual fields:
     man_fields = dslib.manual_fields.get_fields()
-    ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []))
+    ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []), ['ref'])
 
     ff = dslib.manual_fields.fallback_specs(mfr, mpn)
     if ds or ff:
