@@ -29,6 +29,8 @@ def test_parse_lines():
     cases = [
         # (CSV_ROW, DIM, (MIN,TYP,MAX))
 
+        ("RDS(on),Static Drain-to-Source On-Resistance,---,7.2,9.0,mΩ,VGS = 10V,ID = 58A", 'Rds_on', (n, 7.2, 9)),
+
         # "Gate resistance,Re,-,0.7 -,Q,-"
         # VSD source-drain voltage, IS = 25 A; VGS = 0 V; Tj = 25 °C; Fig. 16, , -, 0.81, 1.2, V # todo, where is this from?, pnji, nxp P/N nxp PSMN6R5-80PS,127?
         ("QGS1,QGS2,nan", 'Qgs2', (n, n, n)),
@@ -188,7 +190,7 @@ def test_parse_lines():
         # ("Gate-to-Source Charge,QGS,VGS = 10 V, VDS = 75 V; ID = 41 A,15.0,nan,nC", "Qgs", (n, 15, n)),
         ("Gate-Drain Charge,nan,Qgd,nan,nan,nan,13,nan,nan,nan,nC", 'Qgd', (n, 13, n)),
         ("Output capacitance,C oss,nan,-,231.0,300,nan", 'Coss', (n, 231, 300)),
-        #(
+        # (
         #    "Coss eff.(TR) Output Capacitance (Time Related),---,385,---,VGS = 0V, VDS = 0V to 80V,nan", 'C',
         #    (n, 385, n)),
         ("Effective Output Capacitance,---,154,---,pF f = 1.0MHz,  See Fig.5,nan", 'Coss', (n, 154, n)),
@@ -230,7 +232,8 @@ def test_parse_lines():
 
     for rl, sym, (min, typ, max) in cases:
         dim = sym[:1]
-        m, field_sym = detect_fields('any', rl.split(','))
+        det = detect_fields('any', rl.split(','))
+        m, field_sym = det.match, det.symbol
         assert m and field_sym, 'no field detected in "%s" %s %s' % (rl, m, field_sym)
         assert field_sym[:len(sym)] == sym, ("DETECTED SYMBOL", field_sym, sym, rl)
         #             assert field_sym == sym, (rl, sym, field_sym)
@@ -250,6 +253,37 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
+    ds = parse_datasheet('../../datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
+    DatasheetFields("infineon", "BSB056N10NN3GXUMA2",
+                    fields=[Field("Qoss", nan, 73.0, 97.0, "nC"),
+                            Field("Rg", nan, 0.5, nan, "Ω"),
+                            Field("gfs", 34.0, 69.0, nan, "S"),
+                            Field("Ciss", nan, 4100.0, 5500.0, "pF"),
+                            Field("Coss", nan, 750.0, 1000.0, "None"),
+                            Field("Crss", nan, 27.0, nan, "None"),
+
+                            Field("tDon", nan, 15.0, nan, "ns"),
+                            Field("tRise", nan, 9.0, nan, "None"),
+                            Field("tFall", nan, 8.0, nan, "None"),
+                            Field("tDoff", nan, 25.0, nan, "None"),
+
+                            Field("Qgs", nan, 17.0, nan, "nC"),
+                            Field("Qgd", nan, 9.7, nan, "None"),
+                            Field("Qg", nan, 56.0, 74.0, "None"),
+
+                            Field("Vpl", nan, 4.2, nan, "V"),
+                            Field("Vsd", nan, 0.9, 1.2, "V"),
+                            Field("Qrr", nan, 174.0, nan, "nC"),
+                            Field("trr", nan, 64.0, nan, "ns"),
+                            Field("Rds_on", nan, 5.0, 5.6, "None"),
+
+                            #Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
+                            Field("Qsw", nan, 20, nan, "None")
+                            ])
+
+    d = parse_datasheet('../datasheets/rohm/././RJ1P10BBHTL1.pdf')
+    assert d
+
     d = tabula_read('datasheets/onsemi/FDMS86368-F085.pdf')
     # assert d.Vsd.max == 1.2  # or 1.25
 
@@ -589,7 +623,8 @@ def test_pdf_ocr():
     import subprocess
 
     ver = \
-    subprocess.run(['tesseract', '-v'], check=True, capture_output=True).stdout.decode().splitlines()[0].split(' ')[-1]
+        subprocess.run(['tesseract', '-v'], check=True, capture_output=True).stdout.decode().splitlines()[0].split(' ')[
+            -1]
     assert ver == '5.4.1'
 
     res = subprocess.run(
@@ -653,7 +688,8 @@ def test_pdf_ocr():
     assert d.Qsw == (na, 7.7, na)
 
     d = parse_datasheet('datasheets/././infineon/BSZ150N10LS3GATMA1.pdf')
-    assert ref.show_diff(d, err_threshold=1e-3) == 0  # TODO try different text extraction methods with BSZ150N10LS3GATMA1
+    assert ref.show_diff(d,
+                         err_threshold=1e-3) == 0  # TODO try different text extraction methods with BSZ150N10LS3GATMA1
 
     # IPB039N10N3GATMA1
     d = parse_datasheet('datasheets/infineon/IPP100N08N3GXKSA1.pdf')  # ocr
@@ -805,13 +841,12 @@ def test_mosfet_specs():
     assert d.Qg_th.typ == 7  # Qgs1
     assert d.Qgs2.typ == 3
     assert d.Qsw.typ == 16
-    assert d.Qgs.typ != 7 # qgs_th confusion
+    assert d.Qgs.typ != 7  # qgs_th confusion
     mf = d.get_mosfet_specs()
     assert mf.Qg_th == pytest.approx(7e-9, 1e-20)
     assert mf.Qgs2 == pytest.approx(3e-9, 1e-20)
     assert mf.Qsw == pytest.approx(16e-9, 1e-20)
     assert reference_data(d.part).show_diff(d) == 0
-
 
     d = parse_datasheet('datasheets/infineon/AUIRF7769L2TR.pdf')
     assert d.Qg == (na, 200, 300)

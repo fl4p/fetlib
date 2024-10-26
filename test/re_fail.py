@@ -5,3 +5,7 @@ r = re.compile(r'(charge(\s+gate[\s-]to[\s-](source|drain)\s*)?(\s+at\s+V[ _]?th
 
 next(r.finditer(s), None)
 
+
+
+# catasthrophic backtracking
+# 'Figure 9. Diode Forward Voltage vs. Current\nVGS = 0V\nTJ = -55oC\nTJ = 25oC\nTJ = 85oC\nTJ = 125oC\nTJ = 175oC\nTJ = 150oC\n1\n10\n100\n1000'

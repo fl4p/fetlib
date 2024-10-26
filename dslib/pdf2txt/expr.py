@@ -605,7 +605,8 @@ def get_dimensional_regular_expressions():
 
         C=field_value_regex_variations(DIMENSIONS.C),
         V=field_value_regex_variations(DIMENSIONS.V),
-        R=field_value_regex_variations(DIMENSIONS.R)
+        R=field_value_regex_variations(DIMENSIONS.R),
+        g=field_value_regex_variations(DIMENSIONS.g),
     )
     return dim_regs
 
@@ -629,7 +630,7 @@ def get_field_detect_regex(mfr):
 
     def rec(pat: str, flags):
         # texts are normalized (horizontal_whitespace -> ' ')
-        pat = pat.replace(r'\s', r' ') # dont match \n in \s 
+        pat = pat.replace(r'\s', r' ') # dont match \n in \s
         pat = f'(?P<detect>{pat})'
         return regex.compile(pat, flags=flags)
 

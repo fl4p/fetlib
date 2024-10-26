@@ -42,12 +42,12 @@ def main():
         # git clean -xn
 
     if args.no_cache:
-        from dslib.cache import disk_cache
-        disk_cache.disable(True)
+        from dslib.cache import disk_cache_disable
+        disk_cache_disable(True)
 
     if not args.dcdc_file:
         # set DC-DC operating point:
-        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
+        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
         print('Using default DC-DC:', dcdc)
     else:
         raise NotImplemented()
@@ -350,10 +350,19 @@ def tqdm_joblib(tqdm_object):
         joblib.parallel.BatchCompletionCallBack = old_batch_callback
         tqdm_object.close()
 
+def run_serial(jobs):
+    res = {}
+    for k, fn in jobs.items():
+        # print(k, '...')
+        res[k] = fn() if callable(fn) else fn[0](*fn[1:])
+    return res
 
 def run_parallel(jobs, max_concurrency=256,
                  backend: Literal['threading', 'multiprocessing'] = 'multiprocessing',
                  verbose=100, **kwargs):
+    if max_concurrency == 1:
+        return run_serial(jobs)
+
     from joblib import Parallel, delayed
     with tqdm_joblib(tqdm(desc="Run Progress:", total=len(jobs))) as progress_bar:
         results = Parallel(n_jobs=min(num_cores() + 1, max_concurrency, len(jobs)), verbose=verbose, backend=backend,

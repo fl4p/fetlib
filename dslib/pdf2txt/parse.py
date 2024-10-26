@@ -19,6 +19,14 @@ def _empty(s):
     return not s or str(s).lower() == 'nan'
 
 
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
 class TooManyPages(ValueError):
     pass
 
@@ -92,16 +100,18 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
     i = 0
     while i < len(lines):
         line = lines[i]
-        m_detect, field_sym = detect_fields(mfr, [line])
-        if m_detect:
-            dim = field_sym[0]
+        det_field = detect_fields(mfr, [line])
+        if det_field:
+            dim = det_field.symbol[0]
+            field_sym = det_field.symbol
+
             detected.add(field_sym)
 
             ctx_lines = lines[i:(i + 12)]
             f, m_parse = parse_field_multiline(
                 '\n'.join(ctx_lines),
                 dim=dim,
-                field_sym=field_sym,
+                field_sym=det_field.symbol,
                 cond=ctx_lines,
                 capture_match=True,
                 source=[source_name, 'text'],
@@ -113,12 +123,6 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
                 i += max(1, m_parse[0].count('\n') - 1)  # step forward
                 continue
             else:
-                def is_number(s):
-                    try:
-                        float(s)
-                        return True
-                    except ValueError:
-                        return False
 
                 def is_list(lines: List[str]):
                     syms = {"Qgs", "Qgs1", "Qgd", "Qsw", "Qoss", "trr", "Qrr", "Vdsf", "Qgodr"}
@@ -142,7 +146,8 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
 
                     return False
 
-                other_detected_in_context = set(detect_fields(mfr, [l])[1] for l in ctx_lines[:5]) - {field_sym, None}
+                other_detected_in_context = set(detect_fields(mfr, [l]).symbol for l in ctx_lines[:5]) - {field_sym,
+                                                                                                          None}
 
                 if verbose and field_sym != 'Rg':
                     print('\n', field_sym, 'not parsed', mfr, pdf_path)
@@ -457,7 +462,7 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
                       mul=1,
                       cond=cond,
                       unit=vd.get('unit'),
-                      source=source)
+                      source=(source or []) + [m.re.pattern[:30]])
             if range and not (check_range(f.min, range) and check_range(f.typ, range) and check_range(f.max, range)):
                 err.append((field_sym, 'field out of range', f, range))
                 continue
@@ -491,16 +496,25 @@ def parse_field_multiline(text, dim, field_sym, cond=None, capture_match=False, 
 class DetectedSymbol:
     def __init__(self, index: int, match: re.Match, symbol: str):
         self.index = index
+        assert (match is None) == (symbol is None)
         self.match = match
         self.symbol = symbol
 
+    @property
+    def dimension(self):
+        return self.symbol[0]
 
-def detect_fields(mfr, strings: List[str], multi=False) -> Union[Optional[DetectedSymbol], List[DetectedSymbol]]:
+    def __bool__(self):
+        return self.match is not None
+
+
+def detect_fields(mfr, strings: List[Union[str, float]], multi=False) -> Union[
+    Optional[DetectedSymbol], List[DetectedSymbol]]:
     # strings = [whitespaces_to_space(s).strip(' -') for s in strings]
     # normalize_text(str(s)).strip(' -')
 
-    #strings = [whitespace_to_space(s) for s in strings]
-    strings = [whitespace_to_space(s).lower() for s in strings]
+    # strings = [whitespace_to_space(s) for s in strings]
+    strings = [whitespace_to_space(str(s)).lower() for s in strings]
 
     fields_detect = get_field_detect_regex(mfr)
     detected = []
@@ -525,12 +539,12 @@ def detect_fields(mfr, strings: List[str], multi=False) -> Union[Optional[Detect
             m = field_re.search(s)
 
             if m:
-                ds =  DetectedSymbol(i, m, field_sym)
+                ds = DetectedSymbol(i, m, field_sym)
                 if multi:
                     detected.append(ds)
                 else:
                     return ds
-    return detected if multi else None
+    return detected if multi else DetectedSymbol(0, None, None)
 
 
 def right_strip_nan(v, n):
@@ -557,7 +571,8 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
         Q={'uC', 'nC', 'μC'},
         C={'uF', 'nF', 'μF'},
         V={'mV', 'V'},
-        R={'mΩ', 'Ω', 'kΩ', 'MΩ', 'mOhm', 'Ohm', 'kOhm', 'MOhm', 'megOhm'},
+        R={'mΩ', 'Ω', 'kΩ', 'MΩ', 'mOhm', 'Ohm', 'kOhm', 'MOhm', 'megOhm', 'mW', 'W', 'kW', 'MW', },
+        g={'S', 'mS'}
     )
 
     # noinspection PyTypeChecker
@@ -609,9 +624,10 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
                         warnings.warn(f'{source_base} {df.index.name} {row.to_list()}'
                                       f' potential header row has more than 1 {col}')
 
-            m, field_sym = detect_fields(mfr, row.iloc[:4])
+            det = detect_fields(mfr, row.iloc[:4])
 
-            if m:
+            if det:
+                m, field_sym = det.match, det.symbol
 
                 if verbose:
                     print('field detected', field_sym, m, 'in row', i, 'of', df.index.name,
