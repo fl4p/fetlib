@@ -24,12 +24,17 @@ https://www.ti.com/tool/download/SYNC-BUCK-FET-LOSS-CALC
 
 import math
 import warnings
+from typing import Tuple
 
-from dslib.spec_models import DcDcSpecs, MosfetSpecs
+from dslib import round_to_n, dotdict
+from dslib.magnetics.cores import MagneticCoreSpecs
+from dslib.spec_models import DcDcSpecs, MosfetSpecs, rel_err
+
+µ0 = 4 * math.pi * 1e-7
 
 
 class SwitchPowerLoss():
-    def __init__(self, P_on, P_gd, P_sw=math.nan, P_coss=math.nan, P_rr=math.nan, P_dt=math.nan):
+    def __init__(self, P_on, P_gd, P_sw=math.nan, P_coss=math.nan, P_rr=math.nan, P_dt=math.nan, cond=None):
         """
         :param P_on: conduction loss
         :param P_gd: gate drive loss
@@ -40,16 +45,32 @@ class SwitchPowerLoss():
         """
         self.P_on = P_on
         self.P_sw = P_sw
-        self.P_coss = P_coss
+        # self.P_coss = P_coss
         self.P_rr = P_rr
         self.P_gd = P_gd
         self.P_dt = P_dt
 
+        self._cond = cond
+
+    def get_cond(self, tag):
+        if not self._cond:
+            return {}
+        cond = {}
+        t = '_' + tag.split('_')[-1]
+        for k, v in self._cond.items():
+            if k.endswith(t):
+                cond.update(v)
+        return cond
+
     def values(self):
-        return self.__dict__.values()
+        d = self.__dict__.copy()
+        d.pop('_cond', None)
+        return d.values()
 
     def items(self):
-        return self.__dict__.items()
+        d = self.__dict__.copy()
+        d.pop('_cond', None)
+        return d.items()
 
     def parallel(self, n=2):
         """
@@ -65,26 +86,30 @@ class SwitchPowerLoss():
             P_rr=n * self.P_rr,
             P_gd=n * self.P_gd,
             P_dt=self.P_dt,  # Vsd body diode voltage drop
-            P_coss=n * self.P_coss,
+            cond=self._cond,
+            # P_coss=n * self.P_coss,
         )
 
     def buck_hs(self):
         p = self.P_sw + self.P_on + self.P_gd
-        if not math.isnan(self.P_coss):
-            p += self.P_coss
+        # if not math.isnan(self.P_coss):
+        #    p += self.P_coss
         # assert not math.isnan(p), (self.P_sw , self.P_on , self.P_gd)
         return p
 
     def buck_ls(self):
         # P_rr is induced but not self loss !
         p = self.P_rr + self.P_on + self.P_gd + self.P_dt
-        if not math.isnan(self.P_coss):
-            p += self.P_coss
+        # if not math.isnan(self.P_coss):
+        #    p += self.P_coss
         # assert not math.isnan(p)
         return p
 
     def sum(self):
         return sum(v for v in self.values() if not math.isnan(v))
+
+    def __iter__(self):
+        return iter(self.values())
 
 
 def mosfet_switching_trf(dc: DcDcSpecs, mf: MosfetSpecs):
@@ -106,7 +131,7 @@ def mosfet_switching_trf(dc: DcDcSpecs, mf: MosfetSpecs):
     return P_sw
 
 
-def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total,fallback_V_pl=math.nan):
+def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.nan, ls_Qoss=0, Lcsi=0):
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/power_loss_appli-e.pdf
     # https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
 
@@ -116,14 +141,26 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total,fallback_V_pl=math.nan
 
     i_rms2 = dc.D_buck * dc.Io_mean_squared_on
 
+    # TODO https://application-notes.digchip.com/070/70-41484.pdf
+
+    P_sw_on, P_sw_off, t_sw = mosfet_switching_hs(dc, mf, rg_total=rg_total, fallback_V_pl=fallback_V_pl)
+    if Lcsi > 0:
+        assert ls_Qoss > 0
+        P_sw_on, P_sw_off, t_sw = mosfet_switching_hs_lcsi(dc, mf, rg_total=rg_total, ls_Qoss=ls_Qoss,
+                                                           Lcsi=Lcsi,
+                                                           fallback_V_pl=fallback_V_pl)
+    # P_sw=mosfet_switching_trf(dc, mf),
+
     return SwitchPowerLoss(
         P_on=i_rms2 * mf.Rds_on,
-        # P_sw=mosfet_switching_trf(dc, mf),
-        P_sw=sum(mosfet_switching_hs(dc, mf, rg_total=rg_total, fallback_V_pl=fallback_V_pl)),
+        P_sw=(P_sw_on + P_sw_off),
         P_rr=0,  # body diode never conducts
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
+        P_dt=0,  # body diode never conducts
         # P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss, # https://www.onelectrontech.com/power-mosfet-capacitance-coss-and-switching-loss/
         # P_coss=.5 * dc.f * dc.Vi * mf.Qoss,  #<- https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=8
+        # TODO P_coss from Fundamentals of Power Electronics. (integrate Capacity ~ 1/sqrt(V)),
+        cond=dict(t_sw=t_sw),
     )
 
 
@@ -146,16 +183,48 @@ def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs):
     return SwitchPowerLoss(
         P_on=(1 - dc.D_buck) * dc.Io_mean_squared_on * mf.Rds_on,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,
-        P_rr=dc.Vi * dc.f * mf.Qrr,  # this is dissipated in HS
+        P_rr=dc.Vi * dc.f * mf.Qrr * 1.2,  # this is dissipated in HS
+        # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
+        # TODO Qrr di/dit, Id, (IPT025N15NM6ATMA1)
+        # TODO https://application-notes.digchip.com/070/70-41484.pdf
+        # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
+        P_sw=0,  # negligible
         # P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss,
     )
 
 
+P2 = Tuple[float, float]
+
+
 class CoilSpecs():
-    def __init__(self, Rdc):
+    def __init__(self, Rdc, L=None, turns=None, core: MagneticCoreSpecs = None):
+        """
+
+        :param L: inductivity in H
+        :param Rdc: ESR in Ω
+        :param turns: number of turns
+        """
         # TODO skin effect
+
+        if turns is None:
+            assert L > 0
+            turns = round_to_n((L / core.A_L) ** .5, 3)
+
+        l = turns ** 2 * core.A_L
+        if L is None:
+            L = round_to_n(l, 3)
+
         self.Rdc = Rdc
+        self.turns = turns
+
+        self.core: MagneticCoreSpecs = core
+        self.L = L
+
+        assert abs(rel_err(L, l)) < 0.05
+
+    def __repr__(self):
+        return f'CoilSpecs(Rdc={self.Rdc}, L={self.L}, T={self.turns}, core={(self.core)})'
 
 
 def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
@@ -165,12 +234,23 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
         * dcr wire loss
         * skin effect TODO
     * Core Loss
+        * hysteresis loss (core volume) x (area of B-H hysteresis loop) ~ peak ac flux density ΔB
+            ΔB = 2Bpk = B_acmax - B_acmin (https://www.mag-inc.com/design/design-guides/powder-core-loss-calculation)
+        * eddy current loss (i2r losses inside core material) ~ f^2
 
     Well designed coils have a 80/20% distribution of Wire and Core Loss
 
 
     ref https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf
 
+    ref https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=433
+    ref https://ieeexplore.ieee.org/document/1196712
+        * data sheet data from manufactureres is for sinusodial excitation
+        * DC bias affects loss https://sci-hub.se/10.1109/41.649940
+                                https://sci-hub.se/10.1109/APEC.1996.500481
+
+
+    https://www.psma.com/sites/default/files/uploads/tech-forums-magnetics/presentations/2012-apec-134-core-loss-modeling-inductive-components-employed-power-electronic-systems.pdf
 
     :param dc:
     :param coil:
@@ -178,17 +258,61 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     """
 
     assert math.isnan(dc.Iripple) or dc.Iripple > 0
+    assert abs(rel_err(dc.L, coil.L)) < 0.05
+
+    # require ripple current since core loss computation needs it anyways
+    assert math.isfinite(dc.Iripple), "no ripple current"
 
     if math.isfinite(dc.Iripple):
         assert dc.Iripple < 2 * dc.Io, 'CCM required, DCM not supported TODO'
-        ip = (dc.Io + dc.Iripple / 2)
-        iv = (dc.Io - dc.Iripple / 2)
-        P_dcr = (dc.Io ** 2 + ((ip - iv) ** 2 / 12)) * coil.Rdc
+        P_dcr = (dc.Io ** 2 + (dc.Iripple ** 2 / 12)) * coil.Rdc  # https://www.ti.com/lit/an/slvaeq9/slvaeq9.pdf#page=5
     else:
         P_dcr = dc.Io ** 2 * coil.Rdc
 
-    return dict(
+    # https://www.quora.com/What-is-the-formula-for-calculating-peak-value-of-flux-density-of-an-inductor
+    # TODO DC bias https://www.ti.com/lit/an/snva038b/snva038b.pdf?ts=1730558298197
+    # B_pk = (dc.Vi - dc.Vo) * dc.ton_buck / (coil.turns * coil.core.A_e)  # peak flux density in Tesla
+    # B_pk2 = coil.L * dc.Io_max / (coil.turns * coil.core.A_e)  # peak flux density in Tesla
+
+    # https://www.eevblog.com/forum/projects/toroidal-core-for-high-power-buck-converter/msg3085987/#msg3085987
+    """
+    Bmax = (ueff*uo*N*Ipk)/ lc
+    ueff = effective permeability
+    uo = free space permeability
+    N = turns
+    Ipk = peak current
+    lc = mean core length
+    """
+
+    # method 2
+    """
+    H_dc = tpl * dc.Io
+    Hpp = tpl * dc.Iripple
+    Bpk2 = .5 * µ0 * coil.core.mat.permeability_dc_bias(H=H_dc) * Hpp
+
+    Bpk22 = .5 * µ0 * coil.core.mat.permeability_dc_bias(H=H_dc) * Hpp
+
+    ur = coil.core.mat.permeability_dc_bias(H=H_dc)
+
+    Lbias = coil.L * ur / coil.core.mat.mu_r
+    Iripple_bias = dc.Iripple / (ur / coil.core.mat.mu_r)  # TODO fix model
+    # ^ TODO fix mode
+
+    # TODO confirm Iripple_bias with measurement
+    Hpk_ac = coil.turns * Iripple_bias / (coil.core.l_e)  # Eq13.14 Fundamentals of Power Electronics. 2nd, p497
+    # ^ hysteresis loss is modeled with p2p ac ripple
+
+    Bpk_ac = ur * µ0 * Hpk_ac  # peak ac flux density [T]
+    B_pk = ur * µ0 * Hpk_ac
+    """
+
+    from dslib.magnetics.powerloss import core_loss_from_dc_bias, core_loss_from_dc_magnetization
+    return dotdict(
         P_dcr=P_dcr,
+        P_core=max(
+            core_loss_from_dc_magnetization(dc, coil),  # method 1
+            core_loss_from_dc_bias(dc, coil),  # method 2
+        )
     )
 
 
@@ -204,39 +328,45 @@ def mosfet_switching_hs(dc: DcDcSpecs, hs: MosfetSpecs, rg_total: float, fallbac
     :return:
     """
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=3  3.1.1
-    assert  math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
+    assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
     vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     ig_on = (dc.Vgs - vpl) / rg_total
     ig_off = (vpl) / rg_total
-    t_on = hs.Qsw  / ig_on
-    t_off = hs.Qsw  / ig_off
+    t_on = hs.Qsw / ig_on
+    t_off = hs.Qsw / ig_off
     tr = max(t_on, hs.tRise)
     tf = max(t_off, hs.tFall)
     Psw_on = 0.5 * dc.Vi * dc.f * dc.Io_min * tr
     Psw_off = 0.5 * dc.Vi * dc.f * dc.Io_max * tf
-    return Psw_on, Psw_off
+    return Psw_on, Psw_off, dict(tr=tr, tf=tf)
 
 
-def mosfet_switching_hs_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls: MosfetSpecs, rg_total: float, Lcsi: float):
+def mosfet_switching_hs_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls_Qoss, rg_total: float, Lcsi: float,
+                             fallback_V_pl=math.nan):
     # loss with L_csi considerations
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf
     Qgs2 = hs.Qgs2
+    vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
 
     # pw on
-    ig1_on = (dc.Vgs - hs.V_pl) / (rg_total + (Lcsi * dc.Io_min / Qgs2))
-    a = (Lcsi * ls.Qoss / hs.Qgd ** 2) if Lcsi else 0
+    ig1_on = (dc.Vgs - vpl) / (rg_total + (Lcsi * dc.Io_min / Qgs2))
+    a = (Lcsi * ls_Qoss / hs.Qgd ** 2) if Lcsi else 0
     b = rg_total
-    c = -(dc.Vgs - hs.V_pl)
+    c = -(dc.Vgs - vpl)
     ig2_on = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
-    Psw_on = 0.5 * dc.Vi * dc.Io_min * dc.f * (Qgs2 / ig1_on + hs.Qgd / ig2_on)
+    tr = (Qgs2 / ig1_on + hs.Qgd / ig2_on)
+    tr = max(tr, hs.tRise)
+    Psw_on = 0.5 * dc.Vi * dc.Io_min * dc.f * tr
 
     # pw off
-    ig1_off = hs.V_pl / (rg_total + Lcsi * dc.Io_max / Qgs2)
-    c = - hs.V_pl
+    ig1_off = vpl / (rg_total + Lcsi * dc.Io_max / Qgs2)
+    c = - vpl
     ig2_off = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
-    Psw_off = 0.5 * dc.Vi * dc.Io_max * dc.f * (Qgs2 / ig1_off + hs.Qgd / ig2_off)
+    tf = (Qgs2 / ig1_off + hs.Qgd / ig2_off)
+    tf = max(tf, hs.tFall)
+    Psw_off = 0.5 * dc.Vi * dc.Io_max * dc.f * tf
 
-    return Psw_on, Psw_off
+    return Psw_on, Psw_off, dict(tr=tr, tf=tf, Lcsi=Lcsi, Qoss_ls=ls_Qoss)
 
 
 def tests():

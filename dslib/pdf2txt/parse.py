@@ -6,6 +6,7 @@ import warnings
 from typing import List, Tuple, Union, Optional
 
 import pandas as pd
+import timeout_decorator
 
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields

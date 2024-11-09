@@ -2,6 +2,8 @@ import math
 import warnings
 from typing import Literal
 
+from dslib import round_to_n
+
 
 def isnum(v):
     return v is not None and not math.isnan(v)
@@ -19,7 +21,7 @@ Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
-                 Vpl=None, Vsd=None, Coss=None):
+                 Vpl=None, Vsd=None, Coss=None, part=None):
         """
 
         :param Vds_max:
@@ -37,6 +39,7 @@ class MosfetSpecs:
         :param Vsd: body diode forward voltage
         :param Coss: output capacity (eff. energy related)
         """
+        self.part = part
         self.Vds = Vds_max
 
         if isinstance(Rds_on, str):
@@ -179,7 +182,7 @@ class MosfetSpecs:
         return self.Qg - self.Qgd - self.Qgs
 
     def __str__(self):
-        return f'MosfetSpecs({round(self.Vds,0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9,0)}n Qsw={round(self.Qsw * 1e9,1)}n trf={round(self.tRise * 1e9,1)}/{round(self.tFall * 1e9,1)}n Qrr={round(self.Qrr * 1e9,1)}n)'
+        return f'MosfetSpecs({round(self.Vds, 0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9, 0)}n Qsw={round(self.Qsw * 1e9, 1)}n trf={round(self.tRise * 1e9, 1)}/{round(self.tFall * 1e9, 1)}n Qrr={round(self.Qrr * 1e9, 1)}n)'
 
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
@@ -188,7 +191,8 @@ class MosfetSpecs:
 
 class DcDcSpecs:
 
-    def __init__(self, vi, vo, f, Vgs, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None):
+    def __init__(self, vi, vo, f, Vgs=10, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
+                 L=None):
         """
 
         :param vi: input voltage
@@ -218,16 +222,31 @@ class DcDcSpecs:
 
         if ripple_factor is not None:
             assert iripple is None
+            assert L is None
             iripple = io * ripple_factor
 
-        self.Iripple = iripple if not iripple is None else math.nan
+        if L is not None:
+            assert ripple_factor is None
+            assert iripple is None
+            assert 1e-6 < L < 999e-6
+            # https://www.ti.com/lit/ds/symlink/lm5163.pdf#page=18 (18)
+            # notice that the ripple current does not depend on io (dc bias current)
+            iripple = vo / (f * L) * (1 - vo / vi)
+            assert iripple < 2 * io, "CCM mode only (DCM not implemented)"
+            assert 0.01 < iripple / io < 2, (iripple, io, round(iripple / io, 2))
+        else:
+            L = round_to_n(vo / (f * iripple) * (1 - vo / vi), 3)
+
+        self.Iripple = iripple if not iripple is None else math.nan  # dI peak-peak
 
         self.f = f
         self.Vgs = Vgs
         self.tDead = tDead
+        self.L = L
 
         p = 1 / self.f
-        assert tDead / p < 0.1, (tDead / p)
+        if tDead is not None:
+            assert tDead / p < 0.1, (tDead / p)
 
     @property
     def Pout(self):
@@ -242,6 +261,10 @@ class DcDcSpecs:
         :return: Buck duty cycle of HS switch
         """
         return self.Vo / self.Vi
+
+    @property
+    def ton_buck(self):
+        return self.D_buck / self.f
 
     @property
     def Io_min(self):
@@ -277,8 +300,8 @@ class DcDcSpecs:
         return (dc.Io_max ** 2 + dc.Io_max * dc.Io_min + dc.Io_min ** 2) / 3
 
     def __str__(self):
-        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW)' % (
-            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout)
+        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW ΔI=%.1fA)' % (
+            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout, self.Iripple)
 
     def fn_str(self, topo: Literal['buck']):
         if topo == 'buck':
@@ -289,6 +312,14 @@ class DcDcSpecs:
         return [p for p in parts if (
                 p.specs.Vds_max >= (dcdc.Vi * 1.1) and p.specs.Vds_max <= (dcdc.Vi * 4)
                 and p.specs.ID_25 > dcdc.Io_max * 1.2)]
+
+    def C_out_min(self, vout_ripple):
+        # https://www.ti.com/lit/ds/symlink/lm5163.pdf
+        return self.Iripple / (8 * self.f * vout_ripple)
+
+    def C_in_min(self, vin_ripple, R_esr=0):
+        # https://www.ti.com/lit/ds/symlink/lm5163.pdf
+        return self.Io * self.D_buck * (1 - self.D_buck) / (self.f * (vin_ripple - self.Io * R_esr))
 
 
 def tests():

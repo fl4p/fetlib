@@ -1,7 +1,14 @@
-import os
+import math
 
-from dslib.powerloss import dcdc_buck_hs, CoilSpecs, dcdc_buck_coil, dcdc_buck_ls
-from dslib.spec_models import DcDcSpecs, MosfetSpecs
+import matplotlib.pyplot as plt
+import pandas as pd
+
+import dslib.magnetics.cores
+from dslib import dotdict, round_to_n
+from dslib.field import Field
+from dslib.pdf2txt.parse import parse_datasheet
+from dslib.powerloss import dcdc_buck_hs, CoilSpecs, dcdc_buck_coil, dcdc_buck_ls, SwitchPowerLoss
+from dslib.spec_models import DcDcSpecs
 
 if __name__ == '__main__':
     """
@@ -20,51 +27,132 @@ if __name__ == '__main__':
     CSD19503KCS (switch)
     """
 
-    dcdc = DcDcSpecs(vi=70, vo=32, pin=800, f=40e3, Vgs=12, tDead=400e-9)
+    coil = CoilSpecs(Rdc=6.2e-3,
+                     L=46e-6,
+                     # turns=19.5,
+                     core=dslib.magnetics.cores.KDM_KS130_060A.stack(2),
+                     #core=dslib.magnetics.cores.Micrometals_OE_184_060,
+                     #core=dslib.magnetics.cores.Micrometals_OE_226_060,
 
-    fet_ho = MosfetSpecs.from_mpn('AON6284A', mfr='ao')
-    fet_lo = MosfetSpecs.from_mpn('AONS66811', mfr='ao')
+                     )
+
+    ds_ho = parse_datasheet('datasheets/toshiba/TK6R8A08QM.pdf', mfr='toshiba')
+    ds_ho.add(Field('Rds_on_10v', math.nan, 5.3e-3, 6.8e-3))
+
+    # ds_ho = parse_datasheet('datasheets/ti/CSD19501KCS.pdf')
+    # ds_ho.add(Field('Rds_on_10v', math.nan, 5.5e-3, 6.5e-3))
+
+    ds_lo = parse_datasheet('datasheets/onsemi/FDP027N08B.pdf', mfr='onsemi')
+    ds_lo.add(Field('Rds_on_10v', math.nan, 2.21e-3, 2.7e-3))
+
+    fet_ho = ds_ho.get_mosfet_specs()
+    fet_lo = ds_lo.get_mosfet_specs()
+
+    rg_total = 22
+
+    # fet_ho = MosfetSpecs.from_mpn('TK6R8A08QM', mfr='toshiba')
+    # fet_lo = MosfetSpecs.from_mpn('FDP027N08B', mfr='onsemi')
+
+    hs_p = 2
 
 
-    p_hs = dcdc_buck_hs(
-        dcdc,
-        fet_ho,
-        # MosfetSpecs(Rds_on=1e-3, Qg=1e-9, tRise=.5e-9, tFall=.5e-9, Qrr=1e-9)
-        # MosfetSpecs(Rds_on=6.8e-3, Qg=39e-9, tRise=39e-9, tFall=46e-9, Qrr=43e-9),  # TK6R8A08QM
-        #MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),#CSD19506KCS
+    def compute_losses(pin):
 
-        # MosfetSpecs.mpn(mpn='TK6R8A08QM', mfr='toshiba')
-    )
+        # dcdc = DcDcSpecs(vi=66, vo=27, pin=800, f=40e3, Vgs=11, tDead=400e-9, L=50e-6)
+        dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=40e3, Vgs=11, tDead=400e-9, L=coil.L)
 
-    p_hs = p_hs.parallel(2)
+        p_hs = dcdc_buck_hs(
+            dcdc,
+            fet_ho,
+            rg_total=rg_total,
+            fallback_V_pl=5.4,
 
-    coil = CoilSpecs(Rdc=5e-3)
-    p_coil = dcdc_buck_coil(dcdc, coil)
+            Lcsi=2e-9,
+            ls_Qoss=250e-9, # TODO csd19503
+            # MosfetSpecs(Rds_on=1e-3, Qg=1e-9, tRise=.5e-9, tFall=.5e-9, Qrr=1e-9)
+            # MosfetSpecs(Rds_on=6.8e-3, Qg=39e-9, tRise=39e-9, tFall=46e-9, Qrr=43e-9),  # TK6R8A08QM
+            # MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),#CSD19506KCS
 
-    p_ls = dcdc_buck_ls(dcdc,
-                        #MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),
-                        fet_lo
-                        )
+            # MosfetSpecs.mpn(mpn='TK6R8A08QM', mfr='toshiba')
+        )
 
+        p_hs = p_hs.parallel(hs_p)
+
+        p_coil = dcdc_buck_coil(dcdc, coil)
+
+        p_ls = dcdc_buck_ls(dcdc,
+                            # MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),
+                            fet_lo
+                            )
+
+        p_misc = dotdict(
+            P_mcu=0.7,  # ESP32
+            P_csr=1e-3 * dcdc.Io ** 2,  # current sense resistor (burden)
+            P_bflow=1e-3 * dcdc.Io ** 2,  # backflow switch
+            P_rpcb=.7e-3 * dcdc.Io ** 2,
+        )
+
+        return dotdict(hs=p_hs, ls=p_ls, coil=p_coil, misc=p_misc), dcdc
+
+
+    losses, dcdc = compute_losses(900)
 
     print(dcdc)
-    print('HS(cntr)=', fet_ho)
-    print('LS(sync)=', fet_lo)
+    print('Rg_total=', rg_total)
+    print('HS(cntr)=', str(hs_p) + 'p', fet_ho.part.mpn, fet_ho)
+    print('LS(sync)=', fet_lo.part.mpn, fet_lo)
+    print('Coil=', repr(coil))
 
-    p_groups = dict(hs=p_hs, ls=p_ls, coil=p_coil)
+    p_total_total = sum(sum(p.values()) for p in losses.values())
 
-    for n, p in p_groups.items():
-        p_total = sum(p.values())
-        print(f'P_{n}:')
-        for k, v in p.items():
-            print('%10s = %.2f W (%2.0f%%)' % (k, v, v / p_total * 100))
-        print('Total P_%s = %.2f W (%4.2f%%)' % (n, p_total, p_total / dcdc.Pout * 100))
+    for n, p in losses.items():
+        p_group = sum(p.values())
+        print(f'P_{n:5}', '  =  %.2f W       (%4.1f%%)' % (p_group, p_group / p_total_total * 100))
+        for k, v in sorted(p.items(), key=lambda t: -t[1]):
+            if v != 0:
+                if isinstance(p, SwitchPowerLoss) or hasattr(p, 'get_cond'):
+                    cond_str = ', '.join(f'{k}={round_to_n(v, 3)}' for k, v in p.get_cond(k).items())
+                else:
+                    cond_str = ''
+                print('%10s = %.2f W (%2.0f%%)  (%4.1f%%) %30s' % (k, v, v / p_group * 100, v / p_total_total * 100,
+                                                                   cond_str))
+        # print()
         print('')
 
-    p_total = sum(sum(p.values()) for p in p_groups.values())
     print('')
-    print('Total P = %.2f W (%4.2f%%)' % (p_total,  p_total / dcdc.Pout * 100))
+    print('Total P = %.2f W (%4.2f%%)' % (p_total_total, p_total_total / dcdc.Pout * 100))
+    print('Efficiency = %.1f%%' % ((1 - p_total_total / dcdc.Pout) * 100))
 
+    eff_curve = []
+    loss_curve = []
+    pin = 5
+    while pin < 1200:
+        try:
+            losses, dcdc = compute_losses(pin)
+            p_total = sum(map(lambda g: sum(g.values()), losses.values()))
+            eff = 1 - p_total / pin
+            eff_curve.append((pin, eff))
+            loss_curve.append(dict(
+                pin=pin,
+                P_sw=losses.hs.P_sw,
+                P_rds=losses.hs.P_on + losses.ls.P_on,
+                P_dt=losses.ls.P_dt,
+                P_rr=losses.ls.P_rr,
+                P_ldcr=losses.coil.P_dcr,
+                P_lcore=losses.coil.P_core,
+                P_csr=losses.misc.P_csr,
+            ))
+        except AssertionError as e:
+            #print('err with pin', pin, e)
+            pass
+        pin *= 1.1
+
+    pd.DataFrame(eff_curve).set_index(0)[1].plot()
+    plt.grid()
+    plt.ylim((0.95,1))
+    plt.show()
+    pd.DataFrame(loss_curve).set_index('pin').plot()
+    plt.show()
 
 """
 Cross Testing with LTSpice
