@@ -62,6 +62,34 @@ Diode Characteristics
 ##########################################
 test_stream = """
 
+trr
+Reverse recovery time
+ISD = 180 A, di/dt = 100 A/μs
+VDD = 64 V, TJ = 150 °C (see
+Figure 16. Test circuit for
+inductive load switching and
+diode recovery times)
+-
+108
+ns
+> trr=(n,n,108)
+
+
+Static drain-source on- resistance
+VGS = 10 V, ID = 60 A
+3.9
+4.5
+mΩ
+Table 4. Dynamic
+Symbol
+Parameter
+Test conditions
+Min.
+Typ.
+Max.
+> Rds_on=(n,3.9,4.5)
+
+
 Qgs
 VGS  = 10V, VDS = 0.5 * VDSS, ID = 0.5 * ID25
 185

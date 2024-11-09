@@ -253,7 +253,7 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
-    ds = parse_datasheet('../../datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
+    ds = parse_datasheet('../datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
     DatasheetFields("infineon", "BSB056N10NN3GXUMA2",
                     fields=[Field("Qoss", nan, 73.0, 97.0, "nC"),
                             Field("Rg", nan, 0.5, nan, "Ω"),
@@ -284,20 +284,20 @@ def test_pdf_parse():
     d = parse_datasheet('../datasheets/rohm/././RJ1P10BBHTL1.pdf')
     assert d
 
-    d = tabula_read('datasheets/onsemi/FDMS86368-F085.pdf')
+    d = tabula_read('../datasheets/onsemi/FDMS86368-F085.pdf')
     # assert d.Vsd.max == 1.2  # or 1.25
 
-    d = tabula_read('datasheets/st/STP270N8F7.pdf')
+    d = tabula_read('../datasheets/st/STP270N8F7.pdf')
     # assert d.Vsd
 
-    d = parse_datasheet('datasheets/st/STP140N8F7.pdf', need_symbols={'Vsd'})
+    d = parse_datasheet('../datasheets/st/STP140N8F7.pdf', need_symbols={'Vsd'})
     assert d.Vsd.max == 1.2
 
-    d = parse_datasheet('datasheets/st/STD110N8F6.pdf')
+    d = parse_datasheet('../datasheets/st/STD110N8F6.pdf')
     assert d.Vsd.max == 1.2
 
-    # d = parse_datasheet('datasheets/infineon/AUIRF7759L2TR.pdf')
-    d = tabula_read('datasheets/./infineon/AUIRF7759L2TR.pdf', need_symbols={'Vsd'})
+    # d = parse_datasheet('../datasheets/infineon/AUIRF7759L2TR.pdf')
+    d = tabula_read('../datasheets/./infineon/AUIRF7759L2TR.pdf', need_symbols={'Vsd'})
     ref = DatasheetFields("None", "None",
                           fields=[Field("Qgd", nan, 62.0, 93.0, "nC"), Field("Qsw", nan, 73.0, nan, "None"),
                                   Field("tRise", nan, 37.0, nan, "ns"),
@@ -309,11 +309,11 @@ def test_pdf_parse():
     assert d.Qgd == (na, 62, 93)
     assert d.Vsd.max == 1.3
 
-    d = parse_datasheet('datasheets/diodes/DMTH10H005SCT.pdf', need_symbols={'Vsd'})
+    d = parse_datasheet('../datasheets/diodes/DMTH10H005SCT.pdf', need_symbols={'Vsd'})
     assert d.get_mosfet_specs().Vsd == 1.3
     assert d
 
-    d = parse_datasheet('datasheets/vishay/SIR578DP-T1-RE3.pdf')
+    d = parse_datasheet('../datasheets/vishay/SIR578DP-T1-RE3.pdf')
     assert d.Qg == (na, 24.5, 37) or d.Qg == (na, 32.5, 49)
 
     ref = DatasheetFields("SIR680ADP-T1-RE3", "vishay",
@@ -325,23 +325,23 @@ def test_pdf_parse():
                                   Field("Qgd", nan, 10.0, nan, "nC"),
                                   Field("tRise", nan, 8.0, 16.0, "ns"),
                                   Field("tFall", nan, 9.0, 18.0, "ns")])
-    d = parse_datasheet('datasheets/vishay/SIR680ADP-T1-RE3.pdf')
+    d = parse_datasheet('../datasheets/vishay/SIR680ADP-T1-RE3.pdf')
     assert ref.show_diff(d, err_threshold=1e-9) == 0
     assert d.get_mosfet_specs().Qg in {43e-9, 55e-9}
 
     # fixable with maco Preview print as pdf (came as CUPS method?)
-    df = tabula_read('datasheets/infineon/IRF7779L2TRPBF.pdf')
+    df = tabula_read('../datasheets/infineon/IRF7779L2TRPBF.pdf')
     assert len(df) > 5
 
     # fixable with gs:
-    df = parse_datasheet('datasheets/onsemi/NVMFS6H800NWFT1G.pdf')
+    df = parse_datasheet('../datasheets/onsemi/NVMFS6H800NWFT1G.pdf')
     assert len(df) > 5
 
     # parse_datasheet(mfr='diodes', mpn='DMTH8003SPS-13')
-    d = parse_datasheet('datasheets/toshiba/XPW4R10ANB,L1XHQ.pdf')
+    d = parse_datasheet('../datasheets/toshiba/XPW4R10ANB,L1XHQ.pdf')
     assert len(d) >= 7
 
-    ds = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon')
+    ds = parse_datasheet('../datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon')
     ref = DatasheetFields("IPT025N15NM6ATMA1", "infineon",
                           fields=[Field("Qrr", nan, 184.0, 368.0, "None"), Field("Qg", nan, 105.0, 137.0, "nC"),
                                   Field("Coss", nan, 2300.0, 3000.0, "pF"), Field("tRise", nan, 16.0, nan, "ns"),
@@ -352,13 +352,13 @@ def test_pdf_parse():
     assert ref.show_diff(ds, err_threshold=1e-3) == 0
     assert len(ds) > 8
 
-    d = parse_datasheet('datasheets/infineon/AUIRFS4115.pdf')  # split rows
+    d = parse_datasheet('../datasheets/infineon/AUIRFS4115.pdf')  # split rows
     assert d.Qrr.typ == 300
 
-    d = parse_datasheet('datasheets/infineon/IPI072N10N3G.pdf')
+    d = parse_datasheet('../datasheets/infineon/IPI072N10N3G.pdf')
     assert d.Qsw.typ == 16
 
-    d = tabula_read('datasheets/infineon/BSC021N08NS5ATMA1.pdf', pre_process_methods='nop')
+    d = tabula_read('../datasheets/infineon/BSC021N08NS5ATMA1.pdf', pre_process_methods='nop')
     assert d.tRise.typ == 17
     assert d.tFall.typ == 20  # tFall has typ because it doesnt match the regex
     assert d.Qrr.typ == 80 and d.Qrr.max == 160
@@ -367,16 +367,16 @@ def test_pdf_parse():
     assert d.Vpl.typ == 4.4
     assert d.Qgs.typ == 29
 
-    d = parse_datasheet('datasheets/mcc/MCB70N10YA-TP.pdf')
+    d = parse_datasheet('../datasheets/mcc/MCB70N10YA-TP.pdf')
     assert len(d) >= 8
 
-    d = parse_datasheet('datasheets/onsemi/FDP047N10.pdf')
+    d = parse_datasheet('../datasheets/onsemi/FDP047N10.pdf')
     assert d.Qg == (na, 160, 210)
     assert d.Qgs == (na, 56, na)
     assert d.Qgd == (na, 36, na)
     assert len(d) >= 8
 
-    d = parse_datasheet('datasheets/onsemi/FDD86367.pdf')
+    d = parse_datasheet('../datasheets/onsemi/FDD86367.pdf')
     assert d.Qg == (math.nan, 68, 88)
     assert d.Qg_th == (math.nan, 8.8, math.nan)
     assert d.Qgs == (math.nan, 22, math.nan)
@@ -385,7 +385,7 @@ def test_pdf_parse():
     assert abs(mf.Qg_th - 8.8e-9) < 1e-15
     assert mf.Qgs2 == (mf.Qgs - mf.Qg_th)
 
-    d = parse_datasheet('datasheets/nxp/PSMN5R5-100YSFX.pdf')
+    d = parse_datasheet('../datasheets/nxp/PSMN5R5-100YSFX.pdf')
     assert d.Qg == (32, 64, 95)
     assert d.Qgs == (10.3, 17.1, 24)
     assert d.Qg_th.typ == 12
@@ -393,212 +393,212 @@ def test_pdf_parse():
     assert d.Qgd == (3.5, 11.8, 27.1)
     assert d.Qrr == (math.nan, 30, math.nan)
 
-    d = parse_datasheet('datasheets/infineon/IQE050N08NM5CGATMA1.pdf', mfr='infineon')
+    d = parse_datasheet('../datasheets/infineon/IQE050N08NM5CGATMA1.pdf', mfr='infineon')
     assert len(d) >= 9
 
-    d = parse_datasheet('datasheets/infineon/IQDH88N06LM5CGSCATMA1.pdf', mfr='infineon')
+    d = parse_datasheet('../datasheets/infineon/IQDH88N06LM5CGSCATMA1.pdf', mfr='infineon')
     assert d.Qgs.typ == 27
     # missing Qgs
     miss = {'Coss', 'Qg', 'Qg_th', 'Qgd', 'Qgs', 'Qrr', 'Qsw', 'Vpl', 'Vsd', 'tFall', 'tRise'} - set(d.keys())
     assert len(miss) == 0, miss
     assert len(d) >= 11, d
 
-    d = tabula_read('datasheets/infineon/IRFB4110PBF.pdf')
+    d = tabula_read('../datasheets/infineon/IRFB4110PBF.pdf')
     assert d.Qgd.typ == 43
 
     d = parse_datasheet(
-        'datasheets/infineon/ISC030N10NM6ATMA1.pdf')  # repair, produced not conform by http://activepdf.com
+        '../datasheets/infineon/ISC030N10NM6ATMA1.pdf')  # repair, produced not conform by http://activepdf.com
     assert len(d) >= 11
 
-    d = tabula_read('datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
+    d = tabula_read('../datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
     assert d.Qgd.typ == 20  # datasheet mistake! 9.7
 
-    d = tabula_read('datasheets/infineon/BSC025N08LS5ATMA1.pdf')
+    d = tabula_read('../datasheets/infineon/BSC025N08LS5ATMA1.pdf')
     assert d.Vpl.typ == 2.8
 
-    d = tabula_read('datasheets/infineon/IPB019N08N3GATMA1.pdf')
+    d = tabula_read('../datasheets/infineon/IPB019N08N3GATMA1.pdf')
     assert d.Vpl.typ == 4.6
 
-    d = tabula_read('datasheets/./onsemi/NTP011N15MC.pdf')
+    d = tabula_read('../datasheets/./onsemi/NTP011N15MC.pdf')
     assert d.Qgs.typ == 15
 
-    d = tabula_read('datasheets/diotec/DIT085N10-AQ.pdf')
+    d = tabula_read('../datasheets/diotec/DIT085N10-AQ.pdf')
     assert d.Qrr.max == 106
 
-    d = tabula_read('datasheets/infineon/IAUA210N10S5N024AUMA1.pdf')
+    d = tabula_read('../datasheets/infineon/IAUA210N10S5N024AUMA1.pdf')
     assert d.Qgd.typ == 18 and d.Qgd.max == 27
 
-    d = parse_datasheet('datasheets/infineon/IPF015N10N5ATMA1.pdf')
+    d = parse_datasheet('../datasheets/infineon/IPF015N10N5ATMA1.pdf')
     assert d.Qg_th.typ == 36
     assert d.Qgs.typ == 53
     assert d.Qgd.typ == 34 and d.Qgd.max == 51
 
-    d = parse_datasheet('datasheets/ti/CSD19532KTTT.pdf')
+    d = parse_datasheet('../datasheets/ti/CSD19532KTTT.pdf')
     assert d.Qgd.typ == 5.6
     assert d.Qgs.typ == 17
     assert d.Qg_th.typ == 9.6
     assert d.Qrr.typ == 326
     assert abs((d.get_mosfet_specs().Qsw * 1e9) - (d.Qgd.typ + d.Qgs.typ - d.Qg_th.typ)) < 1e-6
 
-    d = parse_datasheet('datasheets/panjit/PSMP050N10NS2_T0_00601.pdf')
+    d = parse_datasheet('../datasheets/panjit/PSMP050N10NS2_T0_00601.pdf')
     assert d['Vpl'].typ == 5
     assert d['Qgs'].typ == 15
     assert d['Qrr'].typ == 85 and d['Qrr'].max == 170
 
-    d = parse_datasheet('datasheets/goford/GT023N10TL.pdf')
+    d = parse_datasheet('../datasheets/goford/GT023N10TL.pdf')
     assert d['Qrr'].typ == 297
     #    assert d['Coss'] == 2730
 
-    d = parse_datasheet('datasheets/vishay/SUD70090E-GE3.pdf')
+    d = parse_datasheet('../datasheets/vishay/SUD70090E-GE3.pdf')
     # assert d['Coss'].typ == 845
 
-    d = parse_datasheet('datasheets/goford/GT52N10D5.pdf')
+    d = parse_datasheet('../datasheets/goford/GT52N10D5.pdf')
     # assert d['Coss'].typ == 380
     assert d['Qrr'].typ == 87
 
-    d = parse_datasheet('datasheets/vishay/SIR622DP-T1-RE3.pdf')
+    d = parse_datasheet('../datasheets/vishay/SIR622DP-T1-RE3.pdf')
     assert d['Qrr'].typ == 350 and d['Qrr'].max == 680
 
     # datasheets/onsemi/NTBLS1D1N08H.pdf
     # d = parse_datasheet('../datasheets/infineon/IPA050N10NM5SXKSA1.pdf')
     # assert d['Rdson'].max == 5.0
 
-    d = parse_datasheet('datasheets/infineon/IRF100B202.pdf')
+    d = parse_datasheet('../datasheets/infineon/IRF100B202.pdf')
     assert d['tRise'].typ == 56
     assert d['tFall'].typ == 58
     assert d['Coss'].typ == 319  # (ER)=355 TODO
     assert d['Qrr'].typ in {133, 105}, d.Qrr  # or 105 TODO multi Qrr
 
     # GT016N10TL
-    d = parse_datasheet('datasheets/goford/GT016N10TL.pdf')
+    d = parse_datasheet('../datasheets/goford/GT016N10TL.pdf')
     assert d['Qrr'].typ == 166
 
-    d = tabula_read('datasheets/toshiba/TPH5R60APL,L1Q.pdf')
+    d = tabula_read('../datasheets/toshiba/TPH5R60APL,L1Q.pdf')
     assert d['Qrr'].typ == 55
     assert d['Qgs'].typ == 12
     assert d.Qsw.typ == 14
 
-    # d = tabula_read('datasheets/vishay/SUM70042E-GE3.pdf')
+    # d = tabula_read('../datasheets/vishay/SUM70042E-GE3.pdf')
     # assert d['Qrr'].typ == 126 # type in datasheet uC = nC
 
-    d = tabula_read('datasheets/ts/TSM089N08LCR RLG.pdf')
+    d = tabula_read('../datasheets/ts/TSM089N08LCR RLG.pdf')
     assert d['Qrr'].typ == 35
     assert d['tFall'].typ == 24
     assert d['tRise'].typ == 21
 
-    d = tabula_read('datasheets/infineon/IAUZ40N08S5N100ATMA1.pdf')
+    d = tabula_read('../datasheets/infineon/IAUZ40N08S5N100ATMA1.pdf')
     assert d['tRise'].typ == 1
     assert d['tFall'].typ == 5
     assert d['Qrr'].typ == 32
     assert d['Coss'].typ == 231 and d.Coss.max == 300
 
-    d = tabula_read('datasheets/st/STL135N8F7AG.pdf')
+    d = tabula_read('../datasheets/st/STL135N8F7AG.pdf')
     assert d['Qrr'].typ == 66
 
-    d = tabula_read('datasheets/toshiba/TK6R9P08QM,RQ.pdf')
+    d = tabula_read('../datasheets/toshiba/TK6R9P08QM,RQ.pdf')
     assert d['Qrr'].typ == 35
 
-    d = tabula_read('datasheets/toshiba/TPH2R408QM,L1Q.pdf')
+    d = tabula_read('../datasheets/toshiba/TPH2R408QM,L1Q.pdf')
     assert d['Qrr'].typ == 74
 
-    d = tabula_read('datasheets/vishay/SIR826DP-T1-GE3.pdf')
+    d = tabula_read('../datasheets/vishay/SIR826DP-T1-GE3.pdf')
     assert d['Qrr'].typ == 78
     assert d['Qrr'].max == 155
 
-    d = tabula_read('datasheets/ti/CSD19505KTT.pdf')
+    d = tabula_read('../datasheets/ti/CSD19505KTT.pdf')
     assert d['tRise'].typ == 5
     assert d['tFall'].typ == 3
     assert d['Qrr'].typ == 400
     assert d['Qg_th'].typ == 15
 
-    d = parse_datasheet('datasheets/vishay/SUM60020E-GE3.pdf')  # special: Reverse recovery fall time
+    d = parse_datasheet('../datasheets/vishay/SUM60020E-GE3.pdf')  # special: Reverse recovery fall time
     assert len(d) >= 7
     assert d['Qrr'].typ == 182 and d['Qrr'].max == 275
     assert d['tRise'].typ == 13
     assert d['tFall'].typ == 15
 
-    d = tabula_read('datasheets/onsemi/NVBGS1D2N08H.pdf')  # discontinued NRFND
+    d = tabula_read('../datasheets/onsemi/NVBGS1D2N08H.pdf')  # discontinued NRFND
     assert d['Qrr'].typ == 122
 
-    d = tabula_read('datasheets/infineon/IAUA180N08S5N026AUMA1.pdf')
+    d = tabula_read('../datasheets/infineon/IAUA180N08S5N026AUMA1.pdf')
     assert d['tRise'].typ == 7
     assert d['tFall'].typ == 16
     assert d['Qrr'].typ == 85
     assert d
 
-    d = tabula_read('datasheets/onsemi/NTMFSC004N08MC.pdf')
+    d = tabula_read('../datasheets/onsemi/NTMFSC004N08MC.pdf')
     assert d['tRise'].typ == 21.5
     assert d['tFall'].typ == 5.4
 
-    # d = tabula_read('datasheets/onsemi/NVMFWS2D1N08XT1G.pdf') # fail
+    # d = tabula_read('../datasheets/onsemi/NVMFWS2D1N08XT1G.pdf') # fail
     # assert d['tRise'].typ == 7
     # assert d['tFall'].typ == 5
     # assert d['Qrr'].typ == 104
 
-    d = tabula_read('datasheets/onsemi/NVMFWS4D5N08XT1G.pdf')
+    d = tabula_read('../datasheets/onsemi/NVMFWS4D5N08XT1G.pdf')
     assert d['tRise'].typ == 7
     assert d['tFall'].typ == 5
     assert d['Qrr'].typ == 104
 
-    d = tabula_read('datasheets/nxp/PSMN4R4-80BS,118.pdf')  # multiple 'typ' headers
+    d = tabula_read('../datasheets/nxp/PSMN4R4-80BS,118.pdf')  # multiple 'typ' headers
     assert d['tRise'].typ == 38.1
     assert d['tFall'].typ == 18.4
     assert d['Qrr'].typ == 130
 
-    d = tabula_read('datasheets/onsemi/NVMFWS1D5N08XT1G.pdf')
+    d = tabula_read('../datasheets/onsemi/NVMFWS1D5N08XT1G.pdf')
     assert d['tRise'].typ == 10
     assert d['tFall'].typ == 9
     assert d['Qrr'].typ == 290
 
-    tabula_read('datasheets/diotec/DIT095N08.pdf')
+    tabula_read('../datasheets/diotec/DIT095N08.pdf')
 
-    d = tabula_read('datasheets/infineon/BSZ084N08NS5ATMA1.pdf')  # need OCR (pdf reader pro))
+    d = tabula_read('../datasheets/infineon/BSZ084N08NS5ATMA1.pdf')  # need OCR (pdf reader pro))
     assert d['tRise'].typ == 5
     assert d['tFall'].typ == 5
     assert d['Qrr'].typ == 44 and d['Qrr'].max == 88
     assert d.Vpl.typ == 4.7
 
-    d = tabula_read('datasheets/infineon/IPB033N10N5LFATMA1.pdf')
+    d = tabula_read('../datasheets/infineon/IPB033N10N5LFATMA1.pdf')
     assert d.Vpl.typ == 6.9
 
-    d = tabula_read('datasheets/st/STL120N8F7.pdf')
+    d = tabula_read('../datasheets/st/STL120N8F7.pdf')
     assert d['tRise'].typ == 16.8
     assert d['tFall'].typ == 15.4
     assert d['Qrr'].typ == 65.6
 
     # rise 38.1 fall 18.4
 
-    d = tabula_read('datasheets/nxp/PSMN8R2-80YS,115.pdf')
+    d = tabula_read('../datasheets/nxp/PSMN8R2-80YS,115.pdf')
     # assert d # doenst work tabula doesnt find the tables right
 
-    d = tabula_read('datasheets/infineon/BSZ075N08NS5ATMA1.pdf')
+    d = tabula_read('../datasheets/infineon/BSZ075N08NS5ATMA1.pdf')
     assert d['tRise'].typ == 4
     assert d['tFall'].typ == 4
 
-    d = tabula_read('datasheets/onsemi/FDP027N08B.pdf')
+    d = tabula_read('../datasheets/onsemi/FDP027N08B.pdf')
     assert d['tRise'].typ == 66 and d['tRise'].max == 142
     assert d['tFall'].typ == 41 and d['tFall'].max == 92
     assert d['Qgs'].typ == 56
     assert d['Qgs2'].typ == 25
     assert d['Qgd'].typ == 28
 
-    d = tabula_read('datasheets/onsemi/FDBL0150N80.pdf')
+    d = tabula_read('../datasheets/onsemi/FDBL0150N80.pdf')
     assert d['tRise'].typ == 73
     assert d['tFall'].typ == 48
 
-    tabula_read('datasheets/diodes/DMTH8003SPS-13.pdf')
+    tabula_read('../datasheets/diodes/DMTH8003SPS-13.pdf')
 
     #
-    tabula_read('datasheets/vishay/SIR680ADP-T1-RE3.pdf')
+    tabula_read('../datasheets/vishay/SIR680ADP-T1-RE3.pdf')
 
-    d = tabula_read('datasheets/vishay/SUM60020E-GE3.pdf')
+    d = tabula_read('../datasheets/vishay/SUM60020E-GE3.pdf')
     assert d['tRise'].typ == 13
     assert d['tRise'].max == 26
     assert d['tFall'].typ == 15
     assert d['tFall'].max == 30
     assert d['Qrr'].typ == 182
 
-    d = parse_datasheet('datasheets/vishay/SUM60020E-GE3.pdf')
+    d = parse_datasheet('../datasheets/vishay/SUM60020E-GE3.pdf')
     assert d['Qrr'].typ == 182.
     assert d['Qrr'].max == 275.
 
@@ -635,12 +635,12 @@ def test_pdf_ocr():
     assert 'Qgs' in res
     assert 'Vplateau' in res  # only works with custom words! tesseract 5.4.1
 
-    d = parse_datasheet('datasheets/./infineon/BSC050N10NS5ATMA1.pdf', need_symbols={'Qrr'})
+    d = parse_datasheet('../datasheets/./infineon/BSC050N10NS5ATMA1.pdf', need_symbols={'Qrr'})
     assert d.Vsd == (na, 0.87, 1.1), d.print()
     assert d.Coss == (na, 490, 640), d.Coss
     assert d.Qrr == (na, 68, 136)  # ['BSC050N10NS5ATMA1.pdf.r400_ocrmypdf.pdf', 'tabula_cli_guess', 'parse_csv']
 
-    d = parse_datasheet('datasheets/nxp/PSMN3R9-100YSFX.pdf', need_symbols={'Vsd'})
+    d = parse_datasheet('../datasheets/nxp/PSMN3R9-100YSFX.pdf', need_symbols={'Vsd'})
     assert d.Vsd == (na, 0.82, 1)
     assert DatasheetFields(
         "PSMN3R9-100YSFX", "nxp",
@@ -652,7 +652,7 @@ def test_pdf_ocr():
                 Field("Vsd", nan, 0.82, 1.0, "V")]
     ).show_diff(d) == 0
 
-    d = parse_datasheet("datasheets/infineon/IPB072N15N3GATMA1.pdf")
+    d = parse_datasheet('../datasheets/infineon/IPB072N15N3GATMA1.pdf')
     assert d.Vpl == (na, 5.5, na)
 
     ref = DatasheetFields("BSZ150N10LS3GATMA1", "infineon",
@@ -668,10 +668,10 @@ def test_pdf_ocr():
                                   Field("Vsd", nan, 0.87, 1.2, "V"),
                                   Field("Qrr", nan, 84.0, nan, "nC")])
 
-    # d = parse_datasheet('datasheets/infineon/./BSZ150N10LS3GATMA1.pdf')
+    # d = parse_datasheet('../datasheets/infineon/./BSZ150N10LS3GATMA1.pdf')
     # assert ref.show_diff(d, symbols=set(ref.keys()) - {'Qd'}) == 0
 
-    d = tabula_read('datasheets/infineon/BSZ150N10LS3GATMA1.pdf',
+    d = tabula_read('../datasheets/infineon/BSZ150N10LS3GATMA1.pdf',
                     need_symbols=set(ref.keys()),
                     pre_process_methods=('ocrmypdf_r400',
                                          'r400_ocrmypdf',
@@ -687,12 +687,12 @@ def test_pdf_ocr():
     assert d.Qg_th == (na, 2.7, na)
     assert d.Qsw == (na, 7.7, na)
 
-    d = parse_datasheet('datasheets/././infineon/BSZ150N10LS3GATMA1.pdf')
+    d = parse_datasheet('../datasheets/././infineon/BSZ150N10LS3GATMA1.pdf')
     assert ref.show_diff(d,
                          err_threshold=1e-3) == 0  # TODO try different text extraction methods with BSZ150N10LS3GATMA1
 
     # IPB039N10N3GATMA1
-    d = parse_datasheet('datasheets/infineon/IPP100N08N3GXKSA1.pdf')  # ocr
+    d = parse_datasheet('../datasheets/infineon/IPP100N08N3GXKSA1.pdf')  # ocr
     assert d.Qg.typ == 26
     assert d.Qg.max == 35
     assert d.Qgd.typ == 5
@@ -719,7 +719,7 @@ def test_pdf_ocr():
 
     # multiple Qrr, multi Qrr
     # IPT025N15NM6ATMA1
-    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon',
+    d = parse_datasheet('../datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon',
                         tabular_pre_methods=('ocrmypdf_redo')
                         )
     assert d.Qrr.typ == 184 and d.Qrr.max == 368
@@ -730,7 +730,7 @@ def test_pdf_ocr():
     assert d.Vsd.typ == 0.86 and d.Vsd.max == 1
 
     # same, but this time check fallback to `ocrmypdf_redo`
-    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon', )
+    d = parse_datasheet('../datasheets/infineon/IPT025N15NM6ATMA1.pdf', mfr='infineon', )
     assert d.Qrr.typ == 184 and d.Qrr.max == 368
     assert d.tRise.typ == 16
     assert d.tFall.typ == 19
@@ -738,7 +738,7 @@ def test_pdf_ocr():
     assert d.Qsw.typ == 38
     assert d.Vsd.typ == 0.86 and d.Vsd.max == 1
 
-    d = tabula_read('datasheets/infineon/BSC070N10NS3GATMA1.pdf', 'ocrmypdf_r400')
+    d = tabula_read('../datasheets/infineon/BSC070N10NS3GATMA1.pdf', 'ocrmypdf_r400')
     assert d.Vsd.typ == 0.89, d.Vsd
     assert d.Vsd.max == 1.2, d.Vsd
     assert d.Qgs.typ == 13
@@ -747,9 +747,9 @@ def test_pdf_ocr():
     assert d.Qg.typ == 42 and d.Qg.max == 55
     assert d.tRise.typ == 10
     assert d.tFall.typ == 8
-    # raster_ocr('datasheets/infineon/BSC070N10NS3GATMA1.pdf', o,'ocrmypdf')
+    # raster_ocr('../datasheets/infineon/BSC070N10NS3GATMA1.pdf', o,'ocrmypdf')
 
-    # ds = tabula_read('datasheets/infineon/IRF150DM115XTMA1.pdf',
+    # ds = tabula_read('../datasheets/infineon/IRF150DM115XTMA1.pdf',
     #                 pre_process_methods=('r400_ocrmypdf', 'r600_ocrmypdf',),
     #                 need_symbols={'tRise', 'tFall'},
     #                 )
@@ -757,7 +757,7 @@ def test_pdf_ocr():
 
     # macos preview fixes: (CUPS printer)
     ds = tabula_read(
-        'datasheets/./infineon/IRF150DM115XTMA1.pdf',
+        '../datasheets/./infineon/IRF150DM115XTMA1.pdf',
         pre_process_methods=(
             'r600_ocrmypdf',
             'ocrmypdf_r400',
@@ -784,20 +784,20 @@ def test_pdf_ocr():
 def test_convertapi():
     from dslib.pdf2txt.pipeline import convertapi
     convertapi(
-        'datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
-        'datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf',
+        '../datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
+        '../datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf',
         'pdf'
     )
-    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf', mfr='infineon',
+    d = parse_datasheet('../datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf', mfr='infineon',
                         tabular_pre_methods=('nop',))
     assert d
 
     convertapi(
-        'datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
-        'datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_rasterize.pdf',
+        '../datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
+        '../datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_rasterize.pdf',
         'rasterize'
     )
-    d = parse_datasheet('datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_rasterize.pdf',
+    d = parse_datasheet('../datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_rasterize.pdf',
                         mfr='infineon',
                         tabular_pre_methods=('convertapi_ocr',))
     assert d
@@ -807,7 +807,7 @@ import pytest
 
 
 def test_mosfet_specs():
-    d = parse_datasheet('datasheets/st/STP310N10F7.pdf')
+    d = parse_datasheet('../datasheets/st/STP310N10F7.pdf')
     assert d.Qgd.typ == 34  # mistake in PDF "Qgd vs gate-source"
     assert d.Qgs.typ == 78
     assert d.get_mosfet_specs().Qsw > 0
@@ -819,7 +819,7 @@ def test_mosfet_specs():
         'Vsd',  # LS
     }
 
-    d = parse_datasheet('datasheets/ao/AOT66811L.pdf', need_symbols=need_symbols)
+    d = parse_datasheet('../datasheets/ao/AOT66811L.pdf', need_symbols=need_symbols)
     assert 'Qg_th' not in d
     assert DatasheetFields(
         "AOT66811L", "ao", fields=[
@@ -837,7 +837,7 @@ def test_mosfet_specs():
     mf = d.get_mosfet_specs()
     assert mf.Qsw == pytest.approx(26.55e-9, 0.1e-9)
 
-    d = parse_datasheet('datasheets/infineon/IRF6644TRPBF.pdf')
+    d = parse_datasheet('../datasheets/infineon/IRF6644TRPBF.pdf')
     assert d.Qg_th.typ == 7  # Qgs1
     assert d.Qgs2.typ == 3
     assert d.Qsw.typ == 16
@@ -848,7 +848,7 @@ def test_mosfet_specs():
     assert mf.Qsw == pytest.approx(16e-9, 1e-20)
     assert reference_data(d.part).show_diff(d) == 0
 
-    d = parse_datasheet('datasheets/infineon/AUIRF7769L2TR.pdf')
+    d = parse_datasheet('../datasheets/infineon/AUIRF7769L2TR.pdf')
     assert d.Qg == (na, 200, 300)
     assert d.Qg_th == (na, 30, na)
     assert d.Qgs2 == (na, 9, na)
@@ -856,15 +856,15 @@ def test_mosfet_specs():
     mf = d.get_mosfet_specs()
     assert mf
 
-    d = parse_datasheet('datasheets/ao/AOT66811L.pdf')
+    d = parse_datasheet('../datasheets/ao/AOT66811L.pdf')
     assert d.get_mosfet_specs()
 
 
 def test_pdf_rasterize():
     from dslib.pdf2txt.pipeline import rasterize_pdf
-    os.path.exists('datasheets/onsemi/FDP047N10.r.pdf') and os.remove('datasheets/onsemi/FDP047N10.r.pdf')
-    rasterize_pdf('datasheets/onsemi/FDP047N10.pdf', 'datasheets/onsemi/FDP047N10.r.pdf')
-    assert os.stat('datasheets/onsemi/FDP047N10.r.pdf').st_size > os.stat('datasheets/onsemi/FDP047N10.pdf').st_size
+    os.path.exists('../datasheets/onsemi/FDP047N10.r.pdf') and os.remove('../datasheets/onsemi/FDP047N10.r.pdf')
+    rasterize_pdf('../datasheets/onsemi/FDP047N10.pdf', '../datasheets/onsemi/FDP047N10.r.pdf')
+    assert os.stat('../datasheets/onsemi/FDP047N10.r.pdf').st_size > os.stat('../datasheets/onsemi/FDP047N10.pdf').st_size
 
 
 def test_extract_fields_from_dataframes():
@@ -940,31 +940,31 @@ def tests_failing():
     # TODO use tabular browser?
     #  java -jar ~/dev/tabula-java/target/tabula-1.0.6-SNAPSHOT-jar-with-dependencies.jar --guess --pages all datasheets/littelfuse/IXTQ180N10T.pdf
 
-    d = tabula_browser('datasheets/st/STD110N8F6.pdf')
+    d = tabula_browser('../datasheets/st/STD110N8F6.pdf')
     assert d
 
-    tabula_browser('datasheets/littelfuse/IXTQ180N10T.pdf')
-    d = parse_datasheet('datasheets/littelfuse/IXTQ180N10T.pdf',
+    tabula_browser('../datasheets/littelfuse/IXTQ180N10T.pdf')
+    d = parse_datasheet('../datasheets/littelfuse/IXTQ180N10T.pdf',
                         tabular_pre_methods='nop'
                         )
     assert d.Qgd
 
-    d = parse_datasheet('datasheets/littelfuse/IXTA160N10T7.pdf')
+    d = parse_datasheet('../datasheets/littelfuse/IXTA160N10T7.pdf')
     assert d
 
-    d = parse_datasheet('datasheets/infineon/AUIRF7759L2TR.pdf')
+    d = parse_datasheet('../datasheets/infineon/AUIRF7759L2TR.pdf')
     assert d.Qgd == (na, 62, 93)
     assert d.tRise
     assert d.Vsd.max == 1.3
 
 
 def test_tabular_browser():
-    d = tabula_browser('datasheets/nxp/PSMN3R9-100YSFX.pdf')
+    d = tabula_browser('../datasheets/nxp/PSMN3R9-100YSFX.pdf')
     assert d
 
-    # assert tabula_browser('datasheets/infineon/IQE050N08NM5CGATMA1.pdf') # fails need OCR
+    # assert tabula_browser('../datasheets/infineon/IQE050N08NM5CGATMA1.pdf') # fails need OCR
 
-    dfs = tabula_browser('datasheets/vishay/SIR680ADP-T1-RE3.pdf', pad=20)
+    dfs = tabula_browser('../datasheets/vishay/SIR680ADP-T1-RE3.pdf', pad=20)
     d = dslib.pdf2txt.parse.extract_fields_from_dataframes(dfs, mfr='vishay')
     assert d.Qg
     ref = DatasheetFields("None", "None",
@@ -974,7 +974,7 @@ def test_tabular_browser():
                                   Field("Qg", nan, 55.0, 83.0, "nC"), Field("Vsd", nan, 0.72, 1.1, "V")])
     assert ref.show_diff(d) == 0
 
-    dfs = tabula_browser('datasheets/littelfuse/IXTQ180N10T.pdf')
+    dfs = tabula_browser('../datasheets/littelfuse/IXTQ180N10T.pdf')
     df = pd.concat(dfs, axis=0)
     d = dslib.pdf2txt.parse.extract_fields_from_dataframes(dfs, mfr='infineon', ds_path='')
     assert d.Qg == (na, 151, na)
@@ -987,10 +987,10 @@ def test_tabular_browser():
 
 
 if __name__ == '__main__':
-    d = parse_datasheet('datasheets/././littelfuse/IXFX360N15T2.pdf')
+    d = parse_datasheet('../datasheets/././littelfuse/IXFX360N15T2.pdf')
     assert d
 
-    d = parse_datasheet('datasheets/./nxp/PSMN3R3-80BS,118.pdf', need_symbols={'Vsd', 'tRise'})
+    d = parse_datasheet('../datasheets/./nxp/PSMN3R3-80BS,118.pdf', need_symbols={'Vsd', 'tRise'})
     assert d.Qgs2.typ > 5
     assert d.Vpl.typ == 6.1
 
@@ -1002,5 +1002,5 @@ if __name__ == '__main__':
     test_pdf_ocr()
     test_mosfet_specs()
 
-    # ds = tabula_read('datasheets/_samples/infineon/IRF150DM115XTMA1_cyn_char.pdf')
+    # ds = tabula_read('../datasheets/_samples/infineon/IRF150DM115XTMA1_cyn_char.pdf')
     # assert ds
