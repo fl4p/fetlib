@@ -1,4 +1,5 @@
 [dspicks]
+enc=datasheets/infineon/IPP057N08N3GHKSA1.pdf
 rohm=datasheets/rohm/RS6P100BHTB1.pdf
 
 irf310=datasheets/infineon/IRFS3107TRLPBF.pdf

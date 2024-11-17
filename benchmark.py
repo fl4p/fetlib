@@ -99,6 +99,8 @@ if 'v2':
     # IRF150DM115XTMA1 # tRise and tFall confusion? long ocr
 
     IQE050N08NM5CGATMA1 #ocr
+    # ISZ080N10NM6 Qrr for different conditions
+    # RJ1P10BBHTL1 rdson at 2 vgs levels, reading Qg=5?
     # IXFX360N15T2, 'Qrm
     # IR680ADP-T1-RE3 # complex structured tables
     # SIR578DP-T1-RE3.pdf # double Qg
@@ -108,7 +110,7 @@ if 'v2':
     # 'datasheets/mcc/MCB70N10YA-TP.pdf'
 
     # IAUTN08S5N012L lin
-    # IRFS7730TRL7PP tags="QrrMulti"
+    # IRFS7730TRL7PP tags="QrrMulti" temp
 
 
     # BSC042NE7NS3GATMA1 vectorized text
@@ -123,6 +125,15 @@ if 'v2':
 
 # ISC046N13NM6ATMA1
 # infineon/IQDH88N06LM5CGSCATMA1
+
+
+# SQ:
+# NVTFS8D1N08HTAG.pdf multi Qg at different levels
+# NVMFS4C305NET1G-YE.pdf
+# NTBGS004N10G.pdf Qgth mistake
+
+# multi Qrr (different didt)
+# FDMS3D5N08LC
 
 
 # from tests

@@ -5,7 +5,8 @@ import warnings
 from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast
 
-from dslib.pdf2txt import normalize_text
+from dslib import round_to_n_dec
+from dslib.pdf2txt import normalize_text, whitespaces_to_space
 
 
 def first(a):
@@ -23,7 +24,7 @@ class Field():
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
             unit = 'ns'  # ocr confusion
 
-        if unit in {'uC', 'μC'}:
+        if unit in {'uC', 'μC', '∝C'}:
             assert mul == 1
             mul = 1000
             unit = 'nC'
@@ -41,6 +42,8 @@ class Field():
         min = parse_field_value(min) * mul
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
+
+        not_zero = {'Qg', 'Qgs', 'Qgd'}
 
         fill_max_dims = {'Q', 't', 'Vsd', 'Coss'}
         is_fill_max = symbol[0] in fill_max_dims or symbol in fill_max_dims
@@ -79,6 +82,9 @@ class Field():
             max = typ
             typ = a
 
+        if unit and symbol == 'Vds' and ('/°C' in unit or 'mV' in unit):
+            raise ValueError('invalid Vds unit %s' % unit)
+
         if not math.isnan(max) and not math.isnan(typ):
             max_typ_ratio = 30 if symbol == 'Crss' else 5
             assert 1 < max / typ < max_typ_ratio, (typ, max)
@@ -97,7 +103,7 @@ class Field():
             self.max), 'all nan ' + self.__repr__()
 
     def __repr__(self):
-        return f'Field("{self.symbol}",{self.min},{self.typ},{self.max},"{self.unit}")'  # ,cond={repr(self.cond)}
+        return f'Field("{self.symbol}",{self.min},{self.typ},{self.max},"{self.unit}",cond={repr(self.cond)})'  # ,cond={repr(self.cond)}
 
     def __str__(self):
         return f'{self.symbol} = %5.1f,%5.1f,%5.1f [%s] (%s)' % (self.min, self.typ, self.max, self.unit, self.cond)
@@ -192,7 +198,7 @@ def parse_field_value(s):
     if not s:
         return math.nan
     s = normalize_text(s.strip().strip(' \x03').rstrip('L'))
-    if not s or s in {'-', '.', '"', "'", '#'} or set(s) == {'-'}:
+    if not s or s in {'-', '.', '"', "'", '#', '~NA~'} or set(s) == {'-'}:
         return math.nan
     try:
         return float(s)
@@ -232,14 +238,18 @@ class DatasheetFields():
             warnings.warn('failed to create fet specs: %s' % e)
             fet_specs = None
 
+        rds_on_max = ds.get_max('Rds_on_10v', False)
+        if math.isnan(rds_on_max):
+            rds_on_max = ds.get_max('Rds_on', True)
+
         return dict(
             mfr=part.mfr,
             mpn=part.mpn,
             housing=part.package,
 
             Vds_max=ds.get_max('Vds', True),
-            Rds_max=ds.get_max('Rds_on_10v', True) * 1000,
-            Id=ds.get_typ_or_max_or_min('ID_25', True),
+            Rds_max=rds_on_max * 1000,
+            Id=ds.get_typ_or_max_or_min('ID_25', False),
 
             Qg_max=ds.get_max('Qg'),
             Qgs=ds.get_typ_or_max_or_min('Qgs'),
@@ -274,8 +284,12 @@ class DatasheetFields():
     def print(self, show_cond=False, show_sources=False):
         print('')
         print(self.part.mfr, self.part.mpn)
-        print('Symbol         min   typ   max   unit   source', '   cond' if show_cond else '', )
-        for f in self.fields_filled.values():
+        print('Symbol         min     typ     max     unit   source', '   cond' if show_cond else '', )
+
+        # rows = self.fields_filled.values()
+        rows = sum(self.fields_lists.values(), [])
+
+        for f in rows:
 
             src = ''
             if show_sources:
@@ -284,34 +298,51 @@ class DatasheetFields():
                     src = v[0]
                 else:
                     src = ','.join(v)
+                src = src[:40]
 
-            l = '%-12s %5.1f %5.1f %5.1f   %-4s %10s %-20s' % (
+            cond_str = ''
+            if show_cond:
+                if f.cond and isinstance(f.cond, dict) and isinstance(list(f.cond.keys())[0], str):
+                    cond_str = ', '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in f.cond.items())
+                else:
+                    cond_str = whitespaces_to_space(', '.join(
+                        map(str, (f.cond.items() if isinstance(f.cond, dict) else f.cond)) if f.cond else []))[:80]
+
+            l = '%-12s %7.1f %7.1f %7.1f   %4s %10s %-20s' % (
                 f.symbol, f.min, f.typ, f.max, f.unit, src,
-                ', '.join(map(str, (f.cond.values() if isinstance(f.cond,dict) else f.cond) if f.cond else [])) if show_cond else '')
+                cond_str)
             l = l.replace('nan', ' ⎵ ')
             l = l.replace(' None', '  ⎵  ')
             print(l)
 
-    def get_mosfet_specs(self):
+    def get_mosfet_specs(self, Vgs=10):
         mf_fields = [
-            'Qrr', 'Vsd',  # body diode
+            'Qrr', 'trr', 'Vsd',  # body diode
             'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
             'Coss', 'Qsw',
         ]
 
-        field_mul = lambda sym, v: v if sym[0] == 'V' else (v * 1e-9)
+        def field_mul(sym, v):
+            if sym[0] == 'V':
+                return v
+
+            if sym == 'Coss':
+                return (v * 1e-12)
+
+            return (v * 1e-9)
 
         ds = self
 
         from dslib.spec_models import MosfetSpecs
         return MosfetSpecs(
             Vds_max=ds.get_max('Vds'),
-            Rds_on=ds.get_max('Rds_on_10v'),
-            Qg=ds.get_typ_or_max_or_min('Qg') * 1e-9,
+            Rds_on=ds.get_max('Rds_on_10v', cond=dict(Vgs=Vgs)),
+            Qg=ds.get_typ_or_max_or_min('Qg', cond=dict(Vgs=Vgs)) * 1e-9,
             tRise=ds.get_typ_or_max_or_min('tRise') * 1e-9,
             tFall=ds.get_typ_or_max_or_min('tFall') * 1e-9,
             **{k: field_mul(k, ds.get_typ_or_max_or_min(k)) for k in mf_fields},
             Vpl=ds.get_typ_or_max_or_min('Vpl'),
+            part=self.part,
         )
 
     def get(self, sym, stat: Union[Tuple[Field.StatLiteral], Field.StatLiteral], required=False):
@@ -327,8 +358,8 @@ class DatasheetFields():
                 return v
         return math.nan
 
-    def get_typ_or_max_or_min(self, sym, required=False):
-        r = self.fields_filled.get(sym)
+    def get_typ_or_max_or_min(self, sym, required=False, cond=None):
+        r = self._get_by_cond(sym, cond)
         assert r or not required
         return math.nan if not r else r.typ_or_max_or_min
 
@@ -336,8 +367,23 @@ class DatasheetFields():
         r = self.fields_filled.get(sym)
         return math.nan if not r else r.typ
 
-    def get_max(self, sym, required=False):
-        r = self.fields_filled.get(sym)
+    def _get_by_cond(self, sym, cond=None):
+        e_min = 0.1
+        f_min = self.fields_filled.get(sym)
+        l = self.fields_lists.get(sym)
+        if l and cond:
+            for f in l:
+                d = f.cond
+                if not d or not isinstance(d, dict):
+                    d = {}
+                e = (sum(((d.get(k, 0) - v) / (abs(v) + 1e-3)) ** 2 for k, v in cond.items()) / len(cond)) ** .5
+                if e < e_min:
+                    e_min = e
+                    f_min = f
+        return f_min
+
+    def get_max(self, sym, required=False, cond=None):
+        r = self._get_by_cond(sym, cond)
         assert not required or r
         return math.nan if not r else r.max
 

@@ -2,7 +2,7 @@ import math
 import os.path
 
 
-def write_csv(df:'pd.DataFrame', path:str) -> None:
+def write_csv(df: 'pd.DataFrame', path: str) -> None:
     df.sort_values(by=['Vds_max', 'mfr', 'mpn'], inplace=True, kind='mergesort')
 
     for col in df.columns:
@@ -10,6 +10,7 @@ def write_csv(df:'pd.DataFrame', path:str) -> None:
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
 
     return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 4))
+
 
 def get_datasheets_path(mfr=None, mpn=None):
     p = os.path.realpath(os.path.dirname(__file__) + '/../datasheets')
@@ -26,7 +27,7 @@ mfrs = dict(
     good_ark='good-ark',
     mcc=('micro commercial', 'mcc')
     , renesas='renesas',
-    ts='taiwan semiconductor',
+    ts=('taiwan semiconductor', 'taiwansemi'),
     panjit='panjit',
     apm='a power microelectronics',
     jscj='jiangsu changjing',
@@ -92,6 +93,36 @@ def round_to_n(x, n):
     except ValueError as e:
         print('error', x, n, e)
         raise e
+
+
+def num2str(x, n=None):
+    if n is not None:
+        x = round_to_n(x, n)
+    s = str(x)
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+
+def round_to_n_dec(x, n):
+    x = round_to_n(x, n)
+    if x < 1e-20:
+        return '0'
+    elif x < 999e-12:
+        return num2str(x * 1e12, n) + 'p'
+    elif x < 999e-9:
+        return num2str(x * 1e9, n) + 'n'
+    elif x < 999e-6:
+        return num2str(x * 1e6, n) + 'µ'
+    elif x < 999e-3:
+        return num2str(x * 1e3, n) + 'm'
+    elif x > 0.999e6:
+        return num2str(x * 1e-6, n) + 'M'
+    elif x > 0.999e3:
+        return num2str(x * 1e-3, n) + 'k'
+    # elif x > 9
+    else:
+        return num2str(x, n)
 
 
 class dotdict(dict):

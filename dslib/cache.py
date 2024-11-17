@@ -18,9 +18,9 @@ from pandas.core.generic import NDFrame
 
 from dslib import get_logger
 
-#try:
+# try:
 #    from streamz.collection import Streaming
-#except ImportError:
+# except ImportError:
 #    print('failed to import streamz module')
 
 # from lib.data.util import concat, random_str
@@ -647,18 +647,18 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
             def meta_valid(meta):
                 if out_files:
                     for param, disk_state in {
-                       # 'mtimes':out_mtimes,
-                        'sizes':out_sizes
+                        # 'mtimes':out_mtimes,
+                        'sizes': out_sizes
                     }.items():
-                        m_out_files = meta.get('out_files_'+param)
+                        m_out_files = meta.get('out_files_' + param)
 
                         if not m_out_files:
-                            print('not meta data about out',param, 'cache is not valid', out_fns)
+                            print('not meta data about out', param, 'cache is not valid', out_fns)
                             return False
 
                         for fn, mt in disk_state.items():
                             if fn not in m_out_files or mt != m_out_files[fn]:
-                                print(fn, 'changed',param, 'cache=', m_out_files.get(fn), 'disk=', mt,
+                                print(fn, 'changed', param, 'cache=', m_out_files.get(fn), 'disk=', mt,
                                       '(', round(mt - m_out_files.get(fn)), ')')
                                 return False
                 return True
@@ -738,7 +738,7 @@ def acquire_file_lock(fn, kill_holder, max_time=10):
 
     fh = open(fn, 'a+')
 
-    @backoff.on_exception(backoff.expo, OSError, max_time=max_time, logger=None)
+    @backoff.on_exception(backoff.expo, OSError, max_time=max_time) # , logger=None
     def _lockf_backoff(_fh):
 
         fcntl.lockf(_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)

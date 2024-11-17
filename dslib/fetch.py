@@ -52,6 +52,14 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         ds_url_alt = ds_url
         ds_url = get_datasheet_url(mfr, mpn)
 
+    if mfr == 'onsemi':
+        import dslib.parts_discovery
+        if not requests.head(ds_url).ok:
+            ds_url = dslib.parts_discovery.onsemi_ds_url(mpn)
+        #ds_url_alt = ds_url.replace('fdb','fdp')
+        # ds_url_alt = lambda : dslib.parts_discovery.onsemi_ds_url(mpn)
+
+
     if not ds_url:
         print('SKIP', datasheet_path, 'no url', ds_url)
         return None
@@ -66,7 +74,11 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
     for du in (ds_url, ds_url_alt):
         if not du:
             continue
+
         try:
+            if callable(du):
+                du = du()
+
             t = download_with_chromium(du, datasheet_path)
             await t
             # asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
@@ -174,14 +186,19 @@ async def download_with_chromium(url, filename, click: Union[str, List[str]] = '
 
                         # await page.evaluate(""" document.querySelector('a[data-track-name="downloadLink"]').click() """)
 
-                    await page.waitFor(c, timeout=300)
+                    await page.waitForSelector(c, timeout=300)
 
                     await asyncio.sleep(1)
 
+                    sel = c + ' a' if await page.querySelector(c + ' a') else c
+
+                    #el = await page.querySelector(c + ' a') or await page.querySelector(c)
+
                     try:
-                        await page.click(c + ' a')
+                        await page.click(sel)
                     except:
-                        await page.click(c)
+                        sel = sel.replace("'","\\'")
+                        await page.evaluate(f""" document.querySelector('{sel}').click() """)
 
             except PageError as e:
                 # print('page error, probably direct download')

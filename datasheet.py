@@ -12,7 +12,7 @@ from typing import Literal
 import pymupdf
 
 from dslib.pdf2txt import normalize_text, whitespaces_to_space
-from dslib.pdf2txt.parse import extract_text
+from dslib.pdf2txt.parse import extract_text, parse_datasheet
 from dslib.util import open_file_with_default_app, unique_stable
 
 
@@ -92,6 +92,8 @@ async def main():
         html_path = pdf_to_html(ds_path, merge_lines=True)
         open_file_with_default_app(html_path)
 
+    elif args.command == 'parse':
+        parse_datasheet(ds_path).print(True, True)
     elif args.command == 'html-pm':
         out_path = 'out/html/' + os.path.basename(ds_path).split('.')[0] + '.html'
         with open(ds_path, "rb") as fp:
