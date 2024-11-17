@@ -1,8 +1,9 @@
 import math
 import warnings
-from typing import Literal
+from typing import Literal, List
 
-from dslib import round_to_n
+from dslib import round_to_n, round_to_n_dec
+from dslib.parts_discovery import DiscoveredPart
 
 
 def isnum(v):
@@ -182,7 +183,7 @@ class MosfetSpecs:
         return self.Qg - self.Qgd - self.Qgs
 
     def __str__(self):
-        return f'MosfetSpecs({round(self.Vds, 0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9, 0)}n Qsw={round(self.Qsw * 1e9, 1)}n trf={round(self.tRise * 1e9, 1)}/{round(self.tFall * 1e9, 1)}n Qrr={round(self.Qrr * 1e9, 1)}n)'
+        return f'MosfetSpecs({round(self.Vds, 0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round_to_n_dec(self.Qg, 3)} Qsw={round_to_n_dec(self.Qsw, 3)} trf={round_to_n_dec(self.tRise, 3)}/{round_to_n_dec(self.tFall, 3)} Qrr={round_to_n_dec(self.Qrr, 3)})'
 
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
@@ -300,18 +301,20 @@ class DcDcSpecs:
         return (dc.Io_max ** 2 + dc.Io_max * dc.Io_min + dc.Io_min ** 2) / 3
 
     def __str__(self):
-        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW ΔI=%.1fA)' % (
-            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout, self.Iripple)
+        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%sW ΔI=%.1fA)' % (
+            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, round_to_n_dec(self.Pout, 4), self.Iripple)
 
     def fn_str(self, topo: Literal['buck']):
         if topo == 'buck':
             return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f / 1000)
         raise ValueError(topo)
 
-    def select_mosfets(dcdc, parts):
+    def select_mosfets(dcdc, parts: List['DiscoveredPart']):
+        rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2
+        # use inverted comparison to pass-through nan-values
         return [p for p in parts if (
-                p.specs.Vds_max >= (dcdc.Vi * 1.1) and p.specs.Vds_max <= (dcdc.Vi * 4)
-                and p.specs.ID_25 > dcdc.Io_max * 1.2)]
+                not (p.specs.Vds_max < (dcdc.Vi * 1.1)) and not (p.specs.Vds_max > (dcdc.Vi * 4))
+                and not (p.specs.ID_25 < dcdc.Io_max * 1.2) and not (p.specs.Rds_on_10v_max > rds_on_max))]
 
     def C_out_min(self, vout_ripple):
         # https://www.ti.com/lit/ds/symlink/lm5163.pdf
