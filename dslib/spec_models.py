@@ -21,7 +21,8 @@ Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 
 class MosfetSpecs:
 
-    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
+    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, trr=None, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None,
+                 Qsw=None,
                  Vpl=None, Vsd=None, Coss=None, part=None):
         """
 
@@ -75,12 +76,18 @@ class MosfetSpecs:
                 Qg_th = (Qsw - Qgd) * (1 / Qgs2_Qgs_ratio_estimate - 1)
                 Qgs = Qg_th - Qgd - Qsw
 
+        if math.isnan(Qg_th) and not math.isnan(Qgs):
+            self._Qg_th = math.nan  # TODO flag as estimate
+            Qg_th = Qgs - (Qgs * Qgs2_Qgs_ratio_estimate)
+
         if not isnum(Qg_th) and isnum(Qgs2):
             Qg_th = Qgs - Qgs2
             assert Qg_th > 0, Qg_th
 
         if not isnum(Qgs) and isnum(Qg_th) and isnum(Qgs2):
             Qgs = Qg_th + Qgs2
+
+            Qg_th = Qgs - Qgs2
 
         self.Qg = Qg or math.nan
         self.Qgd = Qgd or math.nan
@@ -105,12 +112,19 @@ class MosfetSpecs:
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
         self.Vsd = Vsd  # body diode forward
+        self.trr = trr
 
         assert math.isnan(Qg) or .5e-9 < Qg < 1000e-9, (Qg, Rds_on, Qg * Rds_on)
-        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 4000e-9, self.Qrr  # GaN have 0 qrr
+        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 21000e-9, self.Qrr  # GaN have 0 qrr, TK14A55D:20µC
+
+        rr = self.Qrr / self.trr
+        assert math.isnan(rr) or 0.5 <= rr <= 20, (self.Qrr / self.trr, self.Qrr, self.trr)
+        # rr~=1.3: NVMFS6H818NLT1G, rr<1: TK110A10PL
+
         assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
         assert math.isnan(self.tFall) or .5e-9 < self.tFall < 1000e-9, self.tFall
-        if isnum(Vsd): Vsd = abs(Vsd)
+        if isnum(Vsd):
+            Vsd = abs(Vsd)
 
         assert not isnum(Vsd) or 0.2 < Vsd < 3, Vsd  # FBG10N30BC: 2.5V
 
@@ -191,6 +205,10 @@ class MosfetSpecs:
 
 
 class DcDcSpecs:
+
+    @staticmethod
+    def default():
+        return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
 
     def __init__(self, vi, vo, f, Vgs=10, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
                  L=None):

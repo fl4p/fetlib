@@ -72,7 +72,7 @@ class ObjectDatabase(Generic[K, T]):
         if self._lib_mem and not reload:
             return self._lib_mem.copy()
 
-        with acquire_file_lock(self._lck_path, kill_holder=False):
+        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=30):
             if os.path.exists(self._lib_path):
                 with open(self._lib_path, 'rb') as f:
                     self._lib_mem = pickle.load(f)
@@ -106,7 +106,7 @@ class ObjectDatabase(Generic[K, T]):
             assert overwrite or k not in self._lib_mem
             self._lib_mem[k] = part
 
-        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=20):
+        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=30):
             with open(self._lib_path, 'wb') as f:
                 pickle.dump(self._lib_mem, f)
 

@@ -233,7 +233,8 @@ class NoTabularData(ValueError):
     pass
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True, hash_func_code=True)
+@disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True,
+            hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
                     need_symbols=None,
@@ -299,9 +300,8 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     ds = DatasheetFields(mfr, mpn)
 
-    txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path)
-    ds.add_multiple(txt_fields.all_fields())
-    # TODO do extract_fields_from_text again afet raster_ocr
+    from dslib.pdf.sheet import read_sheet
+    ds.add_multiple(read_sheet(pdf_path).all_fields(), 'read_sheet')
 
     if need_symbols:
         subsctract_needed_symbols(need_symbols, ds.keys())
@@ -323,6 +323,10 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
         if not isinstance(e, NoTabularData):
             print(pdf_path, 'tabula error', type(e).__name__, e)
         raise
+
+    txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path)
+    ds.add_multiple(txt_fields.all_fields())
+    # TODO do extract_fields_from_text again afet raster_ocr
 
     if not ds:
         raise NoTabularData(pdf_path)
@@ -366,7 +370,8 @@ def tabula_pdf_dataframes(pdf_path=None):
 
     try:
         dfs += tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True,
-                               force_subprocess=_force_subprocess)
+                               # force_subprocess=_force_subprocess
+                               )
         for df in dfs:
             df.index.name = 'tabula_cli_guess'
     except Exception as e:

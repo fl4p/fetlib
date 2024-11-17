@@ -22,10 +22,12 @@ def draw_annotations(image: PIL.Image.Image, page_annotations: List[Annotation])
 
     for a in page_annotations:
         p0 = (rint(a.bbox[0]) - 1, rint(pb[3] - a.bbox[3]) - 1)
+        yt = rint(pb[3] - a.bbox[3] + (a.bbox.height / 2 if a.vcenter else 0)) - 1
         s = normalize_text(a.name)
         s = whitespaces_to_space(s)
         cv2.rectangle(rgb, p0, (rint(a.bbox[2]) + 1, rint(pb[3] - a.bbox[1]) + 1), a.color, a.thickness)
-        cv2.putText(rgb, s, (p0[0] + 4, p0[1] + 22), cv2.FONT_HERSHEY_PLAIN, 1.6, a.color, a.thickness)
+
+        cv2.putText(rgb, s, (p0[0] + 4, yt+22), cv2.FONT_HERSHEY_PLAIN, 1.6, a.color, a.thickness)
 
     return PIL.Image.fromarray(rgb)
 
@@ -44,7 +46,7 @@ def pdf_raster_annot(pdf_path, dpi, annotations: Dict[int, List[Annotation]]):
     images2 = []
 
     for pn, page_annotations in annotations.items():
-        print('draw annotations on page', pn, len(page_annotations))
+        # print('draw annotations on page', pn, len(page_annotations))
         images2.append(draw_annotations(images[pn], page_annotations))
 
     images = images2

@@ -15,6 +15,26 @@ from dslib.pdf2txt.tabular import tabula_browser
 nan = na = math.nan
 
 
+def test_parse_cond_str():
+    from dslib.pdf.sheet import parse_cond_str
+    c = parse_cond_str('VGS = 0 V, ID = 250 mA')
+    assert c['Vgs'] == 0
+    assert c['Id'] == 0.25
+
+
+def test_detect_fields():
+    symbols = [
+        ('Drain-to-Source On Resistance', 'Rds_on'),
+        ('Drain-to-Source On Resistance', 'Rds_on'),
+        ('Drain-to-Source Breakdown Voltage', 'Vds')
+    ]
+
+    for s, sym in symbols:
+        d = detect_fields('any', [s])
+        assert d.symbol == sym
+
+
+
 def test_parse_lines():
     r = dim_regs_csv['V'][0]
     m = next(r.finditer("Diode forward voltage,Vsp,-,0.89,1.2,V Ves=0 V, Ir=50 A, Tj=25 °C"), None)

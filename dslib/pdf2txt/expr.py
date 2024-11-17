@@ -297,8 +297,6 @@ def line_regex_variations(dim: Dimension):
     any_unit = '|'.join(d.unit_regex for d in DIMENSIONS.values())
     any_head = '|'.join(d.head_regex for d in DIMENSIONS.values() if d.head_regex)
 
-    unit_suffix = '[/a-z0-9]{0,4}'  # VGS= 10 V, VDS = 0.5 VDSS, ID = 0.5 ID25    A/us
-
     param_name_char = '[- .,()a-z0-9]'  # "Reverse transfer capacitance"
     misc_ref = '[- \t_.,;:#*"\'()\[\]a-z0-9]'  # "see Figure 14; see Fig. 15", "(see Figure 14: "Test circuit for"
     annotations = '[- *.,()0-9]'
@@ -548,6 +546,12 @@ DIMENSIONS = dotdict(
         head_regex=None,
         unit_regex=r'(°[CF]|K|℃|℉)',
         signed=True,
+    ),
+    f=Dimension(
+        name='Frequency',
+        head_regex=None,
+        unit_regex=r'[Mk]?Hz',
+        signed=False,
     )
 )
 
@@ -630,7 +634,7 @@ def get_field_detect_regex(mfr):
 
     def rec(pat: str, flags):
         # texts are normalized (horizontal_whitespace -> ' ')
-        pat = pat.replace(r'\s', r' ') # dont match \n in \s
+        pat = pat.replace(r'\s', r' ')  # dont match \n in \s
         pat = f'(?P<detect>{pat})'
         return regex.compile(pat, flags=flags)
 
@@ -657,22 +661,22 @@ def get_field_detect_regex(mfr):
             rec(r'(effective\s+output\s+capacitance[\s,]+\(?time related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?TR\)?)($|\*|\s))',
                 re.IGNORECASE), ('energy',)),
         Coss_ER=(
-        # EPC: CossER, is a fixed capacitance that gives the same stored energy as Cos while Vos si rising from 0 to 50% BV_dss
+            # EPC: CossER, is a fixed capacitance that gives the same stored energy as Cos while Vos si rising from 0 to 50% BV_dss
             rec(r'(effective\s+output\s+capacitance[\s,]+\(?energy related\)?|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\s))',
                 re.IGNORECASE), ('time',)),
-        #Coss_ER=(rec(r'(output\s+capacitance|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\sVGS))', re.IGNORECASE),('time',)),
-        Coss=(rec(r'(output\s+capacitance|^C[ _]?oss($|\*|\sVGS))', re.IGNORECASE), ('time', 'energy',)), # eff
+        # Coss_ER=(rec(r'(output\s+capacitance|^C[ _]?oss([ _]?(eff)?\.?\s*\(?ER\)?)($|\*|\sVGS))', re.IGNORECASE),('time',)),
+        Coss=(rec(r'(output\s+capacitance|^C[ _]?oss($|\*|\sVGS))', re.IGNORECASE), ('time', 'energy',)),  # eff
         Ciss=rec(r'(input\s+capacitance|^C[ _]?iss($|\s))', re.IGNORECASE),
         Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s|\*))', re.IGNORECASE),
 
-        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('Rg=','ext=','external')),
+        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('Rg=', 'ext=', 'external')),
 
         Qgs2=(rec(
             r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',
             re.IGNORECASE),
               ('pre-vth', 'pre-threshold')),
         Qg_th=(rec(
-            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|^Q[ _]?gs?\s*\(?th\)?([^-_]|$|\*){qgs1})',
+            rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|threshold gate charge|^Q[ _]?gs?\s*\(?th\)?([^-_]|$|\*){qgs1})',
             re.IGNORECASE),
                ('post-threshold', 'post-vth')),
         Qsync=(rec(r'(total[\s-]+gate[\s-]+charge[\s-]+sync\.?|^Q[ _]?sync\.?)', re.IGNORECASE)),
@@ -695,12 +699,25 @@ def get_field_detect_regex(mfr):
 
         # VGS(pl), gate-source plateau
         Vpl=rec(
-            r'(gate\s+plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?($|\*))',
+            r'((gate\s+)?plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?($|\*))',
             re.IGNORECASE),
 
         Vsd=rec(
-            r'(diode[\s-]+forward[\s-]+voltage|forward diode voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
+            r'((source-(to-)?drain|drain-(to-)?source )?diode[\s-]+forward[\s-]+voltage|forward diode voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
             re.IGNORECASE),
+
+        Vds=(rec(
+            r'(Drain-to-Source[\s-]+(Breakdown[\s-]+)?Voltage|V[ _]?\s*(\(BR\))?dss($|[^/]))',
+            re.IGNORECASE), (
+                 'temperature', 'coefficient'  # coefficient
+             )),
+
+        Vgs_th=(rec(
+            r'(Gate[\s-]+Threshold[\s-]+Voltage|V[ _]?\s*gs\(th\)($|[^/]))',
+            re.IGNORECASE), (
+                    'temperature', 'coefficient'  # coefficient
+                )),
+
         # plate au
         # Qrr=rec(r'(reverse[−\s]+recover[edy]{1,2}[−\s]+charge|^Q[ _]?rr?($|\srecover))',
         #               re.IGNORECASE),
@@ -709,5 +726,26 @@ def get_field_detect_regex(mfr):
     return fields_detect
 
 
+any_unit = '|'.join(d.unit_regex for d in DIMENSIONS.values())
+any_head = '|'.join(d.head_regex for d in DIMENSIONS.values() if d.head_regex)
+
+unit_suffix = '[/a-z0-9]{0,4}'  # VGS= 10 V, VDS = 0.5 VDSS, ID = 0.5 ID25    A/us
+
 dim_regs_csv = get_dimensional_regular_expressions()
 dim_regs_multiline = build_dim_regex_table(line_regex_variations)
+
+
+@mem_cache(ttl='1h')
+def get_cond_regex():
+    cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_ ][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
+
+    num_signed = NumValReSet(True, False).val
+
+    test_cond = (rf'(?P<cond_sym>{cond_sym})\s*[=≈]\s*'
+                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[-+*/]? *)+'
+                 ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
+                 )
+    test_conds_delim_ml = (rf'(?P<conds_ml>{test_cond}\s*[;,\n\s]*)')
+    # test_conds_delim = (rf'({test_cond}\s*[;,\s]*)')
+
+    return re.compile(rf'{test_conds_delim_ml}', re.IGNORECASE)

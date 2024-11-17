@@ -77,7 +77,7 @@ def custom_subs(s: str):
 
 #@deprecated.deprecated
 def normalize_dash(s: str) -> str:
-    warnings.warn("deprecated")
+    warnings.warn("deprecated, use normalize_text()")
 
     s = s.replace(' ', ' ')
     s = s.replace('‐', '-')  # utf8 b'\xe2\x80\x90'

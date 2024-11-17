@@ -1,10 +1,11 @@
 import math
+import warnings
 
 import matplotlib.pyplot as plt
 import pandas as pd
 
 import dslib.magnetics.cores
-from dslib import dotdict, round_to_n
+from dslib import dotdict, round_to_n_dec
 from dslib.field import Field
 from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, CoilSpecs, dcdc_buck_coil, dcdc_buck_ls, SwitchPowerLoss
@@ -31,8 +32,8 @@ if __name__ == '__main__':
                      L=46e-6,
                      # turns=19.5,
                      core=dslib.magnetics.cores.KDM_KS130_060A.stack(2),
-                     #core=dslib.magnetics.cores.Micrometals_OE_184_060,
-                     #core=dslib.magnetics.cores.Micrometals_OE_226_060,
+                     # core=dslib.magnetics.cores.Micrometals_OE_184_060,
+                     # core=dslib.magnetics.cores.Micrometals_OE_226_060,
 
                      )
 
@@ -48,7 +49,7 @@ if __name__ == '__main__':
     fet_ho = ds_ho.get_mosfet_specs()
     fet_lo = ds_lo.get_mosfet_specs()
 
-    rg_total = 22
+    rg_total = 8
 
     # fet_ho = MosfetSpecs.from_mpn('TK6R8A08QM', mfr='toshiba')
     # fet_lo = MosfetSpecs.from_mpn('FDP027N08B', mfr='onsemi')
@@ -67,8 +68,8 @@ if __name__ == '__main__':
             rg_total=rg_total,
             fallback_V_pl=5.4,
 
-            Lcsi=2e-9,
-            ls_Qoss=250e-9, # TODO csd19503
+            Lcsi=4e-9,
+            ls_Qoss=500e-9,  # TODO csd19503 # TODO Qload_HS = Qoss_LS + Qrr_LS ?
             # MosfetSpecs(Rds_on=1e-3, Qg=1e-9, tRise=.5e-9, tFall=.5e-9, Qrr=1e-9)
             # MosfetSpecs(Rds_on=6.8e-3, Qg=39e-9, tRise=39e-9, tFall=46e-9, Qrr=43e-9),  # TK6R8A08QM
             # MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),#CSD19506KCS
@@ -88,8 +89,9 @@ if __name__ == '__main__':
         p_misc = dotdict(
             P_mcu=0.7,  # ESP32
             P_csr=1e-3 * dcdc.Io ** 2,  # current sense resistor (burden)
-            P_bflow=1e-3 * dcdc.Io ** 2,  # backflow switch
-            P_rpcb=.7e-3 * dcdc.Io ** 2,
+            P_bflow=.75e-3 * dcdc.Io ** 2,  # backflow switch
+            P_rpcb=1e-3 * dcdc.Io ** 2,
+            P_fuse=1.5e-3 * dcdc.Io ** 2,  # littelfuse 40A blade (1.33mOhm cold)
         )
 
         return dotdict(hs=p_hs, ls=p_ls, coil=p_coil, misc=p_misc), dcdc
@@ -103,15 +105,15 @@ if __name__ == '__main__':
     print('LS(sync)=', fet_lo.part.mpn, fet_lo)
     print('Coil=', repr(coil))
 
-    p_total_total = sum(sum(p.values()) for p in losses.values())
+    p_total_total = sum(sum(v for v in p.values() if not callable(v)) for p in losses.values())
 
     for n, p in losses.items():
-        p_group = sum(p.values())
+        p_group = sum(v for v in p.values() if not callable(v))
         print(f'P_{n:5}', '  =  %.2f W       (%4.1f%%)' % (p_group, p_group / p_total_total * 100))
-        for k, v in sorted(p.items(), key=lambda t: -t[1]):
+        for k, v in sorted(((k, v) for (k, v) in p.items() if not callable(v)), key=lambda t: -t[1]):
             if v != 0:
                 if isinstance(p, SwitchPowerLoss) or hasattr(p, 'get_cond'):
-                    cond_str = ', '.join(f'{k}={round_to_n(v, 3)}' for k, v in p.get_cond(k).items())
+                    cond_str = ', '.join(f'{k}={round_to_n_dec(v, 3) if isinstance(v, (int,float,)) else v}' for k, v in p.get_cond(k).items())
                 else:
                     cond_str = ''
                 print('%10s = %.2f W (%2.0f%%)  (%4.1f%%) %30s' % (k, v, v / p_group * 100, v / p_total_total * 100,
@@ -123,13 +125,21 @@ if __name__ == '__main__':
     print('Total P = %.2f W (%4.2f%%)' % (p_total_total, p_total_total / dcdc.Pout * 100))
     print('Efficiency = %.1f%%' % ((1 - p_total_total / dcdc.Pout) * 100))
 
+    coil_core_loss_ratio = losses.coil.P_core / (losses.coil.P_dcr + losses.coil.P_core)
+
+    if coil_core_loss_ratio < 0.1:
+        warnings.warn('Coil: core loss is <10% of total coil loss, consider additional copper strands and/or bigger core to reduce copper loss')
+
+    if coil_core_loss_ratio > 0.3:
+        warnings.warn('Coil: core loss is >30% of total coil loss, consider a smaller core to prevent thermal issues')
+
     eff_curve = []
     loss_curve = []
     pin = 5
     while pin < 1200:
         try:
             losses, dcdc = compute_losses(pin)
-            p_total = sum(map(lambda g: sum(g.values()), losses.values()))
+            p_total = sum(map(lambda g: sum(v for v in g.values() if not callable(v)), losses.values()))
             eff = 1 - p_total / pin
             eff_curve.append((pin, eff))
             loss_curve.append(dict(
@@ -143,13 +153,13 @@ if __name__ == '__main__':
                 P_csr=losses.misc.P_csr,
             ))
         except AssertionError as e:
-            #print('err with pin', pin, e)
+            # print('err with pin', pin, e)
             pass
         pin *= 1.1
 
     pd.DataFrame(eff_curve).set_index(0)[1].plot()
     plt.grid()
-    plt.ylim((0.95,1))
+    plt.ylim((0.95, 1))
     plt.show()
     pd.DataFrame(loss_curve).set_index('pin').plot()
     plt.show()

@@ -163,7 +163,7 @@ def table_seg_mu(pdf_path: str, table: Table, annotations: List[Annotation] = No
                 ))
 
 
-def table_segregation(pdf_path: str, table: Table, annotations: List[Annotation] = None):
+def table_segregation(pdf_path: str, table: Table, annotations: List[Annotation] = None) ->List[Bbox]:
     # table_borderify(pdf_path, table)
 
     top = table.page.mediabox.y2 - table.bbox.y2

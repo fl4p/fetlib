@@ -139,12 +139,19 @@ class EmbeddedPdfFont():
         p = os.path.relpath(self.path, doc_path)
         return f" @font-face {{ font-family: '{self.basefont}'; src: url('{p}') format('{css_formats[self.ext]}'); }}\n"
 
-    def decode_name(self, glyph_name):
-        u = self.name2code_2[glyph_name]
-        return u
-        gid = self.name2gid[glyph_name]
-        c = self.gid2code[gid]
-        return c
+    def decode_name(self, glyph_name:str):
+        if glyph_name in  self.name2code_2:
+            u = self.name2code_2[glyph_name]
+            return u
+        elif glyph_name in self.name2gid and self.name2gid[glyph_name] in self.gid2code:
+            gid = self.name2gid[glyph_name]
+            c = self.gid2code[gid]
+            return c
+        elif glyph_name[0] == 'C' and glyph_name[1:].isnumeric():
+            c =  int(glyph_name[1:].lstrip('0'))
+            return c
+        else:
+            return ord('?')
 
     def probe_font(font):
 
@@ -205,9 +212,9 @@ class EmbeddedPdfFont():
                             assert u not in t.cmap, (u, gn)
                             t.cmap[u] = gn
                             tk.add(u)
-                            print(font, 'add cmap for glyph %s#%d at code point %u (0x%02x) [%s] %s' % (
-                                repr(gn), tt.getGlyphID(gn), u, u, unicodedata.name(chr(u), '<no such name>'),
-                                repr(chr(u))))
+                            # print(font, 'add cmap for glyph %s#%d at code point %u (0x%02x) [%s] %s' % (
+                            #    repr(gn), tt.getGlyphID(gn), u, u, unicodedata.name(chr(u), '<no such name>'),
+                            #    repr(chr(u))))
 
                         else:
                             print(font, 'cant find unicode for glyph name %s' % repr(gn))
@@ -299,7 +306,7 @@ class PdfFonts():
         for (xref, ext, typ, basefont, name_, enc) in emb_fonts:
             if '/' in ext:
                 # https://pymupdf.readthedocs.io/en/latest/vars.html#fontextensions
-                print('not extractable font', xref, ext, typ, basefont, name_)
+                # print('not extractable font', xref, ext, typ, basefont, name_)
                 continue
 
             font = EmbeddedPdfFont(xref, ext, typ, basefont, name_, enc)
@@ -331,17 +338,23 @@ class PdfFonts():
         return m
 
 
+@disk_cache(ttl='99d', hash_func_code=True)
+def get_symbol_font_unicode():
+    import requests
+    url = 'https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt'
+    print('fetching', url)
+    tsv = requests.get(url).text
+    return tsv
+
+
 @mem_cache(ttl='5min', synchronized=True)
 @disk_cache(ttl='99d', hash_func_code=True)
 def get_font_default_enc(fontname) -> Dict[int, int]:
     def parse_tsv(tsv):
         return list(filter(bool, map(lambda s: s.split('#')[0].strip(), tsv.split('\n'))))
 
-    if fontname == 'Symbol' or fontname.endswith('+Symbol'): # or '+Symbol' in fontname:
-        import requests
-        url = 'https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt'
-        print('fetching', url)
-        tsv = requests.get(url).text
+    if fontname == 'Symbol' or fontname.endswith('+Symbol'):  # or '+Symbol' in fontname:
+        tsv = get_symbol_font_unicode()
         codes = parse_tsv(tsv)
         codepoints = map(lambda l: list(map(lambda s: int(s, 16), l.split('\t'))), codes)
         return dict(map(reversed, codepoints))

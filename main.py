@@ -47,13 +47,13 @@ def main():
 
     if not args.dcdc_file:
         # set DC-DC operating point:
-        dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
+        dcdc = DcDcSpecs.default()
         print('Using default DC-DC:', dcdc)
     else:
         raise NotImplemented()
 
     # discover available MOSFETS:
-    parts = asyncio.run(discover_mosfets())
+    parts = asyncio.run(discover_mosfets(no_obsolete=True))
     print('Discovered', len(parts), 'parts from manufacturers:', ','.join(sorted(set(p.mfr for p in parts))))
 
     if args.q:
@@ -128,10 +128,10 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
             dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols, no_ocr=no_ocr)
             ds.timestamp = dsp.timestamp
             ds.add_multiple(dsp.all_fields())
-        except (KeyError, AttributeError,  NameError): # Type, Timeout, TimeoutError,
+        except (KeyError, AttributeError, NameError):  # Type, Timeout, TimeoutError,
             raise
         except Exception as e:
-            if not isinstance(e, (NoTabularData,TooManyPages,)):
+            if not isinstance(e, (NoTabularData, TooManyPages,)):
                 print(traceback.format_exc())
             print(ds_path, 'parse error', type(e).__name__, e)
 
@@ -261,7 +261,8 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
     else:
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr) for p in parts_shuffled}
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr) for p in
+                parts_shuffled}
         results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)
         dss: List[DatasheetFields] = list(results.values())
 
@@ -295,7 +296,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
 
     if len(dss) > 2:
         os.path.exists('out') or os.makedirs('out', exist_ok=True)
-        out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}.csv'
+        out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}-inp{len(parts)}.csv'
         write_csv(df, out_fn)
         print('written', out_fn)
     else:
@@ -350,12 +351,14 @@ def tqdm_joblib(tqdm_object):
         joblib.parallel.BatchCompletionCallBack = old_batch_callback
         tqdm_object.close()
 
+
 def run_serial(jobs):
     res = {}
     for k, fn in jobs.items():
         # print(k, '...')
         res[k] = fn() if callable(fn) else fn[0](*fn[1:])
     return res
+
 
 def run_parallel(jobs, max_concurrency=256,
                  backend: Literal['threading', 'multiprocessing'] = 'multiprocessing',

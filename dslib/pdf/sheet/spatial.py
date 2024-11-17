@@ -54,6 +54,15 @@ class SpatialQuery():
             self.by_bbox_edge[dir] = s
 
     def cast(self, dir, start, end):
+        """
+
+        dir: y2: down
+
+        :param dir:
+        :param start:
+        :param end:
+        :return:
+        """
         if start <= end:
             v = self.by_bbox_edge[dir][start:end]
         else:

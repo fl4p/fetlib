@@ -50,8 +50,9 @@ def has_custom_embed_enc(c, fontname, fonts_enc):
 class Bbox():
 
     def __repr__(self):
-        r2 = lambda x : round(x, 2)
+        r2 = lambda x: round(x, 2)
         return f'Bbox({r2(self.x1)},{r2(self.y1)},{r2(self.x2)},{r2(self.y2)})'
+
     def __init__(self, x1: Union[float, Tuple[float, float, float, float], List[float], 'Bbox'], y1: float = None,
                  x2: float = None, y2: float = None):
 
@@ -131,6 +132,16 @@ class Bbox():
     def __hash__(self):
         return hash(self.t)
 
+    def extend(self, bbox):
+        b = bbox_union(self, bbox)
+        self.x1 = b.x1
+        self.y1 = b.y1
+        self.x2 = b.x2
+        self.y2 = b.y2
+        self.t = b.t
+        self.area = b.area
+        return self
+
 
 class Char:
 
@@ -144,6 +155,7 @@ class Char:
 
     def decode(self, line, fonts: Dict[str, 'EmbeddedPdfFont'], fonts_enc):
         c = self.c
+        cid = None
 
         if 2 <= len(c) <= 3 and ('fi' in c or 'ff' in c):
             # for some reason, pdfminer occasionally bundles 'ffi' or 'fi' into single chars?
@@ -157,9 +169,12 @@ class Char:
 
             assert c.startswith('(cid:') and c.endswith(')'), (c, repr(line.get_text()))
             cid = int(c[5:-1])
-            assert cid > 0
             self.cid = cid
-            c = self.decode_cid_char(cid, fonts, fonts_enc)  # this can update.self.fontname
+            #assert cid > 0
+            if cid == 0:
+                c = ' ' # TODO ?
+            else:
+                c = self.decode_cid_char(cid, fonts, fonts_enc)  # this can update.self.fontname
             # now we should use a font span
 
         fontname = self.fontname  # decode_cid_char() can unset fontname
@@ -194,8 +209,9 @@ class Char:
 
         # assert len(c) == 1, repr(c)
         assert c not in {'\t', '\r'}, "char is %s" % repr(c)
-        assert not c.isspace() or c in {' ', '\n', '\xa0'}, "char is space %r %s within %r" % (
-            c, unicodedata.name(c, '?'), line.get_text())
+        if not cid:
+            assert not c.isspace() or c in {' ', '\n', '\xa0'}, "char %r [%s] is space within %r" % (
+                c, unicodedata.name(c, '?'), line.get_text())
 
         if c in {'\x02'}:
             warnings.warn('char %s in %s' % (c, repr(line.get_text())))
@@ -224,8 +240,9 @@ class Char:
             elif cid < 256 and chr(cid).isprintable():
                 c = chr(cid)
             else:
-                print('font has no cid2glyph')
-                raise NotImplementedError()
+                warnings.warn('font has no cid2glyph')
+                c = chr(cid)
+                #raise NotImplementedError()
         elif isinstance(font, PDFCIDFont) and font.unicode_map:
             c = font.unicode_map.cid2unichr[cid]
         else:

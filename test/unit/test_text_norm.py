@@ -41,6 +41,9 @@ def test_unidecode():
     assert unidecode.unidecode('≈') == '≈'
 
 def test_normalize_dash_and_new():
+
+    assert set(normalize_dash('−')) == set('-')
+
     s = '°!"§$%&/())))=?`*\'_:;'
     s += 'ƒ‐ ‑ − – —'
     s += '-+\s=≈/a-z0-9.,;:μΩ°(){}"\'<>'
