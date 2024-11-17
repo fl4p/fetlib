@@ -315,14 +315,23 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     Bpk_ac = ur * µ0 * Hpk_ac  # peak ac flux density [T]
     B_pk = ur * µ0 * Hpk_ac
     """
-
     from dslib.magnetics.powerloss import core_loss_from_dc_bias, core_loss_from_dc_magnetization
+
+    P_core1, Bpk1, cld1 = core_loss_from_dc_magnetization(dc, coil)  # method 1
+    P_core2, Bpk2, cld2 = core_loss_from_dc_bias(dc, coil)  # method 2
+
     return dotdict(
         P_dcr=P_dcr,
-        P_core=max(
-            core_loss_from_dc_magnetization(dc, coil),  # method 1
-            core_loss_from_dc_bias(dc, coil),  # method 2
-        )
+        P_core=max(P_core1, P_core2),
+        get_cond=lambda k: dict(
+            P_dcr=dict(Rdc=coil.Rdc),
+            P_core=dict(
+                ΔI=dc.Iripple,
+                Bpk=max(Bpk1, Bpk2),  # peak ac flux density
+                CLD=round_to_n_dec(max(cld1, cld2), 3) + 'mW/cm3',  # core loss density
+                mthd=2 if cld2 > cld1 else 1,
+            ),
+        ).get(k)
     )
 
 
