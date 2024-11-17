@@ -179,6 +179,21 @@ infineon = {
 }
 
 onsemi = {
+    'NTBGS004N10G': [
+        Field('Qg_th', min=math.nan, typ=50, max=math.nan, unit='nC'),  # error in Datasheet (mistake)
+    ],
+    'HUFA75645S3S': [
+        Field('Qg_th', min=math.nan, typ=10, max=math.nan, unit='nC'),  # very low?
+    ],
+
+    'NVTFWS8D1N08HTAG': [
+        Field('Qg_th', min=math.nan, typ=5.5, max=math.nan, unit='nC'),  # error in Datasheet (mistake)
+    ],
+
+    'NVTFS8D1N08HTAG': [
+        Field('Qg_th', min=math.nan, typ=5.5, max=math.nan, unit='nC'),  # error in Datasheet (mistake)
+    ],
+
     'NVMFWS2D1N08XT1G': [  # tabula failure
         Field('tRise', min=math.nan, typ=10, max=math.nan, unit='ns'),
         Field('tFall', min=math.nan, typ=6, max=math.nan, unit='ns'),
