@@ -132,11 +132,11 @@ class DiscoveredPart():
     #    return is_gan(self.mfr)
 
 
-async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], **kwargs):
+async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], prefix='mosfet', **kwargs):
     from dslib.fetch import download_with_chromium
 
     os.makedirs('parts-lists/' + mfr, exist_ok=True)
-    fn = datetime.datetime.now().strftime(f'parts-lists/{mfr}/mosfet-%Y-%m.{fn_ext}')
+    fn = datetime.datetime.now().strftime(f'parts-lists/{mfr}/{prefix}-%Y-%m.{fn_ext}')
 
     if not os.path.isfile(fn):
         await download_with_chromium(
@@ -284,55 +284,65 @@ async def onsemi_mosfets():
     # 200V:
     #
 
-    fn = await download_parts_list(
-        'onsemi',
-        url='https://www.onsemi.com/products/discrete-power-modules/mosfets/low-medium-voltage-mosfets',
-        fn_ext='csv',
-        click='button.btn-export',
-    )
-
-    df = pd.read_csv(fn)
-
-    #     # https://www.onsemi.com/download/data-sheet/pdf/ech8667-d.pdf
-
     parts = []
-    for i, row in df.iterrows():
-        if row['Channel Polarity'] == 'Complementary' or row['Configuration'] != 'Single' or 'Q1' in row[
-            'RDS(on) Max @ VGS = 10 V  (mΩ)']:
-            continue
-        mfr = mfr_tag('onsemi')
-        mpn = str(row['Product Group'])
-        ds_fn = mpn.lower().replace('-', '_')  # .split("-")[0][:12]
-        m = re.compile('([a-z]+[0-9]+[a-z]+[0-9]+)').match(ds_fn)
-        if m:
-            ds_fn = m[0]
-        ds_url = f'https://www.onsemi.com/download/data-sheet/pdf/{ds_fn}-d.pdf'
-        vgs_th = parse_field_value(row['Vgs(th) Max (V)'].strip('±'))
-        rds_on = parse_field_value(row['RDS(on) Max @ VGS = 10 V  (mΩ)']) * 1e-3
 
-        if mpn == 'NTMFS0D7N03CGT1G':
-            rds_on = 0.65e-3  # mistake
+    urls = {
+        'small-signal-mosfets': 'https://www.onsemi.com/products/discrete-power-modules/mosfets/small-signal-mosfets',
+        'low-medium-voltage-mosfets': 'https://www.onsemi.com/products/discrete-power-modules/mosfets/low-medium-voltage-mosfets',
+    }
 
-        parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
-            Vds_max=parse_field_value(row['V(BR)DSS Min (V)'].strip('±')),
-            Rds_on_10v_max=rds_on if rds_on > 0.1e-3 else math.nan,
-            Qg_max=math.nan,
-            Qg_typ=parse_field_value(row['Qg Typ @ VGS = 10 V (nC)']),
-            ID_25=parse_field_value(row['ID Max (A)']),
-            Vgs_th_min=math.nan,
-            Vgs_th_typ=math.nan,
-            Vgs_th_max=vgs_th if vgs_th < 10 else math.nan,
-            # qgs, qgd, ciss, coss, weight
-            source='onsemi.com'
-        ), package=row['Package Type']))  # Package Name
+    for prefix, url in urls.items():
+        fn = await download_parts_list(
+            'onsemi',
+            url=url,
+            prefix=prefix,
+            fn_ext='csv',
+            click='button.btn-export',
+        )
 
-    # df = pd.read_csv(fn)
+        df = pd.read_csv(fn)
+
+        #     # https://www.onsemi.com/download/data-sheet/pdf/ech8667-d.pdf
+
+        for i, row in df.iterrows():
+            if row['Channel Polarity'] == 'Complementary' or row['Configuration'] != 'Single' or 'Q1' in row[
+                'RDS(on) Max @ VGS = 10 V  (mΩ)']:
+                continue
+            mfr = mfr_tag('onsemi')
+            mpn = str(row['Product Group'])
+            ds_fn = mpn.lower().replace('-', '_')  # .split("-")[0][:12]
+            m = re.compile('([a-z]+[0-9]+[a-z]+[0-9]+)').match(ds_fn)
+            if m:
+                ds_fn = m[0]
+            ds_url = f'https://www.onsemi.com/download/data-sheet/pdf/{ds_fn}-d.pdf'
+            vgs_th = parse_field_value(row['Vgs(th) Max (V)'].strip('±'))
+            rds_on = parse_field_value(row['RDS(on) Max @ VGS = 10 V  (mΩ)']) * 1e-3
+
+            if mpn == 'NTMFS0D7N03CGT1G':
+                rds_on = 0.65e-3  # mistake
+
+            if mpn == 'BSS138-G':
+                row['Id Max (A)'] = float(row['Id Max (A)']) / 1000
+
+            parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+                Vds_max=parse_field_value(row['V(BR)DSS Min (V)'].strip('±')),
+                Rds_on_10v_max=rds_on if rds_on > 0.1e-3 else math.nan,
+                Qg_max=math.nan,
+                Qg_typ=parse_field_value(row['Qg Typ @ VGS = 10 V (nC)']),
+                ID_25=parse_field_value(row.get('ID Max (A)') or row.get('Id Max (A)')),
+                Vgs_th_min=math.nan,
+                Vgs_th_typ=math.nan,
+                Vgs_th_max=vgs_th if vgs_th < 10 else math.nan,
+                # qgs, qgd, ciss, coss, weight
+                source='onsemi.com'
+            ), package=row['Package Type']))  # Package Name
+
+        # df = pd.read_csv(fn)
 
     return parts
 
 
 def onsemi_ds_url(mpn):
-
     import requests
     resp = requests.post(
         "https://onsemiconductorcorporationproductionvs0bwvg1.org.coveo.com/rest/search/v2?organizationId=onsemiconductorcorporationproductionvs0bwvg1",
