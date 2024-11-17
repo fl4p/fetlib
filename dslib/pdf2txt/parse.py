@@ -233,7 +233,7 @@ class NoTabularData(ValueError):
     pass
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True)
+@disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True, hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
                     need_symbols=None,
@@ -415,6 +415,27 @@ valid_range = dict(
 )
 
 
+# tpe = ThreadPoolExecutor(max_workers=4)
+# tpe.map(
+
+@timeout_decorator.timeout(1, use_signals=True)
+def find_iter_timeout(r: re.Pattern, s: str) -> re.Match:
+    return next(r.finditer(s), None)
+
+
+def find_iter(r: re.Pattern, s: str) -> re.Match:
+    # print('REGEX:', repr(r.pattern))
+    # print('STR: ', repr(s))
+    if '?P<cond' in r.pattern:
+        try:
+            return find_iter_timeout(r, s)
+        except TimeoutError:
+            print('TimeoutError with', repr(r.pattern))
+            raise
+    else:
+        return next(r.finditer(s), None)
+
+
 def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None) \
         -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
     range = valid_range.get(field_sym)
@@ -428,8 +449,11 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
         # print(csv_line, dim , r.pattern)
         try:
             # print(r.pattern.replace('\'', '\\\''),'\non\n', repr(s),'..')
-            m: re.Match = next(r.finditer(s), None)
+            m = find_iter(r, s)
             # print('..done.')
+        except timeout_decorator.timeout_decorator.TimeoutError:
+            print("catastrophic backtracking with '%s' in %r" % (r.pattern.replace('\'', '\\\''), s))
+            continue
         except:
             print(traceback.format_exc())
             print("finding '%s' in %r" % (r.pattern.replace('\'', '\\\''), s))
