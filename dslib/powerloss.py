@@ -26,7 +26,7 @@ import math
 import warnings
 from typing import Tuple
 
-from dslib import round_to_n, dotdict
+from dslib import round_to_n, dotdict, round_to_n_dec
 from dslib.magnetics.cores import MagneticCoreSpecs
 from dslib.spec_models import DcDcSpecs, MosfetSpecs, rel_err
 
@@ -45,7 +45,7 @@ class SwitchPowerLoss():
         """
         self.P_on = P_on
         self.P_sw = P_sw
-        # self.P_coss = P_coss
+        self.P_coss = P_coss
         self.P_rr = P_rr
         self.P_gd = P_gd
         self.P_dt = P_dt
@@ -83,6 +83,7 @@ class SwitchPowerLoss():
         return SwitchPowerLoss(
             P_on=self.P_on / n * 0.9,  # one switch takes most of the dynamic load, the rest stay cooler
             P_sw=self.P_sw,
+            P_coss=self.P_coss * n,
             P_rr=n * self.P_rr,
             P_gd=n * self.P_gd,
             P_dt=self.P_dt,  # Vsd body diode voltage drop
@@ -91,18 +92,13 @@ class SwitchPowerLoss():
         )
 
     def buck_hs(self):
-        p = self.P_sw + self.P_on + self.P_gd
-        # if not math.isnan(self.P_coss):
-        #    p += self.P_coss
-        # assert not math.isnan(p), (self.P_sw , self.P_on , self.P_gd)
+        p = self.P_sw + self.P_on + self.P_gd + self.P_coss
         return p
 
     def buck_ls(self):
         # P_rr is induced but not self loss !
         p = self.P_rr + self.P_on + self.P_gd + self.P_dt
-        # if not math.isnan(self.P_coss):
-        #    p += self.P_coss
-        # assert not math.isnan(p)
+        # Qoss is recovered, not lost!
         return p
 
     def sum(self):
@@ -157,10 +153,16 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.na
         P_rr=0,  # body diode never conducts
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
         P_dt=0,  # body diode never conducts
-        # P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss, # https://www.onelectrontech.com/power-mosfet-capacitance-coss-and-switching-loss/
-        # P_coss=.5 * dc.f * dc.Vi * mf.Qoss,  #<- https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=8
-        # TODO P_coss from Fundamentals of Power Electronics. (integrate Capacity ~ 1/sqrt(V)),
-        cond=dict(t_sw=t_sw),
+        P_coss=2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,
+        # TODO  ^ compute Coss at given dc.Vi, for 80V fets, this is given at 40V, Coss is ~1/sqrt(V)
+        # 2/3 comes from integration of Coss(V)
+        # https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
+        cond=dict(
+            t_sw=t_sw,
+            R_on=dict(Rds=mf.Rds_on, I=i_rms2 ** .5),
+            Q_gd=dict(Qg=mf.Qg),
+            P_coss=dict(Coss=mf.Coss),
+        ),
     )
 
 
@@ -180,16 +182,24 @@ def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs):
     else:
         vsd = abs(mf.Vsd)
 
+    Qrr_eff = mf.Qrr * 1.2  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
+    # TODO Qrr di/dit, Id, (IPT025N15NM6ATMA1)
+    # TODO https://application-notes.digchip.com/070/70-41484.pdf
+    # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
+
     return SwitchPowerLoss(
         P_on=(1 - dc.D_buck) * dc.Io_mean_squared_on * mf.Rds_on,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,
-        P_rr=dc.Vi * dc.f * mf.Qrr * 1.2,  # this is dissipated in HS
-        # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
-        # TODO Qrr di/dit, Id, (IPT025N15NM6ATMA1)
-        # TODO https://application-notes.digchip.com/070/70-41484.pdf
-        # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
+        P_rr=dc.Vi * dc.f * Qrr_eff,  # this is dissipated in HS
         P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
         P_sw=0,  # negligible
+        P_coss=0, # negligible (charge is recovered)
+        cond=dict(
+            R_on=dict(Rds=mf.Rds_on),
+            P_dt=dict(Vsd=vsd, tDead=dc.tDead),
+            P_rr=dict(Qrr=Qrr_eff),
+            P_gd=(dict(Qg=mf.Qg)),
+        )
         # P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss,
     )
 
@@ -224,7 +234,7 @@ class CoilSpecs():
         assert abs(rel_err(L, l)) < 0.05
 
     def __repr__(self):
-        return f'CoilSpecs(Rdc={self.Rdc}, L={self.L}, T={self.turns}, core={(self.core)})'
+        return f'CoilSpecs(Rdc={round_to_n_dec(self.Rdc, 3)}, L={round_to_n_dec(self.L, 3)}, T={self.turns}, core={(self.core)})'
 
 
 def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
