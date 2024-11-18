@@ -1,4 +1,7 @@
 [dspicks]
+headMTM=datasheets/littelfuse/IXFK170N10P.pdf
+headExt=datasheets/infineon/FF3MR12KM1HPHPSA1.pdf
+off=datasheets/infineon/IPP014N06NF2SAKMA2.pdf
 enc=datasheets/infineon/IPP057N08N3GHKSA1.pdf
 rohm=datasheets/rohm/RS6P100BHTB1.pdf
 
