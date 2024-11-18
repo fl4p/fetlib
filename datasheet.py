@@ -42,10 +42,16 @@ async def main():
 
     args = parser.parse_args(sys.argv[1:])
 
+    if args.no_cache:
+        print('cache disabled')
+        from dslib.cache import disk_cache_disable
+        disk_cache_disable(True)
+
     if args.datasheet_file == 'random':
         files = glob.glob("datasheets/**/*.pdf", recursive=True)
         random.shuffle(files)
-        ds_path = files[0]
+        ds_path = next(filter(lambda fn : fn.count('.pdf') < 2, files ))
+        #ds_path = files[0]
         print(ds_path)
     else:
         ds_path = os.path.abspath(args.datasheet_file)
@@ -62,6 +68,11 @@ async def main():
                 ds_path = os.path.abspath(p)
 
     print('Selected', ds_path)
+
+    pdf = pymupdf.open(ds_path)
+    print('File Size:         %.0fk' % (os.path.getsize(ds_path) / 1024))
+    for k, v in pdf.metadata.items():
+        print('%-20s:' % k, v)
 
     if args.command == 'open':
         open_file_with_default_app(ds_path)
@@ -107,8 +118,6 @@ async def main():
                 pdfminer.high_level.extract_text_to_fp(fp,fpo, output_type='html',layoutmode='exact')
             open_file_with_default_app(out_path)
 
-    pdf = pymupdf.open(ds_path)
-    print('File Size:         %.0fk' % (os.path.getsize(ds_path) / 1024))
 
     if False:
         fonts = unique_stable(sum((pdf.get_page_fonts(pno) for pno in range(len(pdf))), []))
@@ -116,14 +125,14 @@ async def main():
         for font in fonts:
             print(font)
 
-    for k, v in pdf.metadata.items():
-        print('%-20s:' % k, v)
+
     # print(pdf.get_xml_metadata())
     #
 
     #print(pdf.xref_xml_metadata())
     text = normalize_text(extract_text(ds_path))
     print('Extracted', len(text), 'characters of text:', whitespaces_to_space(text)[:80], '..')
+    print(ds_path)
 
     return
 
