@@ -217,7 +217,7 @@ def validate_datasheet_text(mfr, mpn, text):
         # print('text too short ' + str(len(text)))
         return False
 
-    _n = lambda s: whitespaces_remove(strip_no_print_latin(s.lower().replace('o', '0')))
+    _n = lambda s: whitespaces_remove(strip_no_print_latin(s.lower().replace('o', '0').replace('_', '').replace('-', '')))
 
     if _n(mpn).split(',')[0][:7] not in _n(text):
         print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(text)[:30])
