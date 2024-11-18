@@ -82,7 +82,7 @@ def round_to_n(x, n):
     # if isinstance(x, tuple):
     #    return '[%s]' % ', '.join(map(str, map(partial(round_to_n, n=n), x)))
 
-    if isinstance(x, str) or not math.isfinite(x) or not x:
+    if not x or isinstance(x, str) or not math.isfinite(x):
         return x
 
     try:
@@ -106,6 +106,9 @@ def num2str(x, n=None):
 
 def round_to_n_dec(x, n):
     x = round_to_n(x, n)
+    if not x or isinstance(x, str) or not math.isfinite(x):
+        return x
+
     if x < 1e-20:
         return '0'
     elif x < 999e-12:

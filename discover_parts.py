@@ -30,7 +30,8 @@ def unique_parts(parts: List[DiscoveredPart]):
 async def discover_mosfets(no_obsolete=False):
     parts: List[DiscoveredPart] = []
 
-    #parts += await parts_discovery.onsemi_mosfets()
+    parts += await parts_discovery.onsemi_mosfets()
+    parts += await parts_discovery.aosmd_medium_voltage_mosfets()
     parts += await parts_discovery.toshiba_mosfets()
     parts += await parts_discovery.ti_mosfets()
     parts += await parts_discovery.infineon_mosfets()

@@ -5,7 +5,6 @@ ideas:
 - virtually increase distance between elements that are separted by a line. char_margin=2 -> should be more than that
 
 """
-import glob
 import math
 import re
 import warnings
@@ -13,7 +12,7 @@ from collections import defaultdict
 from typing import List, Optional
 
 from dslib.cache import disk_cache
-from dslib.field import Field, DatasheetFields
+from dslib.field import Field, DatasheetFields, parse_field_value
 from dslib.pdf.ascii import pdf_to_ascii, Row, Phrase
 from dslib.pdf.sheet.annotation import pdf_raster_annot
 from dslib.pdf.sheet.spatial import SpatialQuery, take
@@ -27,20 +26,25 @@ from dslib.pdf2txt.parse import detect_fields, DetectedSymbol
 head_re = re.compile(
     '((\s+|^\s*)('
     '(?P<sym>Symbol)'
-    '|(?P<param>Parameter|Characteristics)'
+    '|(?P<param>Parameters?|Characteristics?)'
     '|(?P<min>Min(\.|imum)?)'
     '|(?P<typ>Typ(\.|ycal)?)'
     '|(?P<max>Max(\.|imum)?)'
+    '|(?P<cond>(Note *(/|or)? *)?(Test(ing)?\s+)?Conditions?)'
+    '|(?P<values>(Value|Rating)s?)'
     '|(?P<unit>Units?)'
-    '|(?P<cond>(Test(ing)?\s+)?Conditions?))(?=$|\s+))+', re.IGNORECASE)
+    ')(?=$|\s+))+', re.IGNORECASE)
 
 head_re_groups = ('sym', 'param', 'min', 'typ', 'max', 'unit', 'cond')
 
-head_stop = ('RATINGS', 'Ratings', 'Power', 'Avalanche', 'allowable', 'limited', 'Lead',
-             'Static', 'Electrical', 'Dynamic', 'curves', 'above',
-             'Continuous', 'Pulsed',  # Max drain current
-             'Thermal', 'Resistance',
-             )
+head_stop = (
+    # 'RATINGS', 'Ratings',
+    # 'Power',
+    'Avalanche', 'allowable', 'limited', 'Lead',
+    'Static', 'Electrical', 'Dynamic', 'curves', 'above',
+    'Continuous', 'Pulsed',  # Max drain current
+    'Thermal', 'Resistance',
+)
 
 
 def _header_filter(row: Row, m_head: re.Match):
@@ -59,8 +63,7 @@ def _header_filter(row: Row, m_head: re.Match):
     return True
 
 
-@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt=('v02'))
-def read_sheet(pdf_file, expand=True, merge=True, debug_annotations=False, multiline_conditions=True):
+def read_sheet_inner(pdf_file, expand=True, merge=True, debug_annotations=False, multiline_conditions=True):
     all_lines = pdf_to_ascii(pdf_file, grouping='line',
                              sort_vert=True,
                              spacing=' ',
@@ -102,6 +105,15 @@ def read_sheet(pdf_file, expand=True, merge=True, debug_annotations=False, multi
     - horizontal pane intersection with table structure to find out-of-line units and testing conditions
     - 
     """
+
+
+def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=True):
+    return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
+
+
+@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt=('v05'))
+def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
+    return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False, multiline_conditions=multiline_conditions)
 
 
 def _process_page(pdf_file, mfr, rows, pn, annotations: List[Annotation], merge, expand, multiline_conditions) -> List[
@@ -304,6 +316,12 @@ def parse_cond_str(cond):
     return res
 
 
+def _is_valid_value(mtm, s):
+    if mtm not in Field.StatKeys or not math.isnan(parse_field_value(s, no_raise=True)):
+        return True
+    return False
+
+
 def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes, sq: SpatialQuery, multiline_conditions,
                    annotations: List[Annotation]):
     fields: List[Field] = []
@@ -328,6 +346,8 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
     cells = []
     cells = table_segregation(pdf_path=pdf_file, table=table, annotations=annotations)
     parsed = []
+
+    #val_re = re.compile(r'[+-]*(' + NumValReSet(True, nan_empty=False).val_nan + ')', re.IGNORECASE)
 
     # header_row = False
 
@@ -411,7 +431,9 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                 w = bbox.height + min(bbox.width, 25)
                 if not sq.ray('x1', bbox, w, min_overlap=0.1):
                     bbox = Bbox(bbox.x2 + bbox.height, bbox.y1, bbox.x2 + w, bbox.y2)
-                    column_boxes['unit'] = _vertically_expand_column_cells(bbox, cells, sq, annotations)
+                    column_boxes['unit'] = _vertically_expand_column_cells(bbox, cells, sq,
+                                                                           multiline=multiline_conditions,
+                                                                           annotations=annotations)
 
         else:  # if not HEAD
 
@@ -420,6 +442,8 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                 warnings.warn('empty detect bbox %s' % row.symbol.match)
                 continue
             # assert sym_bbox, row.symbol.match
+
+            # print('det', row.symbol.symbol, sym_bbox)
 
             bbox_cell = _find_cell_bbox(sym_bbox, cells)
 
@@ -468,14 +492,18 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                         annotations.append(Annotation(name=f'{el}({mtm})', bbox=el.bbox, color=(255, 128, 0)))
                         for f_bbox, val in val_fields:
                             if el.bbox.v_overlap_rel(f_bbox) > 0.8:
-                                if mtm in val:
-                                    warnings.warn("%s: dupe %s=%s in %s" % (row.symbol.symbol, mtm, str(el), val))
                                 # assert mtm not in val, "%s: dupe %s=%s in %s" % (row.symbol.symbol, mtm, str(el),val)
-                                f_bbox.extend(el.bbox)
-                                val[mtm] = str(el)
+                                s = str(el)
+                                if _is_valid_value(mtm, s):
+                                    if mtm in val:
+                                        warnings.warn("%s: dupe %s=%s in %s" % (row.symbol.symbol, mtm, str(el), val))
+                                    val[mtm] = s
+                                    f_bbox.extend(el.bbox)
                                 break
                         else:
-                            val_fields.append((Bbox(el.bbox), {mtm: str(el)}))
+                            s = str(el)
+                            if _is_valid_value(mtm, s):
+                                val_fields.append((Bbox(el.bbox), {mtm: s}))
 
             conds: List[Phrase] = column_boxes.get('cond', [])
             for f_bbox, val in val_fields:
@@ -484,9 +512,13 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                         break
                 else:
 
-                    els = filter(lambda el: f_bbox.v_overlap_rel(el.bbox) > 0.8, conds)
-                    cond = take(map(str, els), 200)
-                    cond = parse_cond_str(', '.join(cond))
+                    cond = None
+                    try:
+                        els = filter(lambda el: f_bbox.v_overlap_rel(el.bbox) > 0.8, conds)
+                        cond = take(map(str, els), 200)
+                        cond = parse_cond_str(', '.join(cond))
+                    except Exception as e:
+                        print(pdf_file, 'error parsing field cond', e, cond)
 
                     try:
                         f = Field(row.symbol.symbol,
@@ -496,7 +528,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                         fields.append(f)
                         parsed.append(f_bbox)
                     except Exception as e:
-                        print('error parsing field %s in %r: %s' % (row.symbol.symbol, row.row, e))
+                        print(pdf_file, 'error parsing field %s in %r: %s' % (row.symbol.symbol, row.row, e))
                         # raise
 
     return fields
@@ -514,10 +546,9 @@ if __name__ == '__main__':
 
     # read_sheet('../../../datasheets/toshiba/SSM3K361R.pdf') # multi-cond Rdson
 
-    #ds = read_sheet('../../../datasheets/onsemi/NVMFS4C305NET1G-YE.pdf', debug_annotations=True)  # multi-cond Rdson
+    # ds = read_sheet('../../../datasheets/onsemi/NVMFS4C305NET1G-YE.pdf', debug_annotations=True)  # multi-cond Rdson
 
-    ds = read_sheet('../../../datasheets/onsemi/FDMS3D5N08LC.pdf', debug_annotations=False)  # multi-cond Rdson
-
+    ds = read_sheet_debug('../../../datasheets/littelfuse/IXTQ180N10T.pdf')  # multi-cond Rdson
 
     # read_sheet('../../../datasheets/onsemi/FDB075N15A-F085.pdf')
 
@@ -525,9 +556,9 @@ if __name__ == '__main__':
     # read_sheet('../../../datasheets/onsemi/FDB075N15A-F085.pdf')
     ds.print(show_cond=True)
     ds.get_mosfet_specs()
-    #exit(0)
+    exit(0)
 
-    for fn in sorted(glob.glob('../../../datasheets/toshiba/*.pdf')):
+    for fn in sorted(glob.glob('../../../datasheets/infineon/*.pdf')):
         if '.annot.pdf' in fn or '.gs.pdf' in fn or '.cups.pdf' in fn:
             continue
 

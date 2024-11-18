@@ -112,9 +112,9 @@ class NumValReSet():
         if signed:
             field = r'-?' + field
 
-        nane = r'[-=.\s_]*|nan|\.'  # empty or nan
+        nane = r'[-~=.\s_]*|nan|\.'  # empty or nan
         if not nan_empty:
-            nan = r'[-=._]+|nan'
+            nan = r'[-~=._]+|nan'
         else:
             nan = nane
 
@@ -669,7 +669,8 @@ def get_field_detect_regex(mfr):
         Ciss=rec(r'(input\s+capacitance|^C[ _]?iss($|\s))', re.IGNORECASE),
         Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s|\*))', re.IGNORECASE),
 
-        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?)', re.IGNORECASE), ('Rg=', 'ext=', 'external')),
+        Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?\s*($|[^=]))', re.IGNORECASE),
+            ('Rg=', 'Rg =', 'RGEN =', 'RGEN=', 'ext=', 'external')),
 
         Qgs2=(rec(
             r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',

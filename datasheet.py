@@ -26,7 +26,7 @@ async def main():
         'open',
         'ascii',
         'rasterize', 'html', 'html-pm',
-        'parse',
+        'parse', 'read-sheet-debug',
         'power'), default='power')
     parser.add_argument('datasheet_file')
 
@@ -94,6 +94,9 @@ async def main():
 
     elif args.command == 'parse':
         parse_datasheet(ds_path).print(True, True)
+    elif args.command == 'read-sheet-debug':
+        from dslib.pdf.sheet import read_sheet_debug
+        read_sheet_debug(ds_path).print(True, True)
     elif args.command == 'html-pm':
         out_path = 'out/html/' + os.path.basename(ds_path).split('.')[0] + '.html'
         with open(ds_path, "rb") as fp:

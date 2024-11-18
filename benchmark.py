@@ -134,7 +134,8 @@ if 'v2':
 
 # multi Qrr (different didt)
 # FDMS3D5N08LC
-
+# IQD063N15NM5SC
+# IQD063N15NM5SCATMA1 trykid conditions (Tj, rdson)
 
 # from tests
 

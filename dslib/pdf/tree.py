@@ -214,9 +214,9 @@ class Char:
         if c in {'\t', '\r'}:
             c = ' '
         # assert c not in {'\t', '\r'}, "char is %s" % repr(c)
-        if not cid:
-            assert not c.isspace() or c in {' ', '\n', '\xa0'}, "char %r [%s] is space within %r" % (
-                c, unicodedata.name(c, '?'), line.get_text())
+        #if not cid:
+        #    assert not c.isspace() or c in {' ', '\n', '\xa0'}, "char %r [%s] is space within %r" % (
+        #        c, unicodedata.name(c, '?'), line.get_text())
 
         if c in {'\x02'}:
             warnings.warn('char %s in %s' % (c, repr(line.get_text())))
@@ -467,6 +467,7 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
     inf_ = pdfminer.utils.INF
 
     for page in pages:
+        # print('page', page_no, page.mediabox, page.cropbox)
         pg = Page(page_no, page.mediabox, page.cropbox)
 
         interpreter.process_page(page)

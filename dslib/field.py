@@ -39,6 +39,16 @@ class Field():
             mul = 1e6
             unit = 'pF'
 
+        if symbol[0] == 'R':
+            if unit in {'mW'}:
+                assert mul == 1
+                mul = 1
+                unit = 'mΩ'
+            if unit in {'W', 'Ω'}:
+                assert mul == 1
+                mul = 1000
+                unit = 'mΩ'
+
         min = parse_field_value(min) * mul
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
@@ -192,7 +202,7 @@ class Field():
         return self.assert_values(min=min, typ=typ, max=max)
 
 
-def parse_field_value(s):
+def parse_field_value(s, no_raise=False):
     if isinstance(s, (float, int)):
         return s
     if not s:
@@ -200,10 +210,14 @@ def parse_field_value(s):
     s = normalize_text(s.strip().strip(' \x03').rstrip('L'))
     if not s or s in {'-', '.', '"', "'", '#', '~NA~'} or set(s) == {'-'}:
         return math.nan
+    if s.startswith('+- '):
+        s = s[3:]
     try:
         return float(s)
     except:
-        print('string is %r' % s)
+        if no_raise:
+            return math.nan
+        # print('string is %r' % s)
         raise
 
 
@@ -293,7 +307,7 @@ class DatasheetFields():
 
             src = ''
             if show_sources:
-                v = list('>'.join(v) for v in f._sources.values())
+                v = list('>'.join(v or '') for v in f._sources.values())
                 if len(set(v)) == 1:
                     src = v[0]
                 else:
@@ -303,7 +317,7 @@ class DatasheetFields():
             cond_str = ''
             if show_cond:
                 if f.cond and isinstance(f.cond, dict) and isinstance(list(f.cond.keys())[0], str):
-                    cond_str = ', '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in f.cond.items())
+                    cond_str = ', '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in sorted(f.cond.items()))
                 else:
                     cond_str = whitespaces_to_space(', '.join(
                         map(str, (f.cond.items() if isinstance(f.cond, dict) else f.cond)) if f.cond else []))[:80]
@@ -333,10 +347,14 @@ class DatasheetFields():
 
         ds = self
 
+        rds_on = ds.get_max('Rds_on_10v', cond=dict(Vgs=Vgs)) * 1e3
+        if math.isnan(rds_on):
+            rds_on = ds.get_max('Rds_on', cond=dict(Vgs=Vgs))
+
         from dslib.spec_models import MosfetSpecs
         return MosfetSpecs(
             Vds_max=ds.get_max('Vds'),
-            Rds_on=ds.get_max('Rds_on_10v', cond=dict(Vgs=Vgs)),
+            Rds_on=rds_on * 1e-3,
             Qg=ds.get_typ_or_max_or_min('Qg', cond=dict(Vgs=Vgs)) * 1e-9,
             tRise=ds.get_typ_or_max_or_min('tRise') * 1e-9,
             tFall=ds.get_typ_or_max_or_min('tFall') * 1e-9,

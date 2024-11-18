@@ -1,5 +1,6 @@
 from typing import List, Union
 
+from dslib.cache import disk_cache
 from dslib.pdf.ascii import Row
 from dslib.pdf.sheet.annotation import display_borderless_tables
 from dslib.pdf.to_html import Annotation
@@ -163,7 +164,24 @@ def table_seg_mu(pdf_path: str, table: Table, annotations: List[Annotation] = No
                 ))
 
 
-def table_segregation(pdf_path: str, table: Table, annotations: List[Annotation] = None) ->List[Bbox]:
+@disk_cache(ttl='99d', file_dependencies=[0], hash_func_code=True)
+def tabula_cached(pdf_path: str, page: int, area):
+    import tabula
+    res = tabula.read_pdf(pdf_path,
+                          pages=page,
+                          multiple_tables=True,
+                          # force_subprocess=_force_subprocess,
+                          output_format='json',
+                          guess=False,
+                          area=area,
+                          # stream=True,
+                          # options='--use-line-returns'
+                          )
+    assert res
+    return res
+
+
+def table_segregation(pdf_path: str, table: Table, annotations: List[Annotation] = None) -> List[Bbox]:
     # table_borderify(pdf_path, table)
 
     top = table.page.mediabox.y2 - table.bbox.y2
@@ -171,18 +189,7 @@ def table_segregation(pdf_path: str, table: Table, annotations: List[Annotation]
     bottom = table.page.mediabox.y2 - table.bbox.y1
     right = table.bbox.x2
 
-    import tabula
-    res = tabula.read_pdf(pdf_path,
-                          pages=table.page.page_num + 1,
-                          multiple_tables=True,
-                          # force_subprocess=_force_subprocess,
-                          output_format='json',
-                          guess=False,
-                          area=(top, left, bottom, right),
-                          # stream=True,
-                          # options='--use-line-returns'
-                          )
-
+    res = tabula_cached(pdf_path, table.page.page_num + 1, area=(top, left, bottom, right))
     assert res
 
     boxes = []

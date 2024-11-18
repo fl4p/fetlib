@@ -563,7 +563,7 @@ def detect_fields(mfr, strings: List[Union[str, float]], multi=False) -> Union[
             if len(s) > 80:
                 continue
 
-            if stop_words and max(map(lambda sw: sw in s, stop_words)):
+            if stop_words and max(map(lambda sw: sw.lower() in s.lower(), stop_words)):
                 continue
 
             m = field_re.search(s)
