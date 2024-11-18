@@ -39,6 +39,8 @@ def bbox_union_list(bbox: Iterable[tuple]) -> 'Bbox':
 
 
 def has_custom_embed_enc(c, fontname, fonts_enc):
+    if len(c) != 1:
+        return False
     if (fontname in fonts_enc) and hasattr(fonts_enc[fontname], 'cid2glyph') and fonts_enc[fontname].cid2glyph:
         u = ord(c)
         m = fonts_enc[fontname].cid2glyph
@@ -170,9 +172,9 @@ class Char:
             assert c.startswith('(cid:') and c.endswith(')'), (c, repr(line.get_text()))
             cid = int(c[5:-1])
             self.cid = cid
-            #assert cid > 0
+            # assert cid > 0
             if cid == 0:
-                c = ' ' # TODO ?
+                c = ' '  # TODO ?
             else:
                 c = self.decode_cid_char(cid, fonts, fonts_enc)  # this can update.self.fontname
             # now we should use a font span
@@ -187,7 +189,7 @@ class Char:
 
         else:
 
-            if fontname and '+Z' in fontname:
+            if fontname and isinstance(fontname, str) and '+Z' in fontname:
                 self.span_font = fontname
                 # assert e
 
@@ -195,7 +197,7 @@ class Char:
                 c = ' '  # <\\x2>' # TODO
 
             if not (c.isprintable() or c.isspace()):
-                if fontname and is_symbol_font(fontname, fonts[fontname], fonts_enc[fontname]):
+                if fontname and is_symbol_font(fontname, fonts.get(fontname), fonts_enc[fontname]):
                     # c = hex(ord(c)).replace('0x', '\\u')
                     if isinstance(fonts_enc[fontname], PDFCIDFont):
                         # TODO for some reason need to un-do the CID resolution
@@ -203,18 +205,24 @@ class Char:
                         c = chr(u2cid[c]) if u2cid[c] else c
                     c = c
                 else:
-                    print('in line %r' % line.get_text())
+                    pass
+                    # print('in line %r' % line.get_text())
                     # raise ValueError('not printable %r (%d, 0x%02x, %s) with font %s in line %r' % (
                     #    c, ord(c), ord(c), unicodedata.name(c, '?'), fontname, line.get_text()))
 
         # assert len(c) == 1, repr(c)
-        assert c not in {'\t', '\r'}, "char is %s" % repr(c)
+        if c in {'\t', '\r'}:
+            c = ' '
+        # assert c not in {'\t', '\r'}, "char is %s" % repr(c)
         if not cid:
             assert not c.isspace() or c in {' ', '\n', '\xa0'}, "char %r [%s] is space within %r" % (
                 c, unicodedata.name(c, '?'), line.get_text())
 
         if c in {'\x02'}:
             warnings.warn('char %s in %s' % (c, repr(line.get_text())))
+
+        if len(c) != 1:
+            warnings.warn('char len 2 %r in %r' % (c, line.get_text()))
 
         return c
 
@@ -228,9 +236,15 @@ class Char:
         if isinstance(font, PDFType1Font):
             if hasattr(font, 'cid2glyph'):
                 glyph = font.cid2glyph[cid - 1]
-                self.gn = glyph.name
-                u = fonts[fontname].decode_name(glyph.name)
+                # assert not isinstance(glyph, int), (repr(glyph), cid)
+                if isinstance(glyph, int) and glyph < 2:
+                    u = ord(' ')
+                else:
+                    self.gn = glyph.name
+                    u = fonts[fontname].decode_name(glyph.name)
+
                 self.u = u
+
                 # gid2code_2[5]
                 if u in font.cid2unicode:
                     c = font.cid2unicode[u]  # or just chr ?
@@ -242,9 +256,12 @@ class Char:
             else:
                 warnings.warn('font has no cid2glyph')
                 c = chr(cid)
-                #raise NotImplementedError()
+                # raise NotImplementedError()
         elif isinstance(font, PDFCIDFont) and font.unicode_map:
-            c = font.unicode_map.cid2unichr[cid]
+            c = font.unicode_map.cid2unichr.get(cid)
+            if c is None:
+                # warnings.warn('%r not in  cid2unichr' % cid)
+                c = chr(cid)
         else:
             if cid <= 20:
                 warnings.warn('char %s in %s' % (cid, fontname))
@@ -260,7 +277,7 @@ class Char:
             self.fontname = None
             return uc
 
-        if is_symbol_font(fontname, fonts[fontname], fonts_enc):
+        if is_symbol_font(fontname, fonts.get(fontname), fonts_enc):
             self.span_font = fonts[fontname].basefont if fontname in fonts else fontname
 
         return c
@@ -499,7 +516,9 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
 
                         if c == ' ' or c == '\n':
                             if c == '\n':
-                                assert not eol
+                                # assert not eol
+                                if eol:
+                                    warnings.warn('eol after eol')
                                 eol = True
                             if word_text:
                                 words.append(Word((lobj.index, len(lines), len(words)), get_bound(word_pts), word_text))
@@ -509,8 +528,8 @@ def pdf_blocks_pdfminer_six(pdf_path, laparams: LAParams, fonts: Dict[str, 'Embe
                                 pass
 
                         else:
-                            if ch.fontname == 'unknown':
-                                print('warning', page.pageid, lobj.index, 'unknown font for char', c)
+                            #if ch.fontname == 'unknown':
+                                #print('warning', page.pageid, lobj.index, 'unknown font for char', c)
 
                             # assert c.isprintable()
                             if max(ch.bbox) >= inf_ or min(ch.bbox) <= -inf_:

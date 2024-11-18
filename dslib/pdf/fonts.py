@@ -59,7 +59,7 @@ def pdfminer_fix_custom_glyphs_encoding_monkeypatch():
 def convert_cff(in_path, out_path):
     cmd = ["/Volumes/FontForge/FontForge.app/Contents/Resources/opt/local/bin/fontforge",
            "-lang=ff", "-c", "Open($1); Generate($2)", in_path, out_path]
-    print(' '.join(cmd))
+    # print(' '.join(cmd))
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 
 
@@ -80,7 +80,7 @@ def find_good_unicodes_for_name(name) -> List[int]:
     def similar(a, b):
         return SequenceMatcher(None, a.replace(' ', ''), b).ratio()
 
-    print('looking for a good unicode name match for', repr(name), '..')
+    # print('looking for a good unicode name match for', repr(name), '..')
 
     name = name.upper().replace(' ', '')
     names_ration = dict()
@@ -90,7 +90,7 @@ def find_good_unicodes_for_name(name) -> List[int]:
             names_ration[n] = r
 
     if not names_ration:
-        print('no good unicode names found for %r' % name)
+        # print('no good unicode names found for %r' % name)
         return list(range(0xE000, 0xF8FF))  # unicode private use area
 
     ranked = sorted(names_ration.items(), key=lambda x: x[1], reverse=True)
@@ -139,8 +139,8 @@ class EmbeddedPdfFont():
         p = os.path.relpath(self.path, doc_path)
         return f" @font-face {{ font-family: '{self.basefont}'; src: url('{p}') format('{css_formats[self.ext]}'); }}\n"
 
-    def decode_name(self, glyph_name:str):
-        if glyph_name in  self.name2code_2:
+    def decode_name(self, glyph_name: str):
+        if glyph_name in self.name2code_2:
             u = self.name2code_2[glyph_name]
             return u
         elif glyph_name in self.name2gid and self.name2gid[glyph_name] in self.gid2code:
@@ -148,7 +148,7 @@ class EmbeddedPdfFont():
             c = self.gid2code[gid]
             return c
         elif glyph_name[0] == 'C' and glyph_name[1:].isnumeric():
-            c =  int(glyph_name[1:].lstrip('0'))
+            c = int(glyph_name[1:].lstrip('0'))
             return c
         else:
             return ord('?')
@@ -180,7 +180,7 @@ class EmbeddedPdfFont():
             tt.save(font.path)
             tt.close()
         except Exception as e:
-            print(font, 'probing font file failed', e, '; trying to convert the file to .otf ...')
+            #print(font, 'probing font file failed', e, '; trying to convert the file to .otf ...')
             probe_fail = True
 
         try:
@@ -195,7 +195,8 @@ class EmbeddedPdfFont():
 
                 for t in tt.get('cmap').tables:
                     if not t.cmap:
-                        print(font, 'empty cmap, format', t.format)
+                        # print(font, 'empty cmap, format', t.format)
+                        pass
                     tv = set(t.cmap.values())
                     tk = set(t.cmap.keys())
                     for gn in tt.getGlyphOrder():
@@ -234,8 +235,8 @@ class EmbeddedPdfFont():
 
                 tt.save(converted_path)
                 tt.close()
-                print(font, 'conversion successful', converted_path, len(tt.getGlyphNames()), 'glyphs',
-                      tt.getGlyphNames()[:5])
+                #print(font, 'conversion successful', converted_path, len(tt.getGlyphNames()), 'glyphs',
+                #      tt.getGlyphNames()[:5])
                 font.ext = 'otf'
         except (KeyboardInterrupt, TimeoutError, NameError, AttributeError):
             raise
@@ -252,8 +253,9 @@ class EmbeddedPdfFont():
         for prefix in ('C', 'glyph', 'G'):
             if glyph_name.startswith(prefix) and glyph_name[len(prefix):].isnumeric():
                 u = int(glyph_name[len(prefix):], 10)
-                assert u not in table_keys
-                return u
+                # assert u not in table_keys
+                if u not in table_keys:
+                    return u
 
         # if glyph_name.startswith('glyph') and glyph_name[5:].isnumeric():
         #    u = int(glyph_name[5:], 10)
@@ -349,7 +351,12 @@ def get_symbol_font_unicode():
 
 @mem_cache(ttl='5min', synchronized=True)
 @disk_cache(ttl='99d', hash_func_code=True)
-def get_font_default_enc(fontname) -> Dict[int, int]:
+def get_font_default_enc(fontname) -> Optional[Dict[int, int]]:
+
+    if not isinstance(fontname, str):
+        assert isinstance(fontname, bytes)
+        return None
+
     def parse_tsv(tsv):
         return list(filter(bool, map(lambda s: s.split('#')[0].strip(), tsv.split('\n'))))
 

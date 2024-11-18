@@ -31,7 +31,7 @@ def ensure_nC(s, min, max, abs):
 
 def ensure_ohm(s, min, max):
     if isinstance(s, str):
-        if s.endswith('mOhm') or s.endswith('mΩ') or s.endswith('mO'):
+        if s.endswith('mOhm') or s.endswith('mΩ') or s.endswith('mO') or s.endswith('mW'):
             s = float(s[:s.index('m')].strip()) * 1e-3
         s = float(s)
     assert not (s < min or s > max), (min, s, max)

@@ -86,7 +86,7 @@ def extract_text(pdf_path, try_ocr=False):
     return pdf_text
 
 
-def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=True):
+def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False):
     assert mfr
     mpn = pdf_path.split('/')[-1].split('.')[0] if pdf_path else None
 
@@ -301,7 +301,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     ds = DatasheetFields(mfr, mpn)
 
     from dslib.pdf.sheet import read_sheet
-    ds.add_multiple(read_sheet(pdf_path).all_fields(), 'read_sheet')
+    ds.add_multiple(read_sheet(pdf_path).all_fields(), ['read_sheet'])
 
     if need_symbols:
         subsctract_needed_symbols(need_symbols, ds.keys())
@@ -324,7 +324,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
             print(pdf_path, 'tabula error', type(e).__name__, e)
         raise
 
-    txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path)
+    txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path, verbose=False)
     ds.add_multiple(txt_fields.all_fields())
     # TODO do extract_fields_from_text again afet raster_ocr
 
