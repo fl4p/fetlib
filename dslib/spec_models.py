@@ -114,11 +114,14 @@ class MosfetSpecs:
         self.Vsd = Vsd  # body diode forward
         self.trr = trr
 
-        assert math.isnan(Qg) or .5e-9 < Qg < 1000e-9, (Qg, Rds_on, Qg * Rds_on)
-        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 21000e-9, self.Qrr  # GaN have 0 qrr, TK14A55D:20µC
+        fom = Rds_on * Qg * 1e3 * 1e9
+        assert math.isnan(fom) or 10 < fom < 8000, (fom, Rds_on, Qg)
+
+        assert math.isnan(Qg) or .2e-9 < Qg < 1000e-9, (Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1
+        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 31000e-9, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC
 
         rr = self.Qrr / self.trr
-        assert math.isnan(rr) or 0.5 <= rr <= 20, (self.Qrr / self.trr, self.Qrr, self.trr)
+        assert math.isnan(rr) or 0.2 <= rr <= 20, (self.Qrr / self.trr, self.Qrr, self.trr)
         # rr~=1.3: NVMFS6H818NLT1G, rr<1: TK110A10PL
 
         assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
@@ -202,6 +205,22 @@ class MosfetSpecs:
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
         return set(s.lstrip('_') for s in fl if hasattr(self, s) and not math.isnan(getattr(self, s)))
+
+    @property
+    def FoM(self):
+        return self.Rds_on * self.Qg * 1e3 * 1e9  # [mΩ*nC]
+
+    @property
+    def FoMqrr(self):
+        return self.Rds_on * self.Qrr * 1e3 * 1e9  # [mΩ*nC]
+
+    @property
+    def FoMqsw(self):
+        return self.Rds_on * self.Qsw * 1e3 * 1e9  # [mΩ*nC]
+
+    @property
+    def FoMcoss(self):
+        return self.Rds_on * self.Coss * 1e3 * 1e12  # [mΩ*pF]
 
 
 class DcDcSpecs:
