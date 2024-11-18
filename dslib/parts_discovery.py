@@ -281,9 +281,6 @@ async def toshiba_mosfets():
 
 
 async def onsemi_mosfets():
-    # 200V:
-    #
-
     parts = []
 
     urls = {
@@ -301,8 +298,6 @@ async def onsemi_mosfets():
         )
 
         df = pd.read_csv(fn)
-
-        #     # https://www.onsemi.com/download/data-sheet/pdf/ech8667-d.pdf
 
         for i, row in df.iterrows():
             if row['Channel Polarity'] == 'Complementary' or row['Configuration'] != 'Single' or 'Q1' in row[
@@ -336,8 +331,6 @@ async def onsemi_mosfets():
                 # qgs, qgd, ciss, coss, weight
                 source='onsemi.com'
             ), package=row['Package Type']))  # Package Name
-
-        # df = pd.read_csv(fn)
 
     return parts
 
