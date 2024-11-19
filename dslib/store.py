@@ -89,6 +89,15 @@ class ObjectDatabase(Generic[K, T]):
         key = self._key_func(key)
         return copy(self._lib_mem.get(key))
 
+    def del_obj(self, key: K, ignore_missing=False):
+        self.load()
+        key = self._key_func(key)
+        if ignore_missing and key not in self._lib_mem:
+            return False
+        del self._lib_mem[key]
+        self._write()
+        return True
+
     def _items_to_dict(self, items):
         if isinstance(items, list):
             assert self._key_func is not None
@@ -96,6 +105,11 @@ class ObjectDatabase(Generic[K, T]):
         else:
             assert self._key_func is None
         return items
+
+    def _write(self):
+        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=30):
+            with open(self._lib_path, 'wb') as f:
+                pickle.dump(self._lib_mem, f)
 
     def add(self, new_arts: Union[Dict[K, T], List[T]], overwrite=True):
         self.load()
@@ -106,9 +120,7 @@ class ObjectDatabase(Generic[K, T]):
             assert overwrite or k not in self._lib_mem
             self._lib_mem[k] = part
 
-        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=30):
-            with open(self._lib_path, 'wb') as f:
-                pickle.dump(self._lib_mem, f)
+        self._write()
 
     def add_background(self, items: Union[Dict[K, T], List[T]], overwrite=True):
         assert overwrite == True

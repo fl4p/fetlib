@@ -76,6 +76,17 @@ async def main():
 
     if args.command == 'open':
         open_file_with_default_app(ds_path)
+    elif args.command == 'power':
+        ds = parse_datasheet(ds_path)
+        ds.print(show_cond=True, show_sources=True)
+        mf = ds.get_mosfet_specs()
+        from dslib.spec_models import DcDcSpecs
+        dc = DcDcSpecs.default()
+        from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+        print('DCDC = %s' % dc)
+        p_hs = dcdc_buck_hs(dc, mf, rg_total=6, fallback_V_pl=4.5)
+        print('P_HS = %.2f W' % p_hs.buck_hs(), p_hs.items() )
+        print('P_LS = %.2f W' % dcdc_buck_ls(dc, mf).buck_ls())
 
     elif args.command == 'ascii':
         from dslib.pdf.ascii import pdf_to_ascii

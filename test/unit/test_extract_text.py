@@ -1,3 +1,4 @@
+import datetime
 import math
 
 test_stream_todo = """
@@ -415,6 +416,7 @@ def test_catasthasthrophic():
     s = "'Figure 9. Diode Forward Voltage vs. Current\nVGS = 0V\nTJ= -55°C\nTJ= 25°C\nTJ= 85°C\nTJ= 125°C\nTJ= 150°C\nTJ= 175°C\n10\n100\n1000\n10000'"
     assert not extract_fields_from_text(s, 'any')
 
+
 def test_extract_text():
     """
 
@@ -709,7 +711,7 @@ ns
 
 from math import nan
 
-from dslib.pdf2txt.parse import extract_fields_from_text
+from dslib.pdf2txt.parse import extract_fields_from_text, extract_dates
 
 
 def test_fields_from_text():
@@ -742,6 +744,22 @@ gate-drain charge
  QG(tot)
  """, mfr, '')
     assert d.Qgd.typ == 28
+
+
+def test_extract_dates():
+    d = extract_dates("# 01-Feb-16, 25-Feb-2019, 11-Dec-2023")
+    assert d == [datetime.datetime(2016, 2, 1),
+                 datetime.datetime(2019, 2, 25),
+                 datetime.datetime(2023, 12, 11), ]
+
+    d = extract_dates("August 18, 2014, July 21,2022")
+    assert d == [datetime.datetime(2014, 8, 18), datetime.datetime(2022, 7, 21)]
+
+    d = extract_dates("November 2021, OCTOBER 2015")
+    assert d == [datetime.datetime(2021, 11, 1), datetime.datetime(2015, 10, 1), ]
+
+    d = extract_dates('"2021-01", 2022-03-28')
+    assert  d ==[datetime.datetime(2021, 1, 1), datetime.datetime(2022, 3, 28)]
 
 
 if __name__ == '__main__':

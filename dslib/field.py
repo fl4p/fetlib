@@ -3,7 +3,7 @@ import math
 import time
 import warnings
 from copy import copy
-from typing import List, Iterable, Dict, Literal, Tuple, Union, cast
+from typing import List, Iterable, Dict, Literal, Tuple, Union, cast, Optional
 
 from dslib import round_to_n_dec
 from dslib.pdf2txt import normalize_text, whitespaces_to_space
@@ -16,6 +16,7 @@ def first(a):
 class Field():
     StatLiteral = Literal['min', 'max', 'typ']
     StatKeys = cast(List[StatLiteral], ['min', 'typ', 'max'])
+    not_zero_symbols = {'Qg', 'Qgs', 'Qgd'}
 
     def __init__(self, symbol: str, min, typ, max, unit=None, mul=1, cond=None, source=None):
         self.symbol = symbol
@@ -24,7 +25,7 @@ class Field():
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
             unit = 'ns'  # ocr confusion
 
-        if unit in {'uC', 'μC', '∝C'}:
+        if unit in {'uC', 'μC', '∝C', 'uc'}:
             assert mul == 1
             mul = 1000
             unit = 'nC'
@@ -52,8 +53,6 @@ class Field():
         min = parse_field_value(min) * mul
         typ = parse_field_value(typ) * mul
         max = parse_field_value(max) * mul
-
-        not_zero = {'Qg', 'Qgs', 'Qgd'}
 
         fill_max_dims = {'Q', 't', 'Vsd', 'Coss'}
         is_fill_max = symbol[0] in fill_max_dims or symbol in fill_max_dims
@@ -150,7 +149,8 @@ class Field():
         is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
 
         for s in Field.StatKeys:
-            if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))):
+            if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))) or (
+                    s in self.not_zero_symbols and getattr(self, s) == 0):
                 setattr(self, s, getattr(f, s))
                 self._sources[s] = f._sources[s]
 
@@ -207,11 +207,15 @@ def parse_field_value(s, no_raise=False):
         return s
     if not s:
         return math.nan
-    s = normalize_text(s.strip().strip(' \x03').rstrip('L'))
+    s = normalize_text(s.strip().strip(' \x03').rstrip('L.'))
     if not s or s in {'-', '.', '"', "'", '#', '~NA~'} or set(s) == {'-'}:
         return math.nan
     if s.startswith('+- '):
         s = s[3:]
+    if s.count(',') == 1:
+        s1 = s.split('.')[0]
+        if len(s1) >= 5 and s1[-4] == ',':
+            s = s.replace(',', '')
     try:
         return float(s)
     except:
@@ -228,7 +232,8 @@ class MpnMfr:
 
 
 class DatasheetFields():
-    def __init__(self, mfr=None, mpn=None, part: 'DiscoveredPart' = None, fields: Iterable[Field] = None):
+    def __init__(self, mfr=None, mpn=None, part: 'DiscoveredPart' = None, fields: Iterable[Field] = None,
+                 date_from_text=None, date_from_meta=None):
         from dslib.parts_discovery import DiscoveredPart
         self.part: Union[DiscoveredPart, MpnMfr] = part or MpnMfr(mfr, mpn)
         self.fields_filled: Dict[str, Field] = {}
@@ -237,6 +242,9 @@ class DatasheetFields():
             self.add_multiple(fields)
 
         self.timestamp = datetime.datetime.now()
+        self.errors: List[str] = []
+        self.date_from_text: Optional[datetime.datetime] = date_from_text
+        self.date_from_meta: Optional[datetime.datetime] = date_from_meta
 
     @property
     def ds_path(self):
@@ -278,6 +286,11 @@ class DatasheetFields():
 
             tRise_ns=round(fet_specs.tRise * 1e9, 1),
             tFall_ns=round(fet_specs.tFall * 1e9, 1),
+
+            errors=', '.join(self.errors),
+            # dates=', '.join(map(lambda d: d.strftime('%Y-%m'), sorted({min(self.dates), max(self.dates)}))),
+            date=self.date_from_text.strftime('%Y-%m') if self.date_from_text else '',
+            dateC=self.date_from_meta.strftime('%Y-%m') if self.date_from_meta else '',
         )
 
     def add(self, f: Field):
@@ -388,9 +401,13 @@ class DatasheetFields():
     def _get_by_cond(self, sym, cond=None):
         e_min = 0.1
         f_min = self.fields_filled.get(sym)
+        if not f_min or (f_min.typ_or_max_or_min == 0 and f_min.symbol in Field.not_zero_symbols):
+            e_min = float('inf')
         l = self.fields_lists.get(sym)
         if l and cond:
             for f in l:
+                if f.typ_or_max_or_min == 0 and f.symbol in Field.not_zero_symbols:
+                    continue
                 d = f.cond
                 if not d or not isinstance(d, dict):
                     d = {}

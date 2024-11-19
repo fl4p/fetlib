@@ -136,6 +136,20 @@ if 'v2':
 # FDMS3D5N08LC
 # IQD063N15NM5SC
 # IQD063N15NM5SCATMA1 trykid conditions (Tj, rdson)
+# cropbox issue? IPP014N06NF2SAKMA2.pdf
+# - datasheets/infineon/BSC037N08NS5TATMA1.pdf
+# - IPP60R060P7XKSA1
+
+# read-sheet header issues
+# - IXFK170N10P # headers issues TODO
+# - IXFH160N15T2.pdf.annot.pdf TODO
+
+# IPP022N12NM6AKSA1 #multi qrr
+
+
+# encrypted:
+# datasheets/toshiba/TPW1500CNH.pdf
+
 
 # from tests
 

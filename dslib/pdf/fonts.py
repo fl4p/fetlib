@@ -375,6 +375,9 @@ def get_font_default_enc(fontname) -> Optional[Dict[int, int]]:
 
 
 def is_symbol_font(basefont: str, font: 'EmbeddedPdfFont', font_pdf: pdfminer.pdffont.PDFFont = None) -> bool:
+    if not isinstance(basefont, str):
+        return False
+
     if 'Symbol' in basefont:
         return True
 

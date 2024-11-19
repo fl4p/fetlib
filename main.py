@@ -6,7 +6,7 @@ import pickle
 import random
 import sys
 import traceback
-from typing import List, Dict, Literal, Tuple
+from typing import List, Dict, Literal, Tuple, Optional
 
 import pandas as pd
 
@@ -20,6 +20,29 @@ from dslib.pdf2txt.parse import parse_datasheet, subsctract_needed_symbols, NoTa
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import DcDcSpecs
 from dslib.store import Part
+
+excludes = {
+    'datasheets/infineon/BSC160N15NS5ATMA1.pdf',
+    'datasheets/infineon/BSC019N08NS5ATMA1.pdf',
+    'datasheets/infineon/IQE050N08NM5ATMA1.pdf',
+    'datasheets/infineon/BSC050N10NS5ATMA1.pdf',
+    'datasheets/infineon/BSZ123N08NS3GATMA1.pdf',
+    'datasheets/infineon/IRF150DM115XTMA1.pdf',
+    'datasheets/infineon/BSZ097N10NS5ATMA1.pdf',
+    'datasheets/infineon/BSC070N10NS3GATMA1.pdf',
+
+    'datasheets/infineon/IPI072N10N3G.pdf',
+    'datasheets/infineon/IPP180N10N3GXKSA1.pdf',
+    'datasheets/infineon/IPP048N12N3GXKSA1.pdf',
+    'datasheets/infineon/BSC109N10NS3GATMA1.pdf',
+    'datasheets/infineon/BSC047N08NS3GATMA1.pdf',
+    'datasheets/infineon/BSC057N08NS3GATMA1.pdf',
+    'datasheets/infineon/IST026N10NM5AUMA1.pdf',
+
+    'datasheets/infineon/IPP028N08N3GXKSA1.pdf',
+    'datasheets/infineon/IPP06CN10LG.pdf',
+}
+excludes.clear()
 
 
 def main():
@@ -95,6 +118,11 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
     ds_url = part.ds_url
     ds_path = part.get_ds_path()
 
+    if no_cache:
+        # call this here again on all workers
+        from dslib.cache import disk_cache_disable
+        disk_cache_disable(True)
+
     if not os.path.exists(ds_path):
         if not os.path.exists(ds_path):
             asyncio.run(fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn))
@@ -123,7 +151,9 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
             need_symbols = subsctract_needed_symbols(need_symbols, ld_keys, copy=True)
 
     # parse datasheet (tabula and pdf2txt):
-    if os.path.isfile(ds_path):
+    if ds_path in excludes:
+        ds.errors.append('excluded')
+    elif os.path.isfile(ds_path):
         try:
             dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols, no_ocr=no_ocr)
             ds.timestamp = dsp.timestamp
@@ -134,9 +164,12 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
             if not isinstance(e, (NoTabularData, TooManyPages,)):
                 print(traceback.format_exc())
             print(ds_path, 'parse error', type(e).__name__, e)
+            ds.errors.append(f'{type(e).__name__} {e}')
+    else:
+        ds.errors.append('file not found %s' % ds_path)
 
     # try nexar api:
-    if 1:
+    if 0:
         try:
             from dslib.nexar.api import get_part_specs_cached
             specs = {}  # get_part_specs_cached(mpn, mfr) or {}
@@ -165,7 +198,7 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
     return ds
 
 
-def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[Part, Dict[str, float]]:
+def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[Optional[Part], Dict[str, any]]:
     if isinstance(ds, tuple):
         raise ValueError(ds)
     else:
@@ -178,28 +211,44 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
     # parse specification for DC-DC loss model
     try:
         fet_specs = ds.get_mosfet_specs()
+        ds.get_row()
     except Exception as e:
-        print(mfr, mpn, 'error creating mosfet specs', e, type(e))
+        print(ds.ds_path, 'error creating mosfet specs', e, type(e))
         print(traceback.format_exc())
         print(part, part.specs.__dict__)
         ds.print(show_cond=True, show_sources=True)
         parse_datasheet.invalidate(ds.ds_path, mfr=mfr, mpn=mpn)
         parse_datasheet.invalidate(ds.ds_path, mfr=mfr)
         parse_datasheet.invalidate(ds.ds_path)
+        parse_datasheet.invalidate(ds.ds_path, need_symbols=set(), no_ocr=True)
+        parse_datasheet.invalidate(ds.ds_path, need_symbols=set(), no_ocr=False)
+        from dslib.pdf.sheet import read_sheet
+        read_sheet.invalidate(ds.ds_path)
+        dslib.store.parts_db.del_obj(part, ignore_missing=True)
+
+        ds.errors.append('specs error: ' + str(e))
 
         # raise
-        return None, None
+        return None, dict(mfr=part.mfr,
+                          mpn=part.mpn,
+                          housing=part.package,
+                          errors=', '.join(ds.errors))
 
     # compute power loss
     if 1:
         loss_spec = dcdc_buck_hs(dcdc, fet_specs,
                                  rg_total=float(args.rg_total),
-                                 fallback_V_pl=float(args.vpl_fallback)
+                                 fallback_V_pl=float(args.vpl_fallback),
+                                 Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
+                                 use_datasheet_times=False
                                  )
         ploss = loss_spec.__dict__.copy()
         del ploss['P_dt']
+        ploss.pop('_cond', None)
         ploss['P_hs'] = loss_spec.buck_hs()
         ploss['P_2hs'] = loss_spec.parallel(2).buck_hs()
+        ploss['tr'] = round(loss_spec.get_cond('P_sw')['tr'] * 1e9, 1)  # possibly nan!
+        ploss['tf'] = round(loss_spec.get_cond('P_sw')['tf'] * 1e9, 1)
 
         loss_spec = dcdc_buck_ls(dcdc, fet_specs)
         ploss['P_rr'] = loss_spec.P_rr
@@ -207,6 +256,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
         ploss['P_dt_ls'] = loss_spec.P_dt
         ploss['P_ls'] = loss_spec.buck_ls()
         ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
+
     # except Exception as e:
     #    print(mfr, mpn, 'dcdc_buck_hs', e)
     #    ploss = {}
@@ -217,9 +267,10 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
         Vth=part.specs.Vgs_th_max,
         Vpl=fet_specs and fet_specs.V_pl,
 
-        FoM=fet_specs.Rds_on * 1000 * (fet_specs.Qg * 1e9),
-        FoMrr=fet_specs.Rds_on * 1000 * (fet_specs.Qrr * 1e9),
-        FoMsw=fet_specs.Rds_on * 1000 * (fet_specs.Qsw * 1e9),
+        FoM=fet_specs.FoM,
+        FoMrr=fet_specs.FoMqrr,
+        FoMsw=fet_specs.FoMqsw,
+        FoMoss=fet_specs.FoMcoss,
 
         **ploss,
     )
@@ -281,10 +332,14 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
     for ds in dss:
         if isinstance(ds, tuple) and ds == (None, None):
             continue
+        if not dcdc.vds_in_range(ds.get_typ_or_max_or_min('Vds')):
+            print(ds.part, 'vds not in range', ds.get_typ_or_max_or_min('Vds'))
+            continue
         part, row = compute_part_powerloss(ds, dcdc, args=args)
         if part is not None:
-            result_rows.append(row)
             result_parts.append(part)
+        if row is not None:
+            result_rows.append(row)
 
     # print('no P_sw')
     # for row in result_rows:
@@ -294,7 +349,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
 
     df = pd.DataFrame(result_rows)
 
-    if len(dss) > 2:
+    if len(dss) >= 1:
         os.path.exists('out') or os.makedirs('out', exist_ok=True)
         out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}-inp{len(parts)}.csv'
         write_csv(df, out_fn)

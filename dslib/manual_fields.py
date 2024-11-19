@@ -106,6 +106,13 @@ def get_fields() -> Dict[Mfr, Dict[Mpn, List[Field]]]:
 # need OCR datasheets/infineon/IRF150DM115XTMA1.pdf
 
 infineon = {
+    'IAUS300N08S5N012ATMA1': [
+        Field('Qgd', min=math.nan, typ=40, max=math.nan, unit='nC'), # missing in DS
+    ],
+    'IRFB4228PBF': [
+        Field('Qgs', min=math.nan, typ=22, max=math.nan, unit='nC'),
+        Field('Vpl', min=math.nan, typ=6.0, max=math.nan, unit='V'),
+    ],
     'BSZ070N08LS5ATMA1': [  # need OCR
         Field('Qrr', min=math.nan, typ=27, max=54, unit='nC'),
         Field('tRise', min=math.nan, typ=4.8, max=math.nan, unit='ns'),

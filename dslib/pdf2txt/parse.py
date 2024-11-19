@@ -1,3 +1,4 @@
+import datetime
 import math
 import os.path
 import re
@@ -6,13 +7,14 @@ import warnings
 from typing import List, Tuple, Union, Optional
 
 import pandas as pd
+import pymupdf
 import timeout_decorator
 
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
 from dslib.pdf2txt import expr, strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
     whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
-from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline
+from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline, date_regexs, months_short
 from dslib.pdf2txt.pipeline import convertapi, pdf2pdf
 
 
@@ -59,13 +61,41 @@ def subsctract_needed_symbols(a: set, b: set, copy=False):
         return a
 
 
-@disk_cache(ttl='30d', file_dependencies=[0], salt='v03')
-def extract_text(pdf_path, try_ocr=False):
+class DataSheetFileMeta:
+    def __init__(self, title, ctime, mtime):
+        self.title = title
+        self.ctime = ctime
+        self.mtime = mtime
+
+
+def parse_date(s):
+    try:
+        return datetime.datetime.strptime(s[2:10], '%Y%m%d')
+    except:
+        return None
+
+
+@disk_cache(ttl='30d', file_dependencies=[0], salt='v04', hash_func_code=True)
+def extract_text(pdf_path, try_ocr=False, auto_decrypt=False) -> Tuple[str, DataSheetFileMeta]:
     import fitz  # PyMuPDF
-    pdf_document = fitz.open(pdf_path)
+    pdf_document: pymupdf.Document = fitz.open(pdf_path)
 
     if len(pdf_document) > 30:
-        raise TooManyPages(pdf_path + ' has more than 25 pages ' + str(len(pdf_document)))
+        n = len(pdf_document)
+        pdf_document.close()
+        raise TooManyPages(pdf_path + ' has more than 25 pages ' + str(n))
+
+    meta = DataSheetFileMeta(pdf_document.metadata['title'],
+                             ctime=parse_date(pdf_document.metadata['creationDate']),
+                             mtime=parse_date(pdf_document.metadata['modDate']))
+
+    if pdf_document.metadata['encryption']:
+        print(pdf_path, 'is encrypted')
+        pdf_document.authenticate("")
+        if auto_decrypt:
+            pdf_document.save(pdf_path + ".dec.pdf")
+            os.remove(pdf_path)
+            os.rename(pdf_path + ".dec.pdf", pdf_path)
 
     pdf_text = ""
     for page_number in range(len(pdf_document)):
@@ -78,12 +108,12 @@ def extract_text(pdf_path, try_ocr=False):
         ocr_path = pdf_path + '.convertapi_ocr.pdf'
         if not os.path.exists(ocr_path):
             convertapi(pdf_path, ocr_path, 'ocr')
-        ocr_text = extract_text(ocr_path, try_ocr=False)
+        ocr_text, _ = extract_text(ocr_path, try_ocr=False)
         if len(ocr_text) > 20:
             print(pdf_path, 'successfully extracted', len(ocr_text), 'characters using OCR')
-        return ocr_text
+        return ocr_text, meta
 
-    return pdf_text
+    return pdf_text, meta
 
 
 def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False):
@@ -217,7 +247,8 @@ def validate_datasheet_text(mfr, mpn, text):
         # print('text too short ' + str(len(text)))
         return False
 
-    _n = lambda s: whitespaces_remove(strip_no_print_latin(s.lower().replace('o', '0').replace('_', '').replace('-', '')))
+    _n = lambda s: whitespaces_remove(
+        strip_no_print_latin(s.lower().replace('o', '0').replace('_', '').replace('-', '')))
 
     if _n(mpn).split(',')[0][:7] not in _n(text):
         print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(text)[:30])
@@ -231,6 +262,28 @@ regex_ver_salt = ('v46', dim_regs_csv, get_field_detect_regex('any'))
 
 class NoTabularData(ValueError):
     pass
+
+
+def extract_dates(pdf_text: str):
+    regs = date_regexs()
+    dates = []
+    for reg in regs:
+        for m in reg.finditer(pdf_text):
+            d = m.groupdict()
+            try:
+                year = int(d['y'])
+                if year < 100:
+                    year += 2000
+                month = int(d['m']) if d['m'].isnumeric() else months_short()[d['m'][:3].lower()]
+                if month < 1 or month > 12:  # "AN 2023-13"
+                    continue
+                day = int(d.get('d') or 1)
+                date = datetime.datetime(year=year, month=month, day=day)
+                dates.append((m.start(), date))
+            except:
+                print('failed to parse date', m[0], d)
+                raise
+    return [x[1] for x in sorted(dates, key=lambda x: x[0])]
 
 
 @disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True,
@@ -253,23 +306,23 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     if not mpn:
         mpn = os.path.basename(pdf_path).split('.')[0]
 
-    pdf_text = extract_text(pdf_path, try_ocr=False)
+    pdf_text, meta = extract_text(pdf_path, try_ocr=False, auto_decrypt=True)
 
     if not validate_datasheet_text(mfr, mpn, pdf_text):
-        methods = ['qpdf_decrypt']  # 'r400_ocrmypdf'
+        methods = []  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
         if not no_ocr:
-            methods += ['r600_ocrmypdf', 'ocrmypdf_redo', 'ocrmypdf_r400', ]
+            methods += ['r600_ocrmypdf', ]  # 'ocrmypdf_redo', 'ocrmypdf_r400',
 
-            if not pdf_text:
-                methods.remove('ocrmypdf_redo')
-                methods.append('ocrmypdf_redo')  # move to end, because its intense
+            # if not pdf_text:
+            #    methods.remove('ocrmypdf_redo')
+            #    methods.append('ocrmypdf_redo')  # move to end, because its intense
 
         for method in methods:
             try:
                 out_path = pdf_path + '.' + method + '.pdf'
                 pdf2pdf(pdf_path, out_path, method)
 
-                pdf_text = extract_text(out_path, try_ocr=False)
+                pdf_text, _ = extract_text(out_path, try_ocr=False)
 
                 if not validate_datasheet_text(mfr, mpn, pdf_text):
                     print(pdf_path, 'text extraction error using', method)
@@ -292,13 +345,12 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     pdf_text = normalize_text(pdf_text)
 
-    # S19-0181-Rev. A, 25-Feb-2019, "S16-0163-Rev. A, 01-Feb-16"
-    # "November 2021", "2021-01"
-    # Rev.2.1,2022-03-28
-    # "SLPS553 -OCTOBER 2015", "July 21,2022", " S23-1102-Rev. B, 11-Dec-2023
-    # Submit Datasheet Feedback                   August 18, 2014
+    dates = extract_dates(pdf_text)
 
-    ds = DatasheetFields(mfr, mpn)
+    ds = DatasheetFields(mfr, mpn,
+                         date_from_text=dates[0] if dates else None,
+                         date_from_meta=meta.ctime or meta.mtime,
+                         )
 
     from dslib.pdf.sheet import read_sheet
     ds.add_multiple(read_sheet(pdf_path).all_fields(), ['read_sheet'])
@@ -308,20 +360,23 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     else:
         need_symbols = None
 
-    if no_ocr:
-        assert not tabular_pre_methods
-        tabular_pre_methods = ('nop', 'gs', 'cups',)
+    if tabular_pre_methods is None:
+        # assert not tabular_pre_methods
+        tabular_pre_methods = ('nop', 'gs',)  # 'cups',
+
     try:
         # if verbose:
         # print(pdf_path, 'tabular read ...  need=', need_symbols)
         tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods, need_symbols=need_symbols)
         if not tabular_ds:
-            raise NoTabularData(pdf_path)
+            warnings.warn('tabula_read(%r) failed' % pdf_path)
+            # raise NoTabularData(pdf_path)
         if tabular_ds:
             ds.add_multiple(tabular_ds.all_fields())
+    except NoTabularData:
+        pass
     except Exception as e:
-        if not isinstance(e, NoTabularData):
-            print(pdf_path, 'tabula error', type(e).__name__, e)
+        print(pdf_path, 'tabula error', type(e).__name__, e)
         raise
 
     txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path, verbose=False)
@@ -423,7 +478,7 @@ valid_range = dict(
 # tpe = ThreadPoolExecutor(max_workers=4)
 # tpe.map(
 
-@timeout_decorator.timeout(1, use_signals=True)
+@timeout_decorator.timeout(.7, use_signals=True)
 def find_iter_timeout(r: re.Pattern, s: str) -> re.Match:
     return next(r.finditer(s), None)
 
@@ -701,7 +756,8 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
                                                      )
 
                 if not field and len(list(filter(bool, row.dropna()))) > 2:
-                    print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
+                    # print(ds_path, field_sym, 'no value match in ', f'"{rl}"')
+                    pass
 
                 if field:
                     if verbose > 0:
@@ -856,7 +912,7 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=Fa
         # raise ValueError('missing fields ' + str(missing))
 
     # no fields found..
-    txt = extract_text(ds_path, try_ocr=False)
+    txt, _ = extract_text(ds_path, try_ocr=False)
     if len(txt) < 20:
         print(ds_path, 'probably needs OCR')
         raise ValueError('probably need OCR ' + ds_path)

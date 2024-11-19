@@ -111,7 +111,7 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt=('v05'))
+@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False, multiline_conditions=multiline_conditions)
 
@@ -190,7 +190,8 @@ def _process_page(pdf_file, mfr, rows, pn, annotations: List[Annotation], merge,
 
     fields = []
     for table in tables:
-        fields.extend(_process_table(pdf_file, table, hs, cb, sq, multiline_conditions=multiline_conditions,
+        fields.extend(_process_table(pdf_file, table, hs, cb, sq,
+                                     multiline_conditions=multiline_conditions,
                                      annotations=annotations))
 
     return fields
@@ -344,10 +345,14 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
     )
 
     cells = []
-    cells = table_segregation(pdf_path=pdf_file, table=table, annotations=annotations)
+    try:
+        cells = table_segregation(pdf_path=pdf_file, table=table, annotations=annotations)
+    except Exception as e:
+        print(pdf_file, 'table_segregation err', e)
+
     parsed = []
 
-    #val_re = re.compile(r'[+-]*(' + NumValReSet(True, nan_empty=False).val_nan + ')', re.IGNORECASE)
+    # val_re = re.compile(r'[+-]*(' + NumValReSet(True, nan_empty=False).val_nan + ')', re.IGNORECASE)
 
     # header_row = False
 
@@ -393,7 +398,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
 
                     if left:
                         l = left[0]
-                        assert l.bbox.x2 < x1
+                        assert l.bbox.x2 <= x1, (l.bbox.x2, x1, l.bbox)
                         x1 = l.bbox.x2 if isinstance(l, GraphicBlock) else (bbox.x1 + l.bbox.x2) / 2
                     else:
                         x1 -= 4 if not is_first else 2
@@ -422,7 +427,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                 if g in {'unit', 'cond'}:
                     # TODO this only works for cells within the current table
                     column_boxes[g] = _vertically_expand_column_cells(bbox_cell, cells, sq,
-                                                                      multiline=multiline_conditions,
+                                                                      multiline=multiline_conditions and g == 'cond',
                                                                       annotations=annotations)
 
             # place virtual 'unit' header
@@ -432,7 +437,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                 if not sq.ray('x1', bbox, w, min_overlap=0.1):
                     bbox = Bbox(bbox.x2 + bbox.height, bbox.y1, bbox.x2 + w, bbox.y2)
                     column_boxes['unit'] = _vertically_expand_column_cells(bbox, cells, sq,
-                                                                           multiline=multiline_conditions,
+                                                                           multiline=False,
                                                                            annotations=annotations)
 
         else:  # if not HEAD
@@ -485,11 +490,12 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                     els = filter(lambda el: isinstance(el, Phrase), els)
                     els = filter(lambda el: bbox_head.h_overlap_rel(el.bbox) > 0.8, els)
                     els = filter(lambda el: bbox_sym.v_overlap_rel(el.bbox) > 0.8, els)
+                    els = filter(lambda el: el.bbox.x1 > bbox_sym.x2, els)
                     els = take(els, 10)
                     len(els)
                     # assert len(els) == len(cond), (row.symbol.symbol, row.row, repr(els), repr(cond))
                     for el in els:
-                        annotations.append(Annotation(name=f'{el}({mtm})', bbox=el.bbox, color=(255, 128, 0)))
+                        annotations.append(Annotation(name=f'{el}({mtm})', bbox=el.bbox, color=(255, 128, 0))) # orange
                         for f_bbox, val in val_fields:
                             if el.bbox.v_overlap_rel(f_bbox) > 0.8:
                                 # assert mtm not in val, "%s: dupe %s=%s in %s" % (row.symbol.symbol, mtm, str(el),val)

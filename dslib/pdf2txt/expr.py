@@ -750,3 +750,28 @@ def get_cond_regex():
     # test_conds_delim = (rf'({test_cond}\s*[;,\s]*)')
 
     return re.compile(rf'{test_conds_delim_ml}', re.IGNORECASE)
+
+
+@mem_cache(ttl='1h')
+def months_short():
+    m = 'Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec'.split('|')
+    return {m[i - 1].lower(): i for i in range(1, 13)}
+
+
+@mem_cache(ttl='1h')
+def date_regexs():
+    d = r'(?P<d>[0-3]?[0-9])'
+    m_num = r'([0-1]?[0-9])'
+    m_long = r'(January|February|March|April|May|June|July|August|September|October|November|December)'
+    m_short = r'(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)'
+    m = rf'(?P<m>{m_num}|{m_long}|{m_short})'
+    y = r'(?P<y>(19|2[0-9])?[0-9]{2})'
+    y4 = r'(?P<y>(19|2[0-9])[0-9]{2})'
+
+    r = [re.compile(p, re.IGNORECASE) for p in (
+        rf'{d}-(?P<m>{m_long}|{m_short})-{y}',  # 01-Feb-16, 25-Feb-2019, 11-Dec-2023
+        rf'(?P<m>{m_long}|{m_short}) +{d}[\.?,? ]+{y}',  # August 18, 2014, "July 21,2022"
+        rf'(?P<m>{m_long}|{m_short}),? +{y4}',  # "November 2021", OCTOBER 2015
+        rf'{y4}-{m}(-{d}|$|[^-])',  # "2021-01", 2022-03-28
+    )]
+    return r

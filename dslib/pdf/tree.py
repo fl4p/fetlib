@@ -197,9 +197,9 @@ class Char:
                 c = ' '  # <\\x2>' # TODO
 
             if not (c.isprintable() or c.isspace()):
-                if fontname and is_symbol_font(fontname, fonts.get(fontname), fonts_enc[fontname]):
+                if fontname and is_symbol_font(fontname, fonts.get(fontname), fonts_enc.get(fontname)):
                     # c = hex(ord(c)).replace('0x', '\\u')
-                    if isinstance(fonts_enc[fontname], PDFCIDFont):
+                    if isinstance(fonts_enc[fontname], PDFCIDFont) and fonts_enc[fontname].unicode_map:
                         # TODO for some reason need to un-do the CID resolution
                         u2cid = {v: k for k, v in fonts_enc[fontname].unicode_map.cid2unichr.items()}
                         c = chr(u2cid[c]) if u2cid[c] else c
@@ -230,7 +230,9 @@ class Char:
         fontname = self.fontname
 
         if fontname not in fonts_enc:
-            raise ValueError(fontname)
+            warnings.warn(fontname)
+            return chr(cid)
+            # raise ValueError(fontname)
 
         font = fonts_enc[fontname]
         if isinstance(font, PDFType1Font):
@@ -264,7 +266,7 @@ class Char:
                 c = chr(cid)
         else:
             if cid <= 20:
-                warnings.warn('char %s in %s' % (cid, fontname))
+                # warnings.warn('char %s in %s' % (cid, fontname))
                 c = chr(cid)
             else:
                 warnings.warn(
@@ -590,7 +592,7 @@ def vertical_sort(elements):
     elements.sort(key=lambda el: (
         -round(el.bbox[1], 0),  # top -> bottom
         el.bbox[0],  # left -> right
-        el.index))  # sort blocks by bbox.y0
+        str(el.index)))  # sort blocks by bbox.y0
 
 
 def vertical_merge(elements, ):

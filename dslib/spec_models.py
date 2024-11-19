@@ -115,21 +115,24 @@ class MosfetSpecs:
         self.trr = trr
 
         fom = Rds_on * Qg * 1e3 * 1e9
-        assert math.isnan(fom) or 10 < fom < 8000, (fom, Rds_on, Qg)
+        assert math.isnan(fom) or 10 < fom < 8000, ("fom out of range", fom, Rds_on, Qg)
 
-        assert math.isnan(Qg) or .2e-9 < Qg < 1000e-9, (Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1
+        assert math.isnan(Qg) or .2e-9 < Qg < 2000e-9, (
+        "qg range", Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1, FF3MR20KM1HHPSA1
         assert math.isnan(self.Qrr) or 0 <= self.Qrr < 31000e-9, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC
 
         rr = self.Qrr / self.trr
-        assert math.isnan(rr) or 0.2 <= rr <= 20, (self.Qrr / self.trr, self.Qrr, self.trr)
+        assert math.isnan(rr) or 0.01 <= rr <= 40, ("qrr/trr ratio", self.Qrr / self.trr, self.Qrr, self.trr)
         # rr~=1.3: NVMFS6H818NLT1G, rr<1: TK110A10PL
+        # rr = 30 : IXTK200N10P
+        # MCB220N15Y-TP: 0.02
 
         assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
         assert math.isnan(self.tFall) or .5e-9 < self.tFall < 1000e-9, self.tFall
         if isnum(Vsd):
             Vsd = abs(Vsd)
 
-        assert not isnum(Vsd) or 0.2 < Vsd < 3, Vsd  # FBG10N30BC: 2.5V
+        assert not isnum(Vsd) or 0.2 < Vsd < 5, Vsd  # FBG10N30BC: 2.5V, FF33MR12W1M1HB11BPSA1: 4.2V
 
         assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 1e-08, (Qg, Rds_on, Qg * Rds_on)
 
@@ -227,7 +230,8 @@ class DcDcSpecs:
 
     @staticmethod
     def default():
-        return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
+        # return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
+        return DcDcSpecs(vi=70, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
 
     def __init__(self, vi, vo, f, Vgs=10, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
                  L=None):
@@ -346,11 +350,14 @@ class DcDcSpecs:
             return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f / 1000)
         raise ValueError(topo)
 
+    def vds_in_range(self, vds):
+        return not (vds < (self.Vi * 1.1)) and not (vds > (self.Vi * 4))
+
     def select_mosfets(dcdc, parts: List['DiscoveredPart']):
         rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2
         # use inverted comparison to pass-through nan-values
         return [p for p in parts if (
-                not (p.specs.Vds_max < (dcdc.Vi * 1.1)) and not (p.specs.Vds_max > (dcdc.Vi * 4))
+                dcdc.vds_in_range(p.specs.Vds_max)
                 and not (p.specs.ID_25 < dcdc.Io_max * 1.2) and not (p.specs.Rds_on_10v_max > rds_on_max))]
 
     def C_out_min(self, vout_ripple):

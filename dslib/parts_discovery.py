@@ -95,13 +95,13 @@ class MosfetBasicSpecs():
             except:
                 return None
 
-        return filter(bool, [
+        return list(filter(bool, [
             f('Vds', n, n, self.Vds_max),
             f('Rds_on_10v', n, n, self.Rds_on_10v_max),
             f('ID_25', n, self.ID_25, n),
             f('Vgs_th', n, n, self.Vgs_th_max),
             f('Qg', n, self.Qg_typ_nC, self.Qg_max_nC, unit='nC')
-        ])
+        ]))
 
     def __str__(self):
         return f'{self.__class__.__name__}({self.Vds_max}V, {round_to_n_dec(self.Rds_on_10v_max, 2)}Ω, {round_to_n_dec(self.ID_25, 2)}A, Qg={round_to_n_dec(self.Qg_typ_nC, 2)}nC)'
@@ -385,6 +385,13 @@ def onsemi_ds_url(mpn):
 async def vishay_mosfets():
     return
 
+async def nexperia_mosfets():
+    # https://www.nexperia.com/products/mosfets/power-mosfets
+    return
+
+async def st_mosfets():
+    # https://www.st.com/en/power-transistors/stpower-n-channel-mosfets-gt-30-v-to-200-v/products.html
+    return
 
 async def aosmd_medium_voltage_mosfets():
     fn = await download_parts_list(
