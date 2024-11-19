@@ -240,7 +240,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
                                  rg_total=float(args.rg_total),
                                  fallback_V_pl=float(args.vpl_fallback),
                                  Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
-                                 use_datasheet_times=False
+                                 use_datasheet_timings=False
                                  )
         ploss = loss_spec.__dict__.copy()
         del ploss['P_dt']
