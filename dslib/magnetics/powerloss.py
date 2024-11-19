@@ -4,6 +4,25 @@ from dslib.powerloss import CoilSpecs
 from dslib.spec_models import DcDcSpecs, rel_err
 
 """
+
+Indcutor Power Loss
+
+Core Loss
+    - Hysteresis Loss
+    - Eddy Current Loss
+    - Anomalous Loss
+Wire Loss
+    - RDC loss
+    - skin effect
+    - proximity
+    
+https://www.mdpi.com/2072-666X/13/3/418
+https://www.e-magnetica.pl/doku.php/proximity_effect
+
+Ridley-Nace Core Loss Formula
+https://ridleyengineering.com/images/phocadownload/7%20modeling%20ferrite%20core%20losses.pdf
+
+
 TODO 
 Considerations:
 
@@ -32,6 +51,12 @@ Micrometals Model:
 
 
 def Bpk_dc_mag(dc: DcDcSpecs, coil: CoilSpecs):
+    """
+    Compute peak ac flux density using dc magnetization curve
+    :param dc:
+    :param coil:
+    :return:
+    """
     # method 1 https://www.mag-inc.com/design/design-guides/powder-core-loss-calculation
     mat = coil.core.mat
 
@@ -49,6 +74,13 @@ def Bpk_dc_mag(dc: DcDcSpecs, coil: CoilSpecs):
 
 
 def Bpk_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
+    """
+    Compute peak ac flux density using dc bias.
+    Assume that effective µ is constant around the dc bias (i.e. ΔI << Io)
+    :param dc:
+    :param coil:
+    :return:
+    """
     # method 2 https://www.mag-inc.com/design/design-guides/powder-core-loss-calculation
     tpl = (coil.turns / coil.core.l_e)
     ΔH = tpl * dc.Iripple
@@ -60,7 +92,7 @@ def Bpk_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
 def core_hysteresis_loss(Bpk: float, core: MagneticCoreSpecs, dc: DcDcSpecs):
     core_loss_density_mW_cm3 = core.mat.core_loss_density(Bpk_tesla=Bpk, f_khz=dc.f * 1e-3)
     P_core = core_loss_density_mW_cm3 * core.A_e * core.l_e * 1e-3 * 1e6  # coil.core.Vol * 1e6 * 1e-3
-    return P_core
+    return P_core, Bpk, core_loss_density_mW_cm3
 
 
 def core_loss_from_dc_magnetization(dc: DcDcSpecs, coil: CoilSpecs):
@@ -83,6 +115,8 @@ def core_loss_from_dc_magnetization(dc: DcDcSpecs, coil: CoilSpecs):
 
 def core_loss_from_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
     """
+
+    mag-inc's method 2, for small ΔH (small ripple current)
 
     :param dc:
     :param coil:
