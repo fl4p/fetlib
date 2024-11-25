@@ -7,6 +7,7 @@ from typing import Literal
 
 import numpy as np
 import pandas as pd
+import requests
 
 from dslib import mfr_tag, round_to_n_dec
 from dslib.field import parse_field_value, Field
@@ -383,15 +384,77 @@ def onsemi_ds_url(mpn):
 
 
 async def vishay_mosfets():
-    return
+    parts = []
+
+    urls = [
+        'https://www.vishay.com/en/mosfets/v-ds-gteq-31-v-lteq-80-v/',
+        'https://www.vishay.com/en/mosfets/v-ds-gteq-81-v-lteq-250-v/',
+        # https://www.vishay.com/en/mosfets/v-ds-gteq-251-v-lteq-400-v/
+    ]
+
+    for url in urls:
+        html = requests.get(url).text
+        import json
+        js = re.search(r'<script id="__NEXT_DATA__" type="application/json">(.+?)</script>', html)[1]
+
+        for r in json.loads(js)['props']['pageProps']['webtableResults']:
+            pid = int(r['P1000'])
+            mpn = r['P1001']
+            ds_url = 'https://www.vishay.com/doc?' + str(pid)
+            if mpn in {'SUP10250E'}:
+                r['P7013'] /= 10
+
+            if r['P7000'] == 'Dual':
+                continue
+
+            parts.append(DiscoveredPart('vishay', mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+                Vds_max=float(r['P7002']),
+                Rds_on_10v_max=float(r['P7013'] or math.nan), # @6v P7014
+                Qg_max=math.nan,
+                Qg_typ=r['P7023'] or math.nan,
+                ID_25=r['P7006'] or math.nan,
+                Vgs_th_min=math.nan,
+                Vgs_th_typ=math.nan,
+                Vgs_th_max=math.nan,
+                source='vishay.com'
+            ),package=r['P7009']))
+
+    return parts
+
 
 async def nexperia_mosfets():
     # https://www.nexperia.com/products/mosfets/power-mosfets
     return
 
+
 async def st_mosfets():
+    df = pd.read_excel('parts-lists/st/stpower-nch-mosfet-30v-200v-to220.xlsx')
+    hi = df.iloc[:, 0].str.startswith('Part').idxmax()
+    df.columns = df.iloc[hi, :]
+    df = df.iloc[(hi + 1):]
+
+    parts = []
+    for i, row in df.iterrows():
+        mfr = mfr_tag('st')
+        mpn = str(row['Part Number'])
+        ds_url = f'https://www.st.com/resource/en/datasheet/{mpn.lower()}.pdf'
+        # RDS(on) (Ω) (@ 4.5/5V) max
+        parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+            Vds_max=parse_field_value(row['VDSS (V)']),
+            Rds_on_10v_max=parse_field_value(row['RDS(on) (Ω) (@ VGS = 10V) max']),
+            Qg_max=math.nan,
+            Qg_typ=parse_field_value(row['Qg (nC) typ']),
+            ID_25=parse_field_value(row['Drain Current (Dc) (A) max']),
+            Vgs_th_min=math.nan,
+            Vgs_th_typ=math.nan,
+            Vgs_th_max=math.nan,
+            source=mfr
+        ), package=row['Package']))  # Package Name
+
+    # url =
     # https://www.st.com/en/power-transistors/stpower-n-channel-mosfets-gt-30-v-to-200-v/products.html
-    return
+    return parts
+
 
 async def aosmd_medium_voltage_mosfets():
     fn = await download_parts_list(
@@ -522,6 +585,8 @@ def benchmark_mpns():
 
 if __name__ == '__main__':
     async def _main():
+        await vishay_mosfets()
+
         u = onsemi_ds_url("NTDV20N06T4G")
         # parts = infineon_mosfets(Vds_min=80, Rds_on_max=20e-3)
         parts = await aosmd_medium_voltage_mosfets()
