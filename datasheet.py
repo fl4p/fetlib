@@ -141,7 +141,7 @@ async def main():
     #
 
     #print(pdf.xref_xml_metadata())
-    text = normalize_text(extract_text(ds_path))
+    text = normalize_text(extract_text(ds_path)[0])
     print('Extracted', len(text), 'characters of text:', whitespaces_to_space(text)[:80], '..')
     print(ds_path)
 
@@ -161,7 +161,7 @@ async def main():
     ds_path = 'datasheets/toshiba/TK46E08N1.pdf'  # column wise text
 
     print('Analysing', ds_path)
-    text = extract_text(ds_path)
+    text,_ = extract_text(ds_path)
 
     print('Extracted', len(text), 'characters of text')
 

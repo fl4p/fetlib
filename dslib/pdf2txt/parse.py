@@ -291,8 +291,11 @@ def extract_dates(pdf_text: str):
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
                     need_symbols=None,
-                    no_ocr=False,
+                    no_ocr=False, force_ocr=False,
                     ) -> DatasheetFields:
+    if force_ocr:
+        assert not no_ocr
+
     if not pdf_path:
         assert mfr
         pdf_path = f'datasheets/{mfr}/{mpn}.pdf'
@@ -308,7 +311,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     pdf_text, meta = extract_text(pdf_path, try_ocr=False, auto_decrypt=True)
 
-    if not validate_datasheet_text(mfr, mpn, pdf_text):
+    if not validate_datasheet_text(mfr, mpn, pdf_text) or force_ocr:
         methods = []  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
         if not no_ocr:
             methods += ['r600_ocrmypdf', ]  # 'ocrmypdf_redo', 'ocrmypdf_r400',
@@ -384,6 +387,9 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     # TODO do extract_fields_from_text again afet raster_ocr
 
     if not ds:
+        if not force_ocr:
+            return parse_datasheet(pdf_path, mfr, mpn, tabular_pre_methods=tabular_pre_methods,
+                                   need_symbols=need_symbols, force_ocr=True)
         raise NoTabularData(pdf_path)
 
     return ds

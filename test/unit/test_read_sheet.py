@@ -26,3 +26,9 @@ def test_read_sheet():
     ds = read_sheet('../../datasheets/ao/AOT20N25.pdf')
     assert ds.tRise == (n,31,n)
     assert ds.tFall == (n,25,n)
+
+    ds = read_sheet('../../datasheets/ao/AOW482.pdf')
+    assert ds.Rg.unit != 'pF'
+
+    ds = read_sheet('datasheets/nxp/BUK764R2-80E,118.pdf')
+    assert ds.Rg.typ != 80

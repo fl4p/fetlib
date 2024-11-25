@@ -53,7 +53,7 @@ def main():
     parser.add_argument('--dcdc-file')
     parser.add_argument('-q')
     parser.add_argument('-j', default=8)  # parallel jobs
-    parser.add_argument('--rg-total', default=6)  # total gate resistance
+    parser.add_argument('--rg-total', default=4.7)  # total gate resistance
     parser.add_argument('--vpl-fallback', default=4.5)
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
@@ -97,6 +97,7 @@ def main():
     parts = dcdc.select_mosfets(parts)
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
+    print(set(p.mpn for p in parts))
 
     # parts = parts[:100]
 
@@ -157,6 +158,8 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
         try:
             dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols, no_ocr=no_ocr)
             ds.timestamp = dsp.timestamp
+            ds.date_from_meta = dsp.date_from_meta
+            ds.date_from_text = dsp.date_from_text
             ds.add_multiple(dsp.all_fields())
         except (KeyError, AttributeError, NameError):  # Type, Timeout, TimeoutError,
             raise
@@ -239,7 +242,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
         loss_spec = dcdc_buck_hs(dcdc, fet_specs,
                                  rg_total=float(args.rg_total),
                                  fallback_V_pl=float(args.vpl_fallback),
-                                 Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
+                                 # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
                                  use_datasheet_timings=False
                                  )
         ploss = loss_spec.__dict__.copy()
@@ -252,7 +255,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
 
         loss_spec = dcdc_buck_ls(dcdc, fet_specs)
         ploss['P_rr'] = loss_spec.P_rr
-        ploss['P_on_ls'] = loss_spec.P_on
+        ploss['P_on_ls'] = loss_spec.P_cl
         ploss['P_dt_ls'] = loss_spec.P_dt
         ploss['P_ls'] = loss_spec.buck_ls()
         ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
@@ -271,6 +274,8 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
         FoMrr=fet_specs.FoMqrr,
         FoMsw=fet_specs.FoMqsw,
         FoMoss=fet_specs.FoMcoss,
+        QgdQgs=fet_specs.QgdQgsRatio,
+        QgdQgs2=fet_specs.Qgd / fet_specs.Qgs2,
 
         **ploss,
     )
@@ -328,11 +333,12 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, 
         # with open('fet-datasheets.pkl', 'wb') as f:
         #    pickle.dump(dss, f)
 
+    print(set(ds.part.mpn for ds in dss))
     print('computing power loss for %s parts...' % len(dss))
     for ds in dss:
         if isinstance(ds, tuple) and ds == (None, None):
             continue
-        if not dcdc.vds_in_range(ds.get_typ_or_max_or_min('Vds')):
+        if not dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds')):
             print(ds.part, 'vds not in range', ds.get_typ_or_max_or_min('Vds'))
             continue
         part, row = compute_part_powerloss(ds, dcdc, args=args)

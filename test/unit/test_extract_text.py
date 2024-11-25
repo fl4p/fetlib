@@ -759,7 +759,10 @@ def test_extract_dates():
     assert d == [datetime.datetime(2021, 11, 1), datetime.datetime(2015, 10, 1), ]
 
     d = extract_dates('"2021-01", 2022-03-28')
-    assert  d ==[datetime.datetime(2021, 1, 1), datetime.datetime(2022, 3, 28)]
+    assert d == [datetime.datetime(2021, 1, 1), datetime.datetime(2022, 3, 28)]
+
+    d = extract_dates("Jul.2021 ,  Dec. 2021")
+    assert d == [datetime.datetime(2021, 7, 1), datetime.datetime(2021, 12, 1)]
 
 
 if __name__ == '__main__':

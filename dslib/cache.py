@@ -738,7 +738,7 @@ def acquire_file_lock(fn, kill_holder, max_time=10):
 
     fh = open(fn, 'a+')
 
-    @backoff.on_exception(backoff.expo, OSError, max_time=max_time) # , logger=None
+    @backoff.on_exception(backoff.expo, OSError, max_time=max_time, logger=None) #
     def _lockf_backoff(_fh):
 
         fcntl.lockf(_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
