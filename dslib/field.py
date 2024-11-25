@@ -131,6 +131,22 @@ class Field():
         raise ValueError()
 
     @property
+    def max_or_min(self):
+        if not math.isnan(self.max):
+            return self.max
+        elif not math.isnan(self.min):
+            return self.min
+        return math.nan
+
+    @property
+    def max_or_min_or_typ(self):
+        if not math.isnan(self.max_or_min):
+            return self.max_or_min
+        elif not math.isnan(self.typ):
+            return self.typ
+        return math.nan
+
+    @property
     def max_or_typ_or_min(self):
         if not math.isnan(self.max):
             return self.max
@@ -148,11 +164,16 @@ class Field():
         # if f has more values, use all of them
         is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
 
+        nz = self.symbol in self.not_zero_symbols
+        lower = 0 if nz else -float('inf')
+
         for s in Field.StatKeys:
-            if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))) or (
-                    s in self.not_zero_symbols and getattr(self, s) == 0):
+            if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))
+                          and getattr(self, s) >= lower) or (nz and getattr(self, s) == 0):
                 setattr(self, s, getattr(f, s))
                 self._sources[s] = f._sources[s]
+            if not math.isnan(getattr(self, s)):
+                lower = getattr(self, s)
 
         # TODO dont fill (n,8,9) with (8,9,n)
 
@@ -269,7 +290,7 @@ class DatasheetFields():
             mpn=part.mpn,
             housing=part.package,
 
-            Vds_max=ds.get_max('Vds', True),
+            Vds_max=ds.get_max_or_min('Vds', True),
             Rds_max=rds_on_max * 1000,
             Id=ds.get_typ_or_max_or_min('ID_25', False),
 
@@ -347,14 +368,20 @@ class DatasheetFields():
             'Qrr', 'trr', 'Vsd',  # body diode
             'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
             'Coss', 'Qsw',
+            'Rg',
         ]
 
-        def field_mul(sym, v):
+        def field_mul(sym, v, unit):
             if sym[0] == 'V':
                 return v
 
             if sym == 'Coss':
                 return (v * 1e-12)
+
+            if sym == 'Rg':
+                if unit and unit[0] == 'm':
+                    return v * 1e-3  # mΩ -> Ω
+                return v
 
             return (v * 1e-9)
 
@@ -366,12 +393,12 @@ class DatasheetFields():
 
         from dslib.spec_models import MosfetSpecs
         return MosfetSpecs(
-            Vds_max=ds.get_max('Vds'),
+            Vds_max=ds.get_max_or_min('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,
             Qg=ds.get_typ_or_max_or_min('Qg', cond=dict(Vgs=Vgs)) * 1e-9,
             tRise=ds.get_typ_or_max_or_min('tRise') * 1e-9,
             tFall=ds.get_typ_or_max_or_min('tFall') * 1e-9,
-            **{k: field_mul(k, ds.get_typ_or_max_or_min(k)) for k in mf_fields},
+            **{k: field_mul(k, ds.get_typ_or_max_or_min(k), ds.get_unit(k)) for k in mf_fields},
             Vpl=ds.get_typ_or_max_or_min('Vpl'),
             part=self.part,
         )
@@ -394,10 +421,23 @@ class DatasheetFields():
         assert r or not required
         return math.nan if not r else r.typ_or_max_or_min
 
+    def get_max_or_min_or_typ(self, sym, required=False, cond=None):
+        r = self._get_by_cond(sym, cond)
+        assert r or not required
+        return math.nan if not r else r.max_or_min_or_typ
+
+    def get_max_or_min(self, sym, required=False, cond=None):
+        r = self._get_by_cond(sym, cond)
+        assert r or not required
+        return math.nan if not r else r.max_or_min
+
     def get_typ(self, sym):
         r = self.fields_filled.get(sym)
         return math.nan if not r else r.typ
 
+    def get_unit(self, sym):
+        r = self.fields_filled.get(sym)
+        return None if not r else r.unit
     def _get_by_cond(self, sym, cond=None):
         e_min = 0.1
         f_min = self.fields_filled.get(sym)
@@ -421,6 +461,11 @@ class DatasheetFields():
         r = self._get_by_cond(sym, cond)
         assert not required or r
         return math.nan if not r else r.max
+
+    def get_min(self, sym, required=False, cond=None):
+        r = self._get_by_cond(sym, cond)
+        assert not required or r
+        return math.nan if not r else r.min
 
     def items(self):
         return self.fields_filled.items()

@@ -23,7 +23,7 @@ class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, trr=None, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None,
                  Qsw=None,
-                 Vpl=None, Vsd=None, Coss=None, part=None):
+                 Vpl=None, Vsd=None, Coss=math.nan, Rg=math.nan, part=None):
         """
 
         :param Vds_max:
@@ -76,13 +76,14 @@ class MosfetSpecs:
                 Qg_th = (Qsw - Qgd) * (1 / Qgs2_Qgs_ratio_estimate - 1)
                 Qgs = Qg_th - Qgd - Qsw
 
-        if math.isnan(Qg_th) and not math.isnan(Qgs):
-            self._Qg_th = math.nan  # TODO flag as estimate
-            Qg_th = Qgs - (Qgs * Qgs2_Qgs_ratio_estimate)
-
         if not isnum(Qg_th) and isnum(Qgs2):
             Qg_th = Qgs - Qgs2
+            self._Qg_th = Qg_th
             assert Qg_th > 0, Qg_th
+
+        if not isnum(Qg_th) and not math.isnan(Qgs):
+            self._Qg_th = math.nan  # TODO flag as estimate
+            Qg_th = Qgs - (Qgs * Qgs2_Qgs_ratio_estimate)
 
         if not isnum(Qgs) and isnum(Qg_th) and isnum(Qgs2):
             Qgs = Qg_th + Qgs2
@@ -103,11 +104,11 @@ class MosfetSpecs:
         self._Vpl = Vpl or math.nan
         assert not isnum(Vpl) or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
 
-        if abs(Vsd) > 10:
+        if isnum(Vsd) and abs(Vsd) > 10:
             warnings.warn('abs Vsd is greater than 10, ' + str(Vsd) + ', assuming ' + str(Vsd / 10))
             Vsd /= 10
 
-        self.Coss = Coss or math.nan
+        self.Coss = Coss
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
@@ -115,10 +116,10 @@ class MosfetSpecs:
         self.trr = trr
 
         fom = Rds_on * Qg * 1e3 * 1e9
-        assert math.isnan(fom) or 10 < fom < 8000, ("fom out of range", fom, Rds_on, Qg)
+        assert math.isnan(fom) or 10 < fom < 20000, ("fom out of range", fom, Rds_on, Qg)
 
         assert math.isnan(Qg) or .2e-9 < Qg < 2000e-9, (
-        "qg range", Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1, FF3MR20KM1HHPSA1
+            "qg range", Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1, FF3MR20KM1HHPSA1
         assert math.isnan(self.Qrr) or 0 <= self.Qrr < 31000e-9, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC
 
         rr = self.Qrr / self.trr
@@ -139,7 +140,7 @@ class MosfetSpecs:
         if isnum(Qg_th + Qgs):
             assert 0.2 < (Qg_th / Qgs) < 0.8, ((Qg_th / Qgs), Qg_th, Qgs)
 
-        if isnum(Qsw + Qgd + Qgs2):
+        if isnum(Qsw)  and isnum(Qgd) and isnum(Qgs2):
             # up: TK3R9E10PL, AUIRF7769L2TR
             assert 0.33 < Qgd / Qsw < 0.95, (Qgd / Qsw, Qgd, Qsw)
 
@@ -151,11 +152,15 @@ class MosfetSpecs:
                 else:
                     warnings.warn(s)
 
+        self.Rg = Rg
+        # if not math.isnan(Rg):
+        # assert 0.2 < Rg < 200, ("Rg out of range", Rg)
+
     @staticmethod
     def from_mpn(mpn, mfr) -> 'MosfetSpecs':
         import dslib.store
-
-        part = dslib.store.load_part(mpn, mfr)
+        from dslib.field import MpnMfr
+        part = dslib.store.parts_db.load_obj(MpnMfr(mfr, mpn=mpn))
         assert part.is_fet
         return part.specs
 
@@ -203,7 +208,7 @@ class MosfetSpecs:
         return self.Qg - self.Qgd - self.Qgs
 
     def __str__(self):
-        return f'MosfetSpecs({round(self.Vds, 0)}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round_to_n_dec(self.Qg, 3)} Qsw={round_to_n_dec(self.Qsw, 3)} trf={round_to_n_dec(self.tRise, 3)}/{round_to_n_dec(self.tFall, 3)} Qrr={round_to_n_dec(self.Qrr, 3)})'
+        return f'MosfetSpecs({round_to_n_dec(self.Vds, 3)}V,{round_to_n_dec(self.Rds_on, 3)}Ω Qg={round_to_n_dec(self.Qg, 3)} Qsw={round_to_n_dec(self.Qsw, 3)} trf={round_to_n_dec(self.tRise, 3)}/{round_to_n_dec(self.tFall, 3)} Qrr={round_to_n_dec(self.Qrr, 3)})'
 
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
@@ -224,6 +229,15 @@ class MosfetSpecs:
     @property
     def FoMcoss(self):
         return self.Rds_on * self.Coss * 1e3 * 1e12  # [mΩ*pF]
+
+    @property
+    def QgdQgsRatio(self):
+        """
+        Self turn-on ratio.
+        For LS this should be < 1.
+        :return:
+        """
+        return self.Qgd / self.Qgs
 
 
 class DcDcSpecs:
@@ -342,8 +356,9 @@ class DcDcSpecs:
         return (dc.Io_max ** 2 + dc.Io_max * dc.Io_min + dc.Io_min ** 2) / 3
 
     def __str__(self):
-        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%sW ΔI=%.1fA)' % (
-            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, round_to_n_dec(self.Pout, 4), self.Iripple)
+        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%sW ΔI=%.1fA L=%sH f=%sHz)' % (
+            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, round_to_n_dec(self.Pout, 4), self.Iripple,
+            round_to_n_dec(self.L, 2), round_to_n_dec(self.f, 2))
 
     def fn_str(self, topo: Literal['buck']):
         if topo == 'buck':
@@ -351,6 +366,8 @@ class DcDcSpecs:
         raise ValueError(topo)
 
     def vds_in_range(self, vds):
+        if abs(vds) < 2:  # probably invalid
+            return True
         return not (vds < (self.Vi * 1.1)) and not (vds > (self.Vi * 4))
 
     def select_mosfets(dcdc, parts: List['DiscoveredPart']):
