@@ -47,6 +47,7 @@ Micrometals Model:
     https://ridleyengineering.com/images/phocadownload/new%20core%20loss%20model.pdf
     
 
+https://www.mag-inc.com/Design/Design-Tools/Inductor-Design/Thank-You
 """
 
 
@@ -89,6 +90,13 @@ def Bpk_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
     return Bpk
 
 
+def Bpk_sinusoidal(dc: DcDcSpecs, coil: CoilSpecs):
+    # https://ridleyengineering.com/images/phocadownload/new%20core%20loss%20model.pdf#page=3
+    vrms = 0
+    Bpk = vrms * 10 / (4.44 * coil.core.A_e * 100e2 * coil.turns * dc.f / 1e3)
+    return Bpk
+
+
 def core_hysteresis_loss(Bpk: float, core: MagneticCoreSpecs, dc: DcDcSpecs):
     core_loss_density_mW_cm3 = core.mat.core_loss_density(Bpk_tesla=Bpk, f_khz=dc.f * 1e-3)
     P_core = core_loss_density_mW_cm3 * core.A_e * core.l_e * 1e-3 * 1e6  # coil.core.Vol * 1e6 * 1e-3
@@ -126,3 +134,26 @@ def core_loss_from_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
     Bpk = Bpk_dc_bias(dc, coil)
 
     return core_hysteresis_loss(Bpk, core=coil.core, dc=dc)
+
+
+def micrometals_analyzer(dc: DcDcSpecs, coil: CoilSpecs):
+
+    dict(
+        name="",
+        inductor_type="D", # D=DC inductor
+        l=50, # ??
+        iavg=30,
+        vin_rms_min=45, # VLon = Vin - Vout (buck)
+        vin_rms_max = 30, # VLoff = Vout (buck)
+        f_switching=50000,
+
+
+
+    )
+    """
+    https://www.micrometals.com/design-and-applications/design-tools/inductor-analyzer/?&&&ambient_temp=40&max_temp_rise=50&temp_rise=1&min_l=40&part_type=A&winding=F&num_cores=1&wire_strands=6&full_ratio=0.90&min_awg=14&pct_win_fill_max_e=100&energy_cost=0.2&continuous_use=0.5&conductor_material=Cu&n=18&strandsxawg=6xAWG%2314&partnumber=OC-184090-2&awg=14
+
+    :param dc:
+    :param coil:
+    :return:
+    """

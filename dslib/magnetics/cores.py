@@ -22,7 +22,7 @@ class MagneticCoreSpecs:
         self.mpn = mpn
         self.A_L = A_L
         self.l_e = l_e
-        self.A_e = A_e
+        self.A_e = A_e # in m2
         self.Vol = Vol
 
         assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
