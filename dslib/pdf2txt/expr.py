@@ -652,7 +652,7 @@ def get_field_detect_regex(mfr):
         tRise=(rec(r'(rise\s+time|^t\s?r($|\*|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'fall', 'turn-on')),
         # t=(rec(r'(rise\s+time|^t\s?r($|\sVGS))', re.IGNORECASE), ('reverse', 'recover')),
         tFall=(rec(r'(fall\s+time|^t\s?f($|\*|\sVGS))', re.IGNORECASE), ('reverse', 'recover', 'rise', 'turn-off')),
-        trr=(rec(r'(^t\s?rr($|\*|\s)|reverse recovery time)', re.IGNORECASE), ()),
+        trr=(rec(r'(^t\s?rr($|\*|\s)|(body diode )?reverse recovery time)', re.IGNORECASE), ()),
         Qrr=rec(
             r'^((?!Peak)).*((reversed?|source-drain)[−\s]+recover[edy]{1,2}[−\s]+charge|^Q\s*_?(f\s*r|r\s*[rm]?)($|\*|\s+recover))',
             re.IGNORECASE),  # QRM
@@ -670,7 +670,8 @@ def get_field_detect_regex(mfr):
         Crss=rec(r'(reverse\s+transfer\s+capacitance|^C[ _]?rss($|\s|\*))', re.IGNORECASE),
 
         Rg=(rec(r'(gate[- ]resistance|^R[ _]?G(_?\(?int\)?)?\s*($|[^=]))', re.IGNORECASE),
-            ('Rg=', 'Rg =', 'RGEN =', 'RGEN=', 'ext=', 'external')),
+            # ('Rg=', 'Rg =', 'RGEN =', 'RGEN=', 'ext=', 'external')),
+            ('Rg=', 'Rg =', 'RGEN', 'RGS', 'ext=', 'external')),
 
         Qgs2=(rec(
             r'(Gate[\s-]+Charge.+Plateau|Post-(Vth|threshold) Gate-to-Source Charge|^Q[ _]?gs2$|^Q[ _]?gs?\(th[-_]?pl\))',
@@ -771,7 +772,7 @@ def date_regexs():
     r = [re.compile(p, re.IGNORECASE) for p in (
         rf'{d}-(?P<m>{m_long}|{m_short})-{y}',  # 01-Feb-16, 25-Feb-2019, 11-Dec-2023
         rf'(?P<m>{m_long}|{m_short}) +{d}[\.?,? ]+{y}',  # August 18, 2014, "July 21,2022"
-        rf'(?P<m>{m_long}|{m_short}),? +{y4}',  # "November 2021", OCTOBER 2015
+        rf'(?P<m>{m_long}|{m_short})[,. ]+{y4}',  # "November 2021", OCTOBER 2015, Jul.2021
         rf'{y4}-{m}(-{d}|$|[^-])',  # "2021-01", 2022-03-28
     )]
     return r

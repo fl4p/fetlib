@@ -36,6 +36,8 @@ async def discover_mosfets(no_obsolete=False):
     parts += await parts_discovery.ti_mosfets()
     parts += await parts_discovery.infineon_mosfets()
     parts += await parts_discovery.taiwansemi_nfets()
+    parts += await parts_discovery.st_mosfets()
+    parts += await parts_discovery.vishay_mosfets()
 
     parts += parts_discovery.digikey('parts-lists/digikey/*.csv', no_obsolete=no_obsolete)
 
