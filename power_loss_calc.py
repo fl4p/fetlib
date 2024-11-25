@@ -6,10 +6,11 @@ import pandas as pd
 
 import dslib.magnetics.cores
 from dslib import dotdict, round_to_n_dec
-from dslib.field import Field
+from dslib.field import Field, MpnMfr
 from dslib.pdf2txt.parse import parse_datasheet
 from dslib.powerloss import dcdc_buck_hs, CoilSpecs, dcdc_buck_coil, dcdc_buck_ls, SwitchPowerLoss
-from dslib.spec_models import DcDcSpecs
+from dslib.spec_models import DcDcSpecs, MosfetSpecs
+from dslib.store import parts_db
 
 if __name__ == '__main__':
     """
@@ -39,28 +40,35 @@ if __name__ == '__main__':
 
     ds_ho = parse_datasheet('datasheets/toshiba/TK6R8A08QM.pdf', mfr='toshiba')
     ds_ho.add(Field('Rds_on_10v', math.nan, 5.3e-3, 6.8e-3))
+    # fet_ho = ds_ho.get_mosfet_specs()
 
     # ds_ho = parse_datasheet('datasheets/ti/CSD19501KCS.pdf')
     # ds_ho.add(Field('Rds_on_10v', math.nan, 5.5e-3, 6.5e-3))
 
-    ds_lo = parse_datasheet('datasheets/onsemi/FDP027N08B.pdf', mfr='onsemi')
-    ds_lo.add(Field('Rds_on_10v', math.nan, 2.21e-3, 2.7e-3))
+    # ds_lo = parse_datasheet('datasheets/onsemi/FDP027N08B.pdf', mfr='onsemi')
+    # ds_lo.add(Field('Rds_on_10v', math.nan, 2.21e-3, 2.7e-3))
+    # fet_lo = ds_lo.get_mosfet_specs()
 
-    fet_ho = ds_ho.get_mosfet_specs()
-    fet_lo = ds_lo.get_mosfet_specs()
+    fet_lo: MosfetSpecs = parts_db.load_obj(MpnMfr('infineon', 'IPB017N10N5LFATMA1')).specs
+    #fet_ho: MosfetSpecs = parts_db.load_obj(MpnMfr('infineon', 'IPB017N10N5LFATMA1')).specs
 
-    rg_total = 8
+    fet_ho: MosfetSpecs = parse_datasheet('datasheets/vishay/SiRA04DP.pdf').get_mosfet_specs()
+    fet_ho._Vpl = 2.6
+
+    rg_total = 350 # 4.7
 
     # fet_ho = MosfetSpecs.from_mpn('TK6R8A08QM', mfr='toshiba')
     # fet_lo = MosfetSpecs.from_mpn('FDP027N08B', mfr='onsemi')
 
-    hs_p = 2
+    hs_p = 1
 
 
     def compute_losses(pin):
 
         # dcdc = DcDcSpecs(vi=66, vo=27, pin=800, f=40e3, Vgs=11, tDead=400e-9, L=50e-6)
-        dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=40e3, Vgs=11, tDead=400e-9, L=coil.L)
+        # dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=40e3, Vgs=11, tDead=400e-9, L=coil.L)
+        #dcdc = DcDcSpecs(vi=70, vo=27, io=30, f=40e3, Vgs=11, tDead=100e-9, L=coil.L)
+        dcdc = DcDcSpecs(vi=12, vo=5, io=15, f=40e3, Vgs=5, tDead=100e-9, L=coil.L)
 
         p_hs = dcdc_buck_hs(
             dcdc,
@@ -68,8 +76,7 @@ if __name__ == '__main__':
             rg_total=rg_total,
             fallback_V_pl=5.4,
 
-            Lcsi=4e-9,
-            ls_Qoss=500e-9,  # TODO csd19503 # TODO Qload_HS = Qoss_LS + Qrr_LS ?
+            # Lcsi=4e-9,            ls_Qoss=500e-9,  # TODO csd19503 # TODO Qload_HS = Qoss_LS + Qrr_LS ?
             # MosfetSpecs(Rds_on=1e-3, Qg=1e-9, tRise=.5e-9, tFall=.5e-9, Qrr=1e-9)
             # MosfetSpecs(Rds_on=6.8e-3, Qg=39e-9, tRise=39e-9, tFall=46e-9, Qrr=43e-9),  # TK6R8A08QM
             # MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),#CSD19506KCS
@@ -102,7 +109,7 @@ if __name__ == '__main__':
     print(dcdc)
     print('Rg_total=', rg_total)
     print('HS(cntr)=', str(hs_p) + 'p', fet_ho.part.mpn, fet_ho)
-    print('LS(sync)=', fet_lo.part.mpn, fet_lo)
+    print('LS(sync)=', fet_lo.part.mpn, fet_lo, 'Qgs/Qgd=', round(fet_lo.QgdQgsRatio, 1))
     print('Coil=', repr(coil))
 
     p_total_total = sum(sum(v for v in p.values() if not callable(v)) for p in losses.values())
@@ -113,7 +120,9 @@ if __name__ == '__main__':
         for k, v in sorted(((k, v) for (k, v) in p.items() if not callable(v)), key=lambda t: -t[1]):
             if v != 0:
                 if isinstance(p, SwitchPowerLoss) or hasattr(p, 'get_cond'):
-                    cond_str = ', '.join(f'{k}={round_to_n_dec(v, 3) if isinstance(v, (int,float,)) else v}' for k, v in p.get_cond(k).items())
+                    cond_str = ', '.join(
+                        f'{k}={round_to_n_dec(v, 3) if isinstance(v, (int, float,)) else v}' for k, v in
+                        p.get_cond(k).items())
                 else:
                     cond_str = ''
                 print('%10s = %.2f W (%2.0f%%)  (%4.1f%%) %30s' % (k, v, v / p_group * 100, v / p_total_total * 100,
@@ -128,7 +137,8 @@ if __name__ == '__main__':
     coil_core_loss_ratio = losses.coil.P_core / (losses.coil.P_dcr + losses.coil.P_core)
 
     if coil_core_loss_ratio < 0.1:
-        warnings.warn('Coil: core loss is <10% of total coil loss, consider additional copper strands and/or bigger core to reduce copper loss')
+        warnings.warn(
+            'Coil: core loss is <10% of total coil loss, consider additional wire strands, bigger core and/or higher permeability to reduce copper loss')
 
     if coil_core_loss_ratio > 0.3:
         warnings.warn('Coil: core loss is >30% of total coil loss, consider a smaller core to prevent thermal issues')
@@ -145,7 +155,7 @@ if __name__ == '__main__':
             loss_curve.append(dict(
                 pin=pin,
                 P_sw=losses.hs.P_sw,
-                P_rds=losses.hs.P_on + losses.ls.P_on,
+                P_rds=losses.hs.P_cl + losses.ls.P_cl,
                 P_dt=losses.ls.P_dt,
                 P_rr=losses.ls.P_rr,
                 P_ldcr=losses.coil.P_dcr,
