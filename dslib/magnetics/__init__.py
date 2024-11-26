@@ -13,7 +13,7 @@ def oe2Apm(H_oe):
     return H_oe * oe
 
 
-def Apm2oe(H):
+def H2oe(H):
     return H / oe
 
 

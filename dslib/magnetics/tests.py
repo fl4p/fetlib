@@ -48,7 +48,7 @@ def test_power_loss():
 
     # example 1: 20A DC, 2A ripple, 100 khz
     dcdc = DcDcSpecs(85, 6.5, 100e3, io=20, iripple=2)
-    assert abs(rel_err(dcdc.L, coil.L)) < 0.1
+    assert abs(rel_err(dcdc.L, coil.L0)) < 0.1
     assert abs(rel_err(core_loss_from_dc_magnetization(dcdc, coil), 44e-3)) < 0.05  # method 1
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil), 44e-3)) < 0.05  # method 2
 

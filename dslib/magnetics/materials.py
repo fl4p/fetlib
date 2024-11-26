@@ -1,4 +1,7 @@
-from typing import Callable
+import os.path
+from typing import Callable, Literal
+
+from dslib.cache import mem_cache
 
 
 class MagneticCoreMaterialSpecs:
@@ -88,6 +91,50 @@ Micrometals_Sendust_60u = MagneticCoreMaterialSpecs(
     dc_bias=micrometals_dc_bias_model(1.000E-02, 2.151E-06, 1.841E+00, 0.000E+00),
     dc_magnetization=micrometals_dc_mag_model(60, a=8.848E-03, b=1.991E+00, c=2.003E+09, d=1.000E-08, e=1.467E+02),
 )
+
+
+@mem_cache(ttl='1h')
+def load_micrometals_materials():
+    import pandas as pd
+    df = pd.read_csv(os.path.dirname(__file__) + '/micrometals.csv')
+    return df
+
+def try_float(s):
+    try:
+        return float(s)
+    except ValueError:
+        return float('nan')
+
+def micrometals_material(mat: Literal['MS', 'OE', 'OC'], shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int):
+    df = load_micrometals_materials()
+    m = df[(df.iloc[:, 0] == mat) & (df.iloc[:, 1] == shape) & (df.iloc[:, 2] == str(ui))]
+    assert len(m) == 1
+    m = list(map(try_float, m.iloc[0, :]))
+
+    return MagneticCoreMaterialSpecs(
+        'micrometals', 'MS%03u' % ui, mu_r=ui,
+
+        core_loss_density=micrometals_core_loss_model(*m[9:13]),
+        dc_bias=micrometals_dc_bias_model(*m[5:9]),
+        dc_magnetization=micrometals_dc_mag_model(ui, *m[23:28]),
+    )
+
+
+# https://www.micrometals.com/products/materials/ms/
+Micrometals_MS_T_060u = micrometals_material('MS', 'T',60)
+Micrometals_MS_T_090u = micrometals_material('MS', 'T',90)
+Micrometals_MS_T_125u = micrometals_material('MS', 'T',125)
+
+# https://www.micrometals.com/products/materials/ms/
+Micrometals_Sendust_125u_2 = MagneticCoreMaterialSpecs(
+    'micrometals', 'MS125u', mu_r=125,
+
+    core_loss_density=micrometals_core_loss_model(a=1.394E+10, b=1.034E+09, c=1.244E+07, d=4.007E-14),
+    dc_bias=micrometals_dc_bias_model(a=1.000E-02, b=7.884E-06, c=1.883E+00, d=0.000E+00),
+    dc_magnetization=micrometals_dc_mag_model(125, a=2.911E-02, b=1.834E+00, c=2.003E+09, d=1.000E-08, e=7.219E+01),
+)
+
+#assert Micrometals_Sendust_125u_2.core_loss_density == Micrometals_MS_T_125u.core_loss_density
 
 # https://www.micrometals.com/products/materials/oe/
 Micrometals_OE_60u = MagneticCoreMaterialSpecs(

@@ -8,6 +8,14 @@ from dslib.spec_models import rel_err
 µ0 = 4 * math.pi * 1e-7
 
 
+class ToroidShape():
+    def __init__(self, l_e, A_e, Vol):
+        self.l_e = l_e
+        self.A_e = A_e
+        self.Vol = Vol
+        assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
+
+
 class MagneticCoreSpecs:
     def __init__(self, mpn, mat: MagneticCoreMaterialSpecs, A_L, l_e, A_e, Vol):
         """
@@ -22,11 +30,11 @@ class MagneticCoreSpecs:
         self.mpn = mpn
         self.A_L = A_L
         self.l_e = l_e
-        self.A_e = A_e # in m2
+        self.A_e = A_e  # in m2
         self.Vol = Vol
 
         assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
-        assert abs(rel_err(µ0 * mat.mu_r * A_e / l_e, self.A_L)) < 0.04
+        assert abs(rel_err(µ0 * mat.mu_r * A_e / l_e, self.A_L)) < 0.04, (µ0 * mat.mu_r * A_e / l_e, self.A_L)
 
     def stack(self, n):
         return MagneticCoreSpecs(
@@ -61,13 +69,42 @@ KDM_KS130_060A = MagneticCoreSpecs('KDM_KS130_060A', KDM_SendustKS_60,
                                    A_e=0.672e-4,  # cm2
                                    Vol=5.480e-6,
                                    )
+MicrometalsT130 = ToroidShape(l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
+MicrometalsT184 = ToroidShape(l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6)
+
+# https://datasheets.micrometals.com/MS-132060-2-DataSheet.pdf
+Micrometals_MS_130_060 = MagneticCoreSpecs('MS-132060-2',
+                                           materials.Micrometals_Sendust_60u,
+                                           **MicrometalsT130.__dict__,
+                                           A_L=65e-9,  # nH/N2
+                                           )
+
+# https://datasheets.micrometals.com/MS-184060-2-DataSheet.pdf
+Micrometals_MS_184_060 = MagneticCoreSpecs('MS-184060-2',
+                                           materials.Micrometals_Sendust_60u,
+                                           **MicrometalsT184.__dict__,
+                                           A_L=135e-9,  # nH/N2 (checksum)
+                                           )
+
+# https://datasheets.micrometals.com/MS-184090-2-DataSheet.pdf
+Micrometals_MS_184_090 = MagneticCoreSpecs('MS-184090-2',
+                                           materials.Micrometals_MS_T_090u,
+                                           **MicrometalsT184.__dict__,
+                                           A_L=202e-9,  # nH/N2 (checksum)
+                                           )
+
+# https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
+Micrometals_MS_184_125 = MagneticCoreSpecs('MS-184125-2',
+                                           materials.Micrometals_MS_T_125u,
+                                           **MicrometalsT184.__dict__,
+                                           A_L=281e-9,  # nH/N2
+                                           )
 
 # https://datasheets.micrometals.com/OE-184060-2-DataSheet.pdf
-Micrometals_OE_184_060 = MagneticCoreSpecs('OE-184060-2', materials.Micrometals_OE_60u,
+Micrometals_OE_184_060 = MagneticCoreSpecs('OE-184060-2',
+                                           materials.Micrometals_OE_60u,
+                                           **MicrometalsT184.__dict__,
                                            A_L=135e-9,  # nH/N2
-                                           l_e=10.743e-2,  # cm
-                                           A_e=1.99e-4,  # cm2
-                                           Vol=21.4e-6,
                                            )
 
 # https://datasheets.micrometals.com/OE-226060-2-DataSheet.pdf

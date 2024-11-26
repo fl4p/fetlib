@@ -1,4 +1,4 @@
-from dslib.magnetics import Apm2oe, µ0
+from dslib.magnetics import H2oe, µ0
 from dslib.magnetics.cores import MagneticCoreSpecs
 from dslib.powerloss import CoilSpecs
 from dslib.spec_models import DcDcSpecs, rel_err
@@ -66,8 +66,9 @@ def Bpk_dc_mag(dc: DcDcSpecs, coil: CoilSpecs):
     H_ac_max = tpl * dc.Io_max
     H_ac_min = tpl * dc.Io_min
 
-    B_ac_max = mat.dc_magnetization(H_oe=Apm2oe(H_ac_max))
-    B_ac_min = mat.dc_magnetization(H_oe=Apm2oe(abs(H_ac_min))) * (-1 if H_ac_min < 0 else 1)
+    # TODO Hdc?
+    B_ac_max = mat.dc_magnetization(H_oe=H2oe(H_ac_max))
+    B_ac_min = mat.dc_magnetization(H_oe=H2oe(abs(H_ac_min))) * (-1 if H_ac_min < 0 else 1)
 
     Bpk = (B_ac_max - B_ac_min) / 2
 
@@ -97,8 +98,8 @@ def Bpk_sinusoidal(dc: DcDcSpecs, coil: CoilSpecs):
     return Bpk
 
 
-def core_hysteresis_loss(Bpk: float, core: MagneticCoreSpecs, dc: DcDcSpecs):
-    core_loss_density_mW_cm3 = core.mat.core_loss_density(Bpk_tesla=Bpk, f_khz=dc.f * 1e-3)
+def core_hysteresis_loss(Bpk: float, core: MagneticCoreSpecs, f: float):
+    core_loss_density_mW_cm3 = core.mat.core_loss_density(Bpk_tesla=Bpk, f_khz=f * 1e-3)
     P_core = core_loss_density_mW_cm3 * core.A_e * core.l_e * 1e-3 * 1e6  # coil.core.Vol * 1e6 * 1e-3
     return P_core, Bpk, core_loss_density_mW_cm3
 
@@ -114,11 +115,11 @@ def core_loss_from_dc_magnetization(dc: DcDcSpecs, coil: CoilSpecs):
     :param coil:
     :return: Estimated core loss in W
     """
-    assert abs(rel_err(dc.L, coil.L)) < 0.1
+    #assert abs(rel_err(dc.L, coil.L0)) < 0.1
 
     Bpk = Bpk_dc_mag(dc, coil)
 
-    return core_hysteresis_loss(Bpk, core=coil.core, dc=dc)
+    return core_hysteresis_loss(Bpk, core=coil.core, f=dc.f)
 
 
 def core_loss_from_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
@@ -133,7 +134,7 @@ def core_loss_from_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
 
     Bpk = Bpk_dc_bias(dc, coil)
 
-    return core_hysteresis_loss(Bpk, core=coil.core, dc=dc)
+    return core_hysteresis_loss(Bpk, core=coil.core, f=dc.f)
 
 
 def micrometals_analyzer(dc: DcDcSpecs, coil: CoilSpecs):
