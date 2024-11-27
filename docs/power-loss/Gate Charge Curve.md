@@ -3,8 +3,8 @@
 **Power MOSFET Basics: Understanding Gate Charge and Using it to Assess Switching Performance**
 https://www.vishay.com/docs/73217/an608a.pdf
 
-![img.png](img/img.png)
-![img_1.png](img/img_1.png)
+![img.png](img/img.webp)
+![img_1.png](img/img_1.webp)
 
 "It is often stated in the literature that VTH + IDS/gfs can be
 substituted for Vgp. While technically correct, the users
@@ -20,21 +20,21 @@ QGD is used and divided by the voltage swing seen on the
 drain connection VDS then this effectively gives a value for
 Cgd based on the datasheet transient."
 
-![img_2.png](img/img_2.png)
+![img_2.png](img/img_2.webp)
 
 ## Infineon MOSFET Power Losses Calculation Using the DataSheet Parameters - 2006
 
 https://application-notes.digchip.com/070/70-41484.pdf
 
-![img_16.png](img/img_16.png)
-![img_17.png](img/img_17.png)
+![img_16.png](img/img_16.webp)
+![img_17.png](img/img_17.webp)
 
 "It is supposed that if the drain-source voltage is in the
 range uDS∈[UDD/2,UDD], then the gate-drain capacitance takes value of CGD1= CGD(UDD). On the other
 hand, if the drain-source voltage is in the range uDS∈[0V,UDD/2], then the gate-drain capacitance
 takes value of CGD2= CGD(RDSon·Ion)."
 
-![img_18.png](img/img_18.png)
+![img_18.png](img/img_18.webp)
 
 ## Other / TODO
 
@@ -46,20 +46,20 @@ https://www.ti.com/lit/an/slyt664/slyt664.pdf
 "MOSFET power losses and how they affect power-supply efficiency"
 
 * assumes a constant gate drive current. not applicable / high error with CV + R gate drive and high Vpl.
-* ![img_3.png](img/img_3.png) ![img_4.png](img/img_4.png)
-* ![img_5.png](img/img_5.png)
-* ![img_6.png](img/img_6.png)
-* ![img_7.png](img/img_7.png)
-* ![img_8.png](img/img_8.png)
-* ![img_9.png](img/img_9.png)
-* ![img_10.png](img/img_10.png)
+* ![img_3.png](img/img_3.webp) ![img_4.png](img/img_4.webp)
+* ![img_5.png](img/img_5.webp)
+* ![img_6.png](img/img_6.webp)
+* ![img_7.png](img/img_7.webp)
+* ![img_8.png](img/img_8.webp)
+* ![img_9.png](img/img_9.webp)
+* ![img_10.png](img/img_10.webp)
 
 https://epc-co.com/epc/Portals/0/epc/documents/application-notes/AN030%20Hard%20Switching%20Losses%20Calculation.pdf
 Hard Switching Losses Calculations
-![img_11.png](img/img_11.png)
-![img_12.png](img/img_12.png)
-![img_13.png](img/img_13.png)
-![img_14.png](img/img_14.png)
+![img_11.png](img/img_11.webp)
+![img_12.png](img/img_12.webp)
+![img_13.png](img/img_13.webp)
+![img_14.png](img/img_14.webp)
 
 https://www.ti.com/lit/an/slpa009a/slpa009a.pdf
 
