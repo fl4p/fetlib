@@ -7,7 +7,7 @@ https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-powe
 
 https://www.onsemi.jp/download/data-sheet/pdf/nvmfws2d1n08x-d.pdf
 
-![img.png](img.png)
+![img.png](img/img.png)
 
 | V  | C      | C√V  |
 |----|--------|------|
