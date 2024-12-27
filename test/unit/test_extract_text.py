@@ -764,6 +764,9 @@ def test_extract_dates():
     d = extract_dates("Jul.2021 ,  Dec. 2021")
     assert d == [datetime.datetime(2021, 7, 1), datetime.datetime(2021, 12, 1)]
 
+    d = extract_dates(" 2020.1.9 ")
+    assert d == [datetime.datetime(2020, 1, 9)]
+
 
 if __name__ == '__main__':
     test_from_stream()
