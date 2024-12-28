@@ -1,7 +1,7 @@
 from dslib.magnetics import H2oe, µ0
 from dslib.magnetics.cores import MagneticCoreSpecs
 from dslib.powerloss import CoilSpecs
-from dslib.spec_models import DcDcSpecs, rel_err
+from dslib.spec_models import DcDcSpecs
 
 """
 
@@ -115,7 +115,7 @@ def core_loss_from_dc_magnetization(dc: DcDcSpecs, coil: CoilSpecs):
     :param coil:
     :return: Estimated core loss in W
     """
-    #assert abs(rel_err(dc.L, coil.L0)) < 0.1
+    # assert abs(rel_err(dc.L, coil.L0)) < 0.1
 
     Bpk = Bpk_dc_mag(dc, coil)
 
@@ -136,25 +136,3 @@ def core_loss_from_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
 
     return core_hysteresis_loss(Bpk, core=coil.core, f=dc.f)
 
-
-def micrometals_analyzer(dc: DcDcSpecs, coil: CoilSpecs):
-
-    dict(
-        name="",
-        inductor_type="D", # D=DC inductor
-        l=50, # ??
-        iavg=30,
-        vin_rms_min=45, # VLon = Vin - Vout (buck)
-        vin_rms_max = 30, # VLoff = Vout (buck)
-        f_switching=50000,
-
-
-
-    )
-    """
-    https://www.micrometals.com/design-and-applications/design-tools/inductor-analyzer/?&&&ambient_temp=40&max_temp_rise=50&temp_rise=1&min_l=40&part_type=A&winding=F&num_cores=1&wire_strands=6&full_ratio=0.90&min_awg=14&pct_win_fill_max_e=100&energy_cost=0.2&continuous_use=0.5&conductor_material=Cu&n=18&strandsxawg=6xAWG%2314&partnumber=OC-184090-2&awg=14
-
-    :param dc:
-    :param coil:
-    :return:
-    """

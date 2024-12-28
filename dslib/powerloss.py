@@ -26,9 +26,10 @@ import math
 import warnings
 from typing import Tuple
 
-from dslib import round_to_n, dotdict, round_to_n_dec
+from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
 from dslib.magnetics.cores import MagneticCoreSpecs
-from dslib.spec_models import DcDcSpecs, MosfetSpecs, rel_err, Qgs2_Qgs_ratio_estimate
+from dslib.magnetics.wire import d2awg
+from dslib.spec_models import DcDcSpecs, MosfetSpecs, Qgs2_Qgs_ratio_estimate, GateDrive
 
 µ0 = 4 * math.pi * 1e-7
 
@@ -127,7 +128,7 @@ def mosfet_switching_trf(dc: DcDcSpecs, mf: MosfetSpecs):
     return P_sw
 
 
-def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.nan, ls_Qoss=0, Lcsi=0,
+def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, Lcsi=0,
                  use_datasheet_timings=True, Rds_temp_rise=1.35):
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/power_loss_appli-e.pdf
     # https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
@@ -136,8 +137,8 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.na
     assert mf.Qrr is not None, 'Qrr must be set ' + mf.__repr__()
     assert math.isnan(dc.Iripple) or dc.Iripple > 0
 
-    if rg_total < mf.Rg:
-        warnings.warn('Rg_total %.1f < MF internal Rg %.1f' % (rg_total, mf.Rg))
+    if gd.rg_total < mf.Rg:
+        warnings.warn('Rg_total %.1f < MF internal Rg %.1f' % (gd.rg_total, mf.Rg))
 
     i_rms2 = dc.D_buck * dc.Io_mean_squared_on
 
@@ -145,11 +146,12 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.na
 
     if Lcsi > 0:
         assert ls_Qoss > 0
-        tr, tf, t_cond = mosfet_hs_sw_timings_lcsi(dc, mf, rg_total=rg_total, ls_Qoss=ls_Qoss,
+        tr, tf, t_cond = mosfet_hs_sw_timings_lcsi(dc, mf, gd=gd,
+                                                   ls_Qoss=ls_Qoss,
                                                    Lcsi=Lcsi,
-                                                   fallback_V_pl=fallback_V_pl)
+                                                   )
     else:
-        tr, tf = mosfet_hs_sw_timings_hs2(dc, mf, rg_total=rg_total, fallback_V_pl=fallback_V_pl)
+        tr, tf = mosfet_hs_sw_timings_hs2(mf, gd)
         t_cond = {}
 
     if use_datasheet_timings:
@@ -168,7 +170,7 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.na
         P_sw=(Psw_on + Psw_off),
         P_dt=0,  # body diode never conducts
         P_rr=0,  # body diode never conducts
-        P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
+        P_gd=(gd.Von - gd.Voff) * dc.f * 2 * mf.Qg,
         P_coss=2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,
         # TODO  ^ compute Coss at given dc.Vi, for 80V fets, this is given at 40V, Coss is ~1/sqrt(V)
         # 2/3 comes from integration of Coss(V)
@@ -188,7 +190,7 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, rg_total, fallback_V_pl=math.na
     )
 
 
-def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs, rds_temp_rise=1.35, Qrr_temp_rise=1.2):
+def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs, gd: GateDrive, rds_temp_rise=1.35, Qrr_temp_rise=1.2):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -218,7 +220,7 @@ def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs, rds_temp_rise=1.35, Qrr_temp_ri
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,  # TODO https://www.ti.com/lit/an/slyt664/slyt664.pdf
         P_rr=dc.Vi * dc.f * Qrr_eff,  # this is dissipated in HS
-        P_gd=dc.Vgs * dc.f * 2 * mf.Qg,
+        P_gd=(gd.Von - gd.Voff) * dc.f * 2 * mf.Qg,
         P_sw=0,  # negligible
         P_coss=0,  # negligible (charge is recovered)
         cond=dict(
@@ -235,33 +237,98 @@ P2 = Tuple[float, float]
 
 
 class CoilSpecs():
-    def __init__(self, Rdc, L=None, turns=None, core: MagneticCoreSpecs = None):
+    def __init__(self, Rdc, L0=None, turns=None, wire_diameter=None, wire_awg=None, wire_strands=None,
+                 core: MagneticCoreSpecs = None):
         """
 
-        :param L: inductivity in H
+        :param L0: inductivity in H
         :param Rdc: ESR in Ω
         :param turns: number of turns
         """
         # TODO skin effect
 
         if turns is None:
-            assert L > 0
-            turns = round_to_n((L / core.A_L) ** .5, 3)
+            assert L0 > 0
+            turns = round_to_n((L0 / core.A_L) ** .5, 3)
 
         l = turns ** 2 * core.A_L
-        if L is None:
-            L = round_to_n(l, 3)
+        if L0 is None:
+            L0 = round_to_n(l, 3)
 
         self.Rdc = Rdc
         self.turns = turns
 
-        self.core: MagneticCoreSpecs = core
-        self.L = L
+        if wire_awg:
+            assert wire_diameter is None
+            from dslib.magnetics.wire import awg2d
+            wire_diameter = awg2d(wire_awg)
 
-        assert abs(rel_err(L, l)) < 0.05
+        self.wire_diameter = wire_diameter
+
+        self.wire_strands = wire_strands
+
+        self.core: MagneticCoreSpecs = core
+        self.L0 = L0
+
+        assert abs(rel_err(L0, l)) < 0.05, (L0, l)
+
+    def Ldc(self, dc_bias_current, no_raise=False):
+        tpl = (self.turns / self.core.l_e)
+        Hdc = tpl * dc_bias_current
+        Ldc = self.L0 * self.core.mat.permeability_dc_bias(Hdc, no_raise=no_raise) / self.core.mat.mu_r
+        return Ldc
 
     def __repr__(self):
-        return f'CoilSpecs(Rdc={round_to_n_dec(self.Rdc, 3)}, L={round_to_n_dec(self.L, 3)}, T={self.turns}, core={(self.core)})'
+        return f'CoilSpecs(Rdc={round_to_n_dec(self.Rdc, 3)}, L={round_to_n_dec(self.L0, 3)}, T={self.turns}, core={(self.core)})'
+
+    @property
+    def awg(self):
+        return round(d2awg(self.wire_diameter), 1)
+
+    @property
+    def bundle_diameter(self):
+        # https://calculator.academy/bundle-diameter-calculator/
+        return (4 * (self.wire_strands * (math.pi * self.wire_diameter ** 2 / 4)) / math.pi) ** .5
+
+    def micrometals_analyzer(self, dc: DcDcSpecs):
+        strands = self.wire_strands or 1
+        awg = self.awg
+        mpn = self.core.mpn
+        stack = 1
+        if mpn.startswith('2s('):
+            stack = 2
+            mpn = mpn[3:-1]
+        args = dict(
+            name="",
+            inductor_type="D",  # D=DC inductor
+            l=50,  # ??
+            iavg=round(dc.Io, 2),
+            vin_rms_min=dc.Vi - dc.Vo,  # VLon = Vin - Vout (buck)
+            vin_rms_max=dc.Vo,  # VLoff = Vout (buck)
+            f_switching=dc.f,
+            ambient_temp=40,
+            max_temp_rise=50,
+            temp_rise=1,
+            min_l=40,
+            part_type="A",
+            winding="F",
+            num_cores=stack,
+            wire_strands=strands,
+            full_ratio=0.90,
+            min_awg=30,
+            pct_win_fill_max_e=100,
+            energy_cost=0.2,
+            continuous_use=0.5,
+            conductor_material="Cu",
+            n=self.turns,
+            strandsxawg=f'{strands}xAWG%23{awg}',
+            partnumber=mpn,
+            awg=awg,
+        )
+        import urllib.parse
+        u = "https://www.micrometals.com/design-and-applications/design-tools/inductor-analyzer/?"
+        u += urllib.parse.urlencode(args)
+        return u
 
 
 def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
@@ -295,16 +362,26 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     """
 
     assert math.isnan(dc.Iripple) or dc.Iripple > 0
-    assert abs(rel_err(dc.L, coil.L)) < 0.05
+    # assert abs(rel_err(dc.L, coil.L0)) < 0.05
 
     # require ripple current since core loss computation needs it anyways
     assert math.isfinite(dc.Iripple), "no ripple current"
 
     if math.isfinite(dc.Iripple):
         assert dc.Iripple < 2 * dc.Io, 'CCM required, DCM not supported TODO'
-        P_dcr = (dc.Io ** 2 + (dc.Iripple ** 2 / 12)) * coil.Rdc  # https://www.ti.com/lit/an/slvaeq9/slvaeq9.pdf#page=5
+        I_ms = (dc.Io ** 2 + (dc.Iripple ** 2 / 12))  # https://www.ti.com/lit/an/slvaeq9/slvaeq9.pdf#page=5
     else:
-        P_dcr = dc.Io ** 2 * coil.Rdc
+        I_ms = dc.Io ** 2
+
+    P_dcr = I_ms * coil.Rdc
+
+    from dslib.magnetics.wire import ac_resistance_factor, MaterialResistivity
+    acf, sd = ac_resistance_factor(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f)
+    rac = (acf - 1) * coil.Rdc
+
+    # notice that this is independent from duty cycle
+    # https://www.mouser.com/pdfDocs/Coilcraft_inductorlosses.pdf
+    P_acr = dc.Il_ac_rms2 * rac
 
     # https://www.quora.com/What-is-the-formula-for-calculating-peak-value-of-flux-density-of-an-inductor
     # TODO DC bias https://www.ti.com/lit/an/snva038b/snva038b.pdf?ts=1730558298197
@@ -342,9 +419,10 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     Bpk_ac = ur * µ0 * Hpk_ac  # peak ac flux density [T]
     B_pk = ur * µ0 * Hpk_ac
     """
-    from dslib.magnetics.powerloss import core_loss_from_dc_bias, core_loss_from_dc_magnetization
+    from dslib.magnetics.powerloss import core_loss_from_dc_bias
 
-    P_core1, Bpk1, cld1 = core_loss_from_dc_magnetization(dc, coil)  # method 1
+    # P_core1, Bpk1, cld1 = core_loss_from_dc_magnetization(dc, coil)  # method 1
+    P_core1, Bpk1, cld1 = 0, 0, 0
     P_core2, Bpk2, cld2 = core_loss_from_dc_bias(dc, coil)  # method 2
 
     # TODO the mac-inc methods do not consider core saturation
@@ -352,9 +430,11 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
 
     return dotdict(
         P_dcr=P_dcr,
+        P_acr=P_acr,
         P_core=max(P_core1, P_core2),
         get_cond=lambda k: dict(
             P_dcr=dict(Rdc=coil.Rdc),
+            P_acr=dict(δ=sd, acf=acf),
             P_core=dict(
                 ΔI=dc.Iripple,
                 Bpk=max(Bpk1, Bpk2),  # peak ac flux density
@@ -365,48 +445,67 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     )
 
 
-def mosfet_hs_sw_timings_hs(dc: DcDcSpecs, hs: MosfetSpecs, rg_total: float, fallback_V_pl=math.nan):
+def dcdc_buck_cout(dc: DcDcSpecs, Z_cin: float, Z_cout: float):
+    i_ac_rms2 = dc.Il_ac_rms2
+
+    i_cin_rms = dc.Io * ((dc.Vi - dc.Vo) * dc.Vo) ** .5 / dc.Vi
+
+    # cout & cin:
+    # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf#page=4
+
+    return dotdict(
+        P_cin=i_cin_rms ** 2 * Z_cin,
+        P_cout=i_ac_rms2 * Z_cout,
+        get_cond=lambda k: dict(
+            P_cin=dict(Z=round_to_n_dec(Z_cin, 2), Irms=i_cin_rms),
+            P_cout=dict(Z=round_to_n_dec(Z_cout, 2), Irms=i_ac_rms2 ** .5),
+        )[k],
+    )
+
+
+def mosfet_hs_sw_timings_hs(hs: MosfetSpecs, gd: GateDrive):
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=3  3.1.1
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
-    vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
+    vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     # TODO igon1 + igon2
-    assert vpl < dc.Vgs, "Vpl >= VGS"
-    ig_on = (dc.Vgs - vpl) / rg_total
-    ig_off = (vpl) / rg_total
+    assert vpl < gd.Von, "Vpl >= VGS"
+    ig_on = (gd.Voff - vpl) / gd.rg_total
+    ig_off = (vpl - gd.Voff) / gd.rg_total
     tr = hs.Qsw / ig_on
     tf = hs.Qsw / ig_off
     return tr, tf
 
 
-def mosfet_hs_sw_timings_hs2(dc: DcDcSpecs, hs: MosfetSpecs, rg_total: float, fallback_V_pl=math.nan):
+def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive):
     # https://www.tij.co.jp/jp/lit/an/slvaeq9/slvaeq9.pdf#page=4
     # SLVAEQ9–July 2020
     # An Accurate Approach for Calculating the Eff. of a Synch. Buck Converter Using the MOSFET Plateau Voltage
     # equation (6) appears to be wrong.
 
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
-    vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
+    vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
-    tr = (hs.Qgs2 / (dc.Vgs - v_ir) + hs.Qgd / (dc.Vgs - vpl)) * rg_total # (5)
-    tf = (hs.Qgs2 / (v_ir) + hs.Qgd / (vpl)) * rg_total          # (6) *corrected
+    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * gd.rg_total  # (5)
+    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * gd.rg_total  # (6) *corrected
     return tr, tf
 
-def mosfet_hs_sw_timings_hs_vishay(dc: DcDcSpecs, hs: MosfetSpecs, rg_total: float, fallback_V_pl=math.nan):
+
+def mosfet_hs_sw_timings_hs_vishay(hs: MosfetSpecs, gd: GateDrive):
     # https://www.vishay.com/docs/73217/an608a.pdf
     # Cgd(Vds)
     # needs Ciss(at dc.Vi)
 
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
-    vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
+    vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
-    tr = (hs.Qgs2 / (dc.Vgs - v_ir) + hs.Qgd / (dc.Vgs - vpl)) * rg_total # (5)
-    tf = (hs.Qgs2 / (v_ir) + hs.Qgd / (vpl)) * rg_total          # (6) *corrected
+    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * gd.rg_total  # (5)
+    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * gd.rg_total  # (6) *corrected
     return tr, tf
 
 
-def mosfet_hs_sw_timings_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls_Qoss, rg_total: float, Lcsi: float,
+def mosfet_hs_sw_timings_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls_Qoss, gd: GateDrive, Lcsi: float,
                               fallback_V_pl=math.nan):
     # loss with L_csi considerations
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf
@@ -414,35 +513,41 @@ def mosfet_hs_sw_timings_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls_Qoss, rg_total:
     vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
 
     # pw on
-    ig1_on = (dc.Vgs - vpl) / (rg_total + (Lcsi * dc.Io_min / Qgs2))
+    ig1_on = (gd.Von - vpl) / (gd.rg_total + (Lcsi * dc.Io_min / Qgs2))
     a = (Lcsi * ls_Qoss / hs.Qgd ** 2) if Lcsi else 0
-    b = rg_total
-    c = -(dc.Vgs - vpl)
+    b = gd.rg_total
+    c = -(gd.Von - vpl)
     ig2_on = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
     tr = (Qgs2 / ig1_on + hs.Qgd / ig2_on)
 
     # pw off
-    ig1_off = vpl / (rg_total + Lcsi * dc.Io_max / Qgs2)
-    c = - vpl
+    ig1_off = (vpl - gd.Voff) / (gd.rg_total + Lcsi * dc.Io_max / Qgs2)
+    c = - (vpl - gd.Voff)
     ig2_off = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
     tf = (Qgs2 / ig1_off + hs.Qgd / ig2_off)
 
     return tr, tf, dict(Lcsi=Lcsi, Qoss_ls=ls_Qoss, Qsw=Qgs2 + hs.Qgd, Vpl=vpl)
 
 
+def capacitor_out():
+    # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf
+    raise NotImplemented()
+
+
 def tests():
-    dcdc = DcDcSpecs(24, 12, 40_000, 12, 500e-9, 10, iripple=1e-9)
+    dcdc = DcDcSpecs(24, 12, 40_000, 500e-9, 10, iripple=1e-9)
+    gd = GateDrive(1e-6, 12, fallback_V_pl=4)
     mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 10e-9, Qsw=2e-9,
                      Qgs=2e-9, Qgs2=2e-9 * Qgs2_Qgs_ratio_estimate, Coss=0)
 
-    loss = dcdc_buck_hs(dcdc, mf, rg_total=1e-6, fallback_V_pl=4, Rds_temp_rise=1)
+    loss = dcdc_buck_hs(dcdc, mf, gd=gd, Rds_temp_rise=1)
     assert loss.P_cl == (10 ** 2) * 10e-3 * .5
     assert loss.P_sw == 24 * 10 * 40e3 * 40e-9
     assert loss.P_gd == (12 * 40e3 * 2 * 100e-9)
     assert math.isnan(loss.P_dt) or loss.P_dt == 0
     assert loss.buck_hs() == loss.P_cl + loss.P_sw + loss.P_gd + loss.P_coss
 
-    loss = dcdc_buck_ls(dcdc, mf, rds_temp_rise=1, Qrr_temp_rise=1)
+    loss = dcdc_buck_ls(dcdc, mf, gd, rds_temp_rise=1, Qrr_temp_rise=1)
     assert loss.P_cl == (10 ** 2) * 10e-3 * .5
     assert loss.P_dt == 1 * 10 * (500e-9 * 2) * 40e3
     assert loss.P_rr == 24 * 40e3 * 120e-9
@@ -450,15 +555,15 @@ def tests():
     assert math.isnan(loss.P_sw) or loss.P_sw == 0
     assert loss.buck_ls() == loss.P_rr + loss.P_cl + loss.P_gd + loss.P_dt
 
-    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
+    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=500e-9)
     mf = MosfetSpecs.from_mpn('DMT10H9M9SCT', 'diodes')
-    l = mosfet_hs_sw_timings_hs(dcdc, mf, 6, 4.5)
+    l = mosfet_hs_sw_timings_hs(mf, GateDrive(6, 12, fallback_V_pl=4.5))
     pr = 0.5 * dcdc.Vi * dcdc.Io_min * dcdc.f * l[0]
     pf = 0.5 * dcdc.Vi * dcdc.Io_max * dcdc.f * l[1]
     assert abs(pr - 0.3) < 0.1
     assert abs(pf - 0.7) < 0.1
 
-    l2 = mosfet_hs_sw_timings_hs2(dcdc, mf, 6, 4.5)
+    l2 = mosfet_hs_sw_timings_hs2(mf, GateDrive(6, 12, fallback_V_pl=4.5))
     assert l2
 
     mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 10e-9,
@@ -466,14 +571,14 @@ def tests():
                      Qgs=2e-9,
                      Qgs2=1e-9,
                      Coss=0)
-    l1 = mosfet_hs_sw_timings_hs(dcdc, mf, 5, 4)
+    l1 = mosfet_hs_sw_timings_hs(mf, GateDrive(5, fallback_V_pl=4))
 
     mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 10e-9,
                      Qgd=80e-9,
                      Qgs=4e-9,  # timings are independent of Qgs
                      Qgs2=1e-9,
                      Coss=0)
-    l2 = mosfet_hs_sw_timings_hs(dcdc, mf, 5, 4)
+    l2 = mosfet_hs_sw_timings_hs(mf, GateDrive(5, fallback_V_pl=4))
 
     assert l1 == l2
 
@@ -484,12 +589,12 @@ def tests():
                      Coss=0)
     assert mf.Qg_th == 1e-9
 
-    tr, tf = mosfet_hs_sw_timings_hs2(dcdc, mf, 5, 4)
-    tr_ref = (mf.Qgs2 / (dcdc.Vgs - .5 * (4 + 2)) + mf.Qgd / (dcdc.Vgs - 4)) * 5
+    tr, tf = mosfet_hs_sw_timings_hs2(mf, GateDrive(5, 10, fallback_V_pl=4))
+    tr_ref = (mf.Qgs2 / (10 - .5 * (4 + 2)) + mf.Qgd / (10 - 4)) * 5
     assert abs(rel_err(tr, tr_ref)) < 1e-5
     assert tf == (mf.Qgs2 / (.5 * (4 + 2)) + mf.Qgd / (4)) * 5
 
-    tr1, tf1 = mosfet_hs_sw_timings_hs(dcdc, mf, 5, 4)
+    tr1, tf1 = mosfet_hs_sw_timings_hs(mf, GateDrive(5, fallback_V_pl=4))
     assert abs(rel_err(tr, tr1)) < 1e-2
     assert abs(rel_err(tf, tf1)) < 1e-2
 
@@ -512,16 +617,16 @@ def tests_lcsi():
     hs.Qgd =17
     """
 
-    tr, tf = mosfet_hs_sw_timings_hs(dcdc, hs, rg_total=6)
+    tr, tf = mosfet_hs_sw_timings_hs(hs, gd=GateDrive(6))
     assert abs(tr) < abs(tf)
     assert 0.6 < (tr / tf) < 0.9
 
     ls = hs
-    tr_lcsi0, tf_lcsi0, _ = mosfet_hs_sw_timings_lcsi(dcdc, hs, ls, rg_total=6, Lcsi=.01e-9)
+    tr_lcsi0, tf_lcsi0, _ = mosfet_hs_sw_timings_lcsi(dcdc, hs, ls, gd=GateDrive(6), Lcsi=.01e-9)
     assert abs(tr - tr_lcsi0) / tr < 0.05
     assert abs(tf - tf_lcsi0) / tf < 0.05
 
-    tr_lcsi2, tf_lcsi2, _ = mosfet_hs_sw_timings_lcsi(dcdc, hs, ls, rg_total=6, Lcsi=2e-9)
+    tr_lcsi2, tf_lcsi2, _ = mosfet_hs_sw_timings_lcsi(dcdc, hs, ls, gd=GateDrive(6), Lcsi=2e-9)
     assert tr_lcsi2 < tf_lcsi2
     assert tr_lcsi2 > tr_lcsi0
     assert tf_lcsi2 > tf_lcsi0
