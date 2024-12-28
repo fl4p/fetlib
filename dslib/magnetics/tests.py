@@ -1,5 +1,6 @@
-from dslib.magnetics import KDM_SendustKS_60, MagInc_KoolMu_60, Micrometals_Sendust_60u
-from dslib.spec_models import rel_err, DcDcSpecs
+from dslib.magnetics import KDM_SendustKS_60, MagInc_KoolMu_60, Micrometals_Sendust_60u, cores
+from dslib.spec_models import DcDcSpecs
+from dslib import rel_err
 
 
 def tests():
@@ -61,3 +62,10 @@ def test_power_loss():
     dcdc = DcDcSpecs(100, 60, 100e3, io=0, iripple=8)
     assert abs(rel_err(core_loss_from_dc_magnetization(dcdc, coil), 1920e-3)) < 0.05
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil), 2062e-3)) < 0.05
+
+
+def test_coil():
+    from dslib.powerloss import CoilSpecs
+    coil = CoilSpecs(Rdc=0, turns=20, core=cores.MagInc_106_KoolMu60, wire_awg=15, wire_strands=10)
+    assert abs(rel_err(coil.wire_diameter, 1.45e-3)) < 0.01
+    assert abs(rel_err(coil.bundle_diameter, 4.59e-3)) < 0.01
