@@ -229,7 +229,7 @@ def parse_field_value(s, no_raise=False):
     if not s:
         return math.nan
     s = normalize_text(s.strip().strip(' \x03').rstrip('L.'))
-    if not s or s in {'-', '.', '"', "'", '#', '~NA~'} or set(s) == {'-'}:
+    if not s or s in {'-', '.', '"', "'", '#', '~NA~', 'N/A'} or set(s) == {'-'}:
         return math.nan
     if s.startswith('+- '):
         s = s[3:]

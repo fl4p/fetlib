@@ -10,7 +10,9 @@ import pandas as pd
 import requests
 
 from dslib import mfr_tag, round_to_n_dec
+from dslib.cache import disk_cache
 from dslib.field import parse_field_value, Field
+from dslib.pdf2txt import whitespaces_to_space
 
 
 def ensure_nC(s, min, max, abs):
@@ -409,7 +411,7 @@ async def vishay_mosfets():
 
             parts.append(DiscoveredPart('vishay', mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
                 Vds_max=float(r['P7002']),
-                Rds_on_10v_max=float(r['P7013'] or math.nan), # @6v P7014
+                Rds_on_10v_max=float(r['P7013'] or math.nan),  # @6v P7014
                 Qg_max=math.nan,
                 Qg_typ=r['P7023'] or math.nan,
                 ID_25=r['P7006'] or math.nan,
@@ -417,7 +419,7 @@ async def vishay_mosfets():
                 Vgs_th_typ=math.nan,
                 Vgs_th_max=math.nan,
                 source='vishay.com'
-            ),package=r['P7009']))
+            ), package=r['P7009']))
 
     return parts
 

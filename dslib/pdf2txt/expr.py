@@ -774,5 +774,6 @@ def date_regexs():
         rf'(?P<m>{m_long}|{m_short}) +{d}[\.?,? ]+{y}',  # August 18, 2014, "July 21,2022"
         rf'(?P<m>{m_long}|{m_short})[,. ]+{y4}',  # "November 2021", OCTOBER 2015, Jul.2021
         rf'{y4}-{m}(-{d}|$|[^-])',  # "2021-01", 2022-03-28
+        rf'{y4}\.{m}(\.{d}|$|[^-.])',  # "2021-01", 2022-03-28
     )]
     return r

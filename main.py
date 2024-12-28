@@ -41,8 +41,12 @@ excludes = {
 
     'datasheets/infineon/IPP028N08N3GXKSA1.pdf',
     'datasheets/infineon/IPP06CN10LG.pdf',
+
+    'datasheets/diodes/DMTH15H017SPS-13.pdf', # `cant find unicode for glyph name`
 }
 excludes.clear()
+
+excludes.add('datasheets/diodes/DMTH15H017SPS-13.pdf')
 
 
 def main():

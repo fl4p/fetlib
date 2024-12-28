@@ -9,7 +9,6 @@ from typing import Union, List
 
 import requests
 
-
 from dslib.cache import acquire_file_lock
 
 
@@ -56,9 +55,8 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         import dslib.parts_discovery
         if not requests.head(ds_url).ok:
             ds_url = dslib.parts_discovery.onsemi_ds_url(mpn)
-        #ds_url_alt = ds_url.replace('fdb','fdp')
+        # ds_url_alt = ds_url.replace('fdb','fdp')
         # ds_url_alt = lambda : dslib.parts_discovery.onsemi_ds_url(mpn)
-
 
     if not ds_url:
         print('SKIP', datasheet_path, 'no url', ds_url)
@@ -79,6 +77,16 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
             if callable(du):
                 du = du()
 
+            try:
+                req = requests.get(du, timeout=6)
+                if req.status_code == 200 and req.headers['Content-Type'] == 'application/pdf' and len(
+                        req.content) > 10e3 and req.content.startswith(b"%PDF"):
+                    with open(datasheet_path, 'wb') as f:
+                        f.write(req.content)
+                    return
+            except:
+                pass
+
             t = download_with_chromium(du, datasheet_path)
             await t
             # asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
@@ -93,8 +101,6 @@ def download(url, filename):
     with open(filename, 'wb') as fh:
         for chunk in request.iter_content(1024 * 1024):
             fh.write(chunk)
-
-
 
 
 browser_page = None
@@ -192,12 +198,12 @@ async def download_with_chromium(url, filename, click: Union[str, List[str]] = '
 
                     sel = c + ' a' if await page.querySelector(c + ' a') else c
 
-                    #el = await page.querySelector(c + ' a') or await page.querySelector(c)
+                    # el = await page.querySelector(c + ' a') or await page.querySelector(c)
 
                     try:
                         await page.click(sel)
                     except:
-                        sel = sel.replace("'","\\'")
+                        sel = sel.replace("'", "\\'")
                         await page.evaluate(f""" document.querySelector('{sel}').click() """)
 
             except PageError as e:

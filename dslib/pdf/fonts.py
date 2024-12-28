@@ -100,7 +100,7 @@ def find_good_unicodes_for_name(name) -> List[int]:
 
 
 class EmbeddedPdfFont():
-    def __init__(self, xref, ext, typ, basefont, name, enc):
+    def __init__(self, xref, ext, typ, basefont, name, enc, pdf_path):
         self.xref = xref
         self.ext = ext
         self.typ = typ
@@ -113,6 +113,8 @@ class EmbeddedPdfFont():
 
         self.gid2code_2 = {}
         self.name2code_2 = {}
+
+        self.pdf_path = pdf_path
 
     @property
     def is_cid(self):
@@ -203,7 +205,7 @@ class EmbeddedPdfFont():
                         if gn in tv or gn == '.notdef':
                             continue
                         gid = tt.getGlyphID(gn)
-                        u = EmbeddedPdfFont.glyph_unicode(tk, gn, gid, best_cmap_inv)
+                        u = EmbeddedPdfFont.glyph_unicode(tk, gn, gid, best_cmap_inv, pdf_path=font.pdf_path)
 
                         if t.format == 0 and u > 255:
                             # ascii
@@ -248,7 +250,7 @@ class EmbeddedPdfFont():
         return f'{self.basefont} {self.ext} {self.typ} {self.name} {self.enc}'
 
     @staticmethod
-    def glyph_unicode(table_keys, glyph_name: str, gid: int, best_cmap_inv: Dict[str, int]):
+    def glyph_unicode(table_keys, glyph_name: str, gid: int, best_cmap_inv: Dict[str, int], pdf_path=None):
 
         for prefix in ('C', 'glyph', 'G'):
             if glyph_name.startswith(prefix) and glyph_name[len(prefix):].isnumeric():
@@ -272,7 +274,7 @@ class EmbeddedPdfFont():
             if u not in table_keys:
                 return u
 
-        print('cant find unicode for glyph name %s' % repr(glyph_name))
+        print(pdf_path or '', 'cant find unicode for glyph name %s' % repr(glyph_name))
         return 0
 
 
@@ -311,7 +313,7 @@ class PdfFonts():
                 # print('not extractable font', xref, ext, typ, basefont, name_)
                 continue
 
-            font = EmbeddedPdfFont(xref, ext, typ, basefont, name_, enc)
+            font = EmbeddedPdfFont(xref, ext, typ, basefont, name_, enc, pdf_path)
 
             if not os.path.isfile(font.path) or force_extraction:
                 extr = pdf.extract_font(xref)

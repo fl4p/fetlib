@@ -111,7 +111,7 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='1d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
+@disk_cache(ttl='99d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False, multiline_conditions=multiline_conditions)
 

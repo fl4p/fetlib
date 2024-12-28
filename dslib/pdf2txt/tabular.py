@@ -1,7 +1,7 @@
 import json
 import logging
-import os
 import re
+import sys
 import threading
 import time
 from collections import deque
@@ -12,13 +12,12 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from dslib.cache import random_str, acquire_file_lock, disk_cache
+from dslib.cache import random_str, disk_cache
 
 _tab_web_lock = threading.Lock()
 
-
 backend_logger = logging.getLogger('tabula.backend')
-backend_logger.setLevel(logging.ERROR) # ignore stderr from tabula-java
+backend_logger.setLevel(logging.ERROR)  # ignore stderr from tabula-java
 
 
 class NoTextInPdfError(ValueError):
@@ -29,7 +28,7 @@ class NoTextInPdfError(ValueError):
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
     with _tab_web_lock:
-    #with acquire_file_lock(os.path.dirname(__file__) + '/tabula-web.lock', kill_holder=False, max_time=300):
+        # with acquire_file_lock(os.path.dirname(__file__) + '/tabula-web.lock', kill_holder=False, max_time=300):
         s = requests.Session()
 
         with open(pdf_path, 'rb') as f:
@@ -47,7 +46,14 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
 
         with tqdm(total=100, desc='tabular web ' + r['filename']) as pbar:
             while True:
-                res = s.get(f'http://127.0.0.1:8080/queue/{uid}/json?file_id={fid}&_={time.time()}').json()
+                req = s.get(f'http://127.0.0.1:8080/queue/{uid}/json?file_id={fid}&_={time.time()}')
+                assert req.status_code == 200, req.status_code
+                try:
+                    res = req.json()
+                except:
+                    print('err parsing json', req.text, file=sys.stderr)
+                    raise
+
                 assert res
                 if res['status'] == 'error':
                     if 'no text data is contained' in res['message'].lower():
@@ -98,18 +104,18 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
                 'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
             }
 
-            dat =[]
+            dat = []
             chunks = deque([coords[i:i + chunk_n] for i in range(0, len(coords), chunk_n)])
 
             while chunks:
                 chunk = chunks.popleft()
 
                 res = s.post(f"http://127.0.0.1:8080/pdf/{fid}/data",
-                         data=dict(coords=json.dumps(chunk)), headers=headers)
+                             data=dict(coords=json.dumps(chunk)), headers=headers)
                 if res.status_code != 200:
                     txt = re.sub('\s+', ' ', res.text)
                     txt = re.sub('<[^<]+?>', '', txt)
-                    print(pdf_path, 'tabula web error posting', len(chunk),'coords', txt)
+                    print(pdf_path, 'tabula web error posting', len(chunk), 'coords', txt)
 
                     if len(chunk) > 1:
                         # subdivide
@@ -117,11 +123,11 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
                         chunks.append(chunk[:hl])
                         chunks.append(chunk[hl:])
 
-                    #raise RuntimeError('tabula web error with %s: %s' % (pdf_path, txt))
+                    # raise RuntimeError('tabula web error with %s: %s' % (pdf_path, txt))
                 else:
                     dat += res.json()
 
-            #print(pdf_path, 'tabula web extracted', len(dat), 'tables from', len(coords), 'rects extracted')
+            # print(pdf_path, 'tabula web extracted', len(dat), 'tables from', len(coords), 'rects extracted')
         except Exception as e:
             print(pdf_path, 'tabula web error', e)
             raise TimeoutError() from e
@@ -134,7 +140,6 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
             df = pd.DataFrame(td)
             df.index.name = 'tabula_web_' + tab['extraction_method']
             dfs.append(df)
-
 
         # print(pdf_path, 'tabula browser extracted', len(dfs), 'tables with', sum(len(df) for df in dfs), 'rows')
 
