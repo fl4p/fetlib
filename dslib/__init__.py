@@ -107,7 +107,7 @@ def num2str(x, n=None):
 def round_to_n_dec(x, n):
     x = round_to_n(x, n)
     if not x or isinstance(x, str) or not math.isfinite(x):
-        return x
+        return str(x)
 
     if x < 1e-20:
         return '0'
@@ -140,3 +140,11 @@ class dotdict(dict):
     # __getstate__ == dict.__getstate__
 
     # __hasattr__ = dict.__contains__
+
+
+def isnum(v):
+    return v is not None and not math.isnan(v)
+
+
+def rel_err(a, b, reg=1e-20):
+    return (a - b) / (abs(b) + reg)

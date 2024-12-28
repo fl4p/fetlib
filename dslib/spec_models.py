@@ -2,17 +2,8 @@ import math
 import warnings
 from typing import Literal, List
 
-from dslib import round_to_n, round_to_n_dec
+from dslib import round_to_n, round_to_n_dec, dotdict, isnum, rel_err
 from dslib.parts_discovery import DiscoveredPart
-
-
-def isnum(v):
-    return v is not None and not math.isnan(v)
-
-
-def rel_err(a, b, reg=1e-20):
-    return (a - b) / (abs(b) + reg)
-
 
 # the smaller this ratio, the greater Qg_th
 # .. and the smaller Qsw
@@ -59,6 +50,9 @@ class MosfetSpecs:
         if not isnum(Qgs2) and isnum(Qsw):
             assert Qsw > Qgd, (Qsw, Qgd)
             Qgs2 = Qsw - Qgd
+
+        if not isnum(Qgd) and isnum(Qsw) and isnum(Qgs2):
+            Qgd = Qsw - Qgs2
 
         self._Qg_th = None
 
@@ -140,7 +134,7 @@ class MosfetSpecs:
         if isnum(Qg_th + Qgs):
             assert 0.2 < (Qg_th / Qgs) < 0.8, ((Qg_th / Qgs), Qg_th, Qgs)
 
-        if isnum(Qsw)  and isnum(Qgd) and isnum(Qgs2):
+        if isnum(Qsw) and isnum(Qgd) and isnum(Qgs2):
             # up: TK3R9E10PL, AUIRF7769L2TR
             assert 0.33 < Qgd / Qsw < 0.95, (Qgd / Qsw, Qgd, Qsw)
 
