@@ -21,6 +21,9 @@ def unique_parts(parts: List[DiscoveredPart]):
                 by[k].specs.update(part.specs)
             except:
                 print('error updating specs for', k)
+                print(by[k].specs.fields(), 'from ', by[k].specs.source)
+                print('- and -')
+                print(part.specs.fields(), 'from ', part.specs.source)
                 raise
         else:
             by[k] = part
@@ -38,6 +41,7 @@ async def discover_mosfets(no_obsolete=False):
     parts += await parts_discovery.taiwansemi_nfets()
     parts += await parts_discovery.st_mosfets()
     parts += await parts_discovery.vishay_mosfets()
+    parts += parts_discovery.huayi_mosfets()
 
     parts += parts_discovery.digikey('parts-lists/digikey/*.csv', no_obsolete=no_obsolete)
 
