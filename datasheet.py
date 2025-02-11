@@ -80,8 +80,8 @@ async def main():
         ds = parse_datasheet(ds_path)
         ds.print(show_cond=True, show_sources=True)
         mf = ds.get_mosfet_specs()
-        from dslib.spec_models import DcDcSpecs
-        dc = DcDcSpecs.default()
+        from dslib.spec_models import DcDcLoadParams
+        dc = DcDcLoadParams.default()
         from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
         print('DCDC = %s' % dc)
         p_hs = dcdc_buck_hs(dc, mf, rg_total=6, fallback_V_pl=4.5)

@@ -18,7 +18,7 @@ from dslib.field import Field, DatasheetFields
 from dslib.parts_discovery import DiscoveredPart
 from dslib.pdf2txt.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
 from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
-from dslib.spec_models import DcDcSpecs
+from dslib.spec_models import DcDcLoadParams, GateDrive
 from dslib.store import Part
 
 excludes = {
@@ -42,7 +42,7 @@ excludes = {
     'datasheets/infineon/IPP028N08N3GXKSA1.pdf',
     'datasheets/infineon/IPP06CN10LG.pdf',
 
-    'datasheets/diodes/DMTH15H017SPS-13.pdf', # `cant find unicode for glyph name`
+    'datasheets/diodes/DMTH15H017SPS-13.pdf',  # `cant find unicode for glyph name`
 }
 excludes.clear()
 
@@ -74,7 +74,7 @@ def main():
 
     if not args.dcdc_file:
         # set DC-DC operating point:
-        dcdc = DcDcSpecs.default()
+        dcdc = DcDcLoadParams.default()
         print('Using default DC-DC:', dcdc)
     else:
         raise NotImplemented()
@@ -205,7 +205,7 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
     return ds
 
 
-def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[Optional[Part], Dict[str, any]]:
+def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> Tuple[Optional[Part], Dict[str, any]]:
     if isinstance(ds, tuple):
         raise ValueError(ds)
     else:
@@ -243,9 +243,9 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
 
     # compute power loss
     if 1:
+        gd = GateDrive(float(args.rg_total), Von=10, Voff=0, fallback_V_pl=float(args.vpl_fallback))
         loss_spec = dcdc_buck_hs(dcdc, fet_specs,
-                                 rg_total=float(args.rg_total),
-                                 fallback_V_pl=float(args.vpl_fallback),
+                                 gd=gd,
                                  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
                                  use_datasheet_timings=False
                                  )
@@ -257,7 +257,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
         ploss['tr'] = round(loss_spec.get_cond('P_sw')['tr'] * 1e9, 1)  # possibly nan!
         ploss['tf'] = round(loss_spec.get_cond('P_sw')['tf'] * 1e9, 1)
 
-        loss_spec = dcdc_buck_ls(dcdc, fet_specs)
+        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd)
         ploss['P_rr'] = loss_spec.P_rr
         ploss['P_on_ls'] = loss_spec.P_cl
         ploss['P_dt_ls'] = loss_spec.P_dt
@@ -287,7 +287,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcSpecs, args) -> Tuple[
     return Part(specs=fet_specs, discovered=part), row
 
 
-def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcSpecs, args):
+def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadParams, args):
     assert parts, "No parts to generate"
 
     print('generating power loss estimates for ', len(parts), 'parts')

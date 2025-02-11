@@ -3,11 +3,11 @@ import os.path
 
 from discover_parts import discover_mosfets
 from dslib.fetch import fetch_datasheet
-from dslib.spec_models import DcDcSpecs
+from dslib.spec_models import DcDcLoadParams
 
 
 async def check_datasheets():
-    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
+    dcdc = DcDcLoadParams(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=500e-9)
 
     parts = asyncio.run(discover_mosfets())
     parts = dcdc.select_mosfets(parts)

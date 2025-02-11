@@ -1,7 +1,7 @@
 from dslib.magnetics import H2oe, µ0
 from dslib.magnetics.cores import MagneticCoreSpecs
 from dslib.powerloss import CoilSpecs
-from dslib.spec_models import DcDcSpecs
+from dslib.spec_models import DcDcLoadParams
 
 """
 
@@ -51,7 +51,7 @@ https://www.mag-inc.com/Design/Design-Tools/Inductor-Design/Thank-You
 """
 
 
-def Bpk_dc_mag(dc: DcDcSpecs, coil: CoilSpecs):
+def Bpk_dc_mag(dc: DcDcLoadParams, coil: CoilSpecs):
     """
     Compute peak ac flux density using dc magnetization curve
     :param dc:
@@ -75,7 +75,7 @@ def Bpk_dc_mag(dc: DcDcSpecs, coil: CoilSpecs):
     return Bpk
 
 
-def Bpk_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
+def Bpk_dc_bias(dc: DcDcLoadParams, coil: CoilSpecs):
     """
     Compute peak ac flux density using dc bias.
     Assume that effective µ is constant around the dc bias (i.e. ΔI << Io)
@@ -91,7 +91,7 @@ def Bpk_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
     return Bpk
 
 
-def Bpk_sinusoidal(dc: DcDcSpecs, coil: CoilSpecs):
+def Bpk_sinusoidal(dc: DcDcLoadParams, coil: CoilSpecs):
     # https://ridleyengineering.com/images/phocadownload/new%20core%20loss%20model.pdf#page=3
     vrms = 0
     Bpk = vrms * 10 / (4.44 * coil.core.A_e * 100e2 * coil.turns * dc.f / 1e3)
@@ -104,7 +104,7 @@ def core_hysteresis_loss(Bpk: float, core: MagneticCoreSpecs, f: float):
     return P_core, Bpk, core_loss_density_mW_cm3
 
 
-def core_loss_from_dc_magnetization(dc: DcDcSpecs, coil: CoilSpecs):
+def core_loss_from_dc_magnetization(dc: DcDcLoadParams, coil: CoilSpecs):
     """
 
     After mag-inc's 'Method 1 – Determine Bpk from DC Magnetization Curve. Bpk= f(H)'
@@ -122,7 +122,7 @@ def core_loss_from_dc_magnetization(dc: DcDcSpecs, coil: CoilSpecs):
     return core_hysteresis_loss(Bpk, core=coil.core, f=dc.f)
 
 
-def core_loss_from_dc_bias(dc: DcDcSpecs, coil: CoilSpecs):
+def core_loss_from_dc_bias(dc: DcDcLoadParams, coil: CoilSpecs):
     """
 
     mag-inc's method 2, for small ΔH (small ripple current)

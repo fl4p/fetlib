@@ -2,7 +2,7 @@
 
 Literature
 
-https://www.ti.com/lit/an/slyt664/slyt664.pdf?ts=1722820278050
+https://www.ti.com/lit/an/slyt664/slyt664.pdf
 https://www.ti.com/lit/an/slua341a/slua341a.pdf
     - tf, tr approximation
 
@@ -29,7 +29,7 @@ from typing import Tuple
 from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
 from dslib.magnetics.cores import MagneticCoreSpecs
 from dslib.magnetics.wire import d2awg
-from dslib.spec_models import DcDcSpecs, MosfetSpecs, Qgs2_Qgs_ratio_estimate, GateDrive
+from dslib.spec_models import DcDcLoadParams, MosfetSpecs, Qgs2_Qgs_ratio_estimate, GateDrive
 
 µ0 = 4 * math.pi * 1e-7
 
@@ -109,7 +109,7 @@ class SwitchPowerLoss():
         return iter(self.values())
 
 
-def mosfet_switching_trf(dc: DcDcSpecs, mf: MosfetSpecs):
+def mosfet_switching_trf(dc: DcDcLoadParams, mf: MosfetSpecs):
     tr = mf.tRise
     tf = mf.tFall
     if math.isnan(tr) and not math.isnan(tf):
@@ -128,7 +128,7 @@ def mosfet_switching_trf(dc: DcDcSpecs, mf: MosfetSpecs):
     return P_sw
 
 
-def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, Lcsi=0,
+def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, Lcsi=0,
                  use_datasheet_timings=True, Rds_temp_rise=1.35):
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/power_loss_appli-e.pdf
     # https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
@@ -190,7 +190,7 @@ def dcdc_buck_hs(dc: DcDcSpecs, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, Lcsi=
     )
 
 
-def dcdc_buck_ls(dc: DcDcSpecs, mf: MosfetSpecs, gd: GateDrive, rds_temp_rise=1.35, Qrr_temp_rise=1.2):
+def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, rds_temp_rise=1.35, Qrr_temp_rise=1.2):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -290,7 +290,7 @@ class CoilSpecs():
         # https://calculator.academy/bundle-diameter-calculator/
         return (4 * (self.wire_strands * (math.pi * self.wire_diameter ** 2 / 4)) / math.pi) ** .5
 
-    def micrometals_analyzer(self, dc: DcDcSpecs):
+    def micrometals_analyzer(self, dc: DcDcLoadParams):
         strands = self.wire_strands or 1
         awg = self.awg
         mpn = self.core.mpn
@@ -305,7 +305,7 @@ class CoilSpecs():
             iavg=round(dc.Io, 2),
             vin_rms_min=dc.Vi - dc.Vo,  # VLon = Vin - Vout (buck)
             vin_rms_max=dc.Vo,  # VLoff = Vout (buck)
-            f_switching=dc.f,
+            f_switching=int(round(dc.f)),
             ambient_temp=40,
             max_temp_rise=50,
             temp_rise=1,
@@ -331,7 +331,7 @@ class CoilSpecs():
         return u
 
 
-def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
+def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
     """
 
     * Wire Loss
@@ -445,7 +445,7 @@ def dcdc_buck_coil(dc: DcDcSpecs, coil: CoilSpecs):
     )
 
 
-def dcdc_buck_cout(dc: DcDcSpecs, Z_cin: float, Z_cout: float):
+def dcdc_buck_cout(dc: DcDcLoadParams, Z_cin: float, Z_cout: float):
     i_ac_rms2 = dc.Il_ac_rms2
 
     i_cin_rms = dc.Io * ((dc.Vi - dc.Vo) * dc.Vo) ** .5 / dc.Vi
@@ -505,7 +505,7 @@ def mosfet_hs_sw_timings_hs_vishay(hs: MosfetSpecs, gd: GateDrive):
     return tr, tf
 
 
-def mosfet_hs_sw_timings_lcsi(dc: DcDcSpecs, hs: MosfetSpecs, ls_Qoss, gd: GateDrive, Lcsi: float,
+def mosfet_hs_sw_timings_lcsi(dc: DcDcLoadParams, hs: MosfetSpecs, ls_Qoss, gd: GateDrive, Lcsi: float,
                               fallback_V_pl=math.nan):
     # loss with L_csi considerations
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf
@@ -535,7 +535,7 @@ def capacitor_out():
 
 
 def tests():
-    dcdc = DcDcSpecs(24, 12, 40_000, 500e-9, 10, iripple=1e-9)
+    dcdc = DcDcLoadParams(24, 12, 40_000, 500e-9, 10, iripple=1e-9)
     gd = GateDrive(1e-6, 12, fallback_V_pl=4)
     mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 10e-9, Qsw=2e-9,
                      Qgs=2e-9, Qgs2=2e-9 * Qgs2_Qgs_ratio_estimate, Coss=0)
@@ -555,7 +555,7 @@ def tests():
     assert math.isnan(loss.P_sw) or loss.P_sw == 0
     assert loss.buck_ls() == loss.P_rr + loss.P_cl + loss.P_gd + loss.P_dt
 
-    dcdc = DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=500e-9)
+    dcdc = DcDcLoadParams(vi=62, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=500e-9)
     mf = MosfetSpecs.from_mpn('DMT10H9M9SCT', 'diodes')
     l = mosfet_hs_sw_timings_hs(mf, GateDrive(6, 12, fallback_V_pl=4.5))
     pr = 0.5 * dcdc.Vi * dcdc.Io_min * dcdc.f * l[0]
@@ -600,7 +600,7 @@ def tests():
 
 
 def tests_lcsi():
-    dcdc = DcDcSpecs(70, 35, 40_000, 10, 500e-9, 33, ripple_factor=0.01)
+    dcdc = DcDcLoadParams(70, 35, 40_000, 10, 500e-9, 33, ripple_factor=0.01)
     hs = MosfetSpecs.from_mpn('CSD19503KCS', mfr='ti')
     # ls = MosfetSpecs.from_mpn('CSD19503KCS', mfr='ti')
     hs.Qg_th = 6.1e-9
@@ -633,7 +633,7 @@ def tests_lcsi():
 
 
 def plot_vpl_curve():
-    dcdc = DcDcSpecs(70, 35, 40_000, 10, 500e-9, 33, ripple_factor=0.01)
+    dcdc = DcDcLoadParams(70, 35, 40_000, 10, 500e-9, 33, ripple_factor=0.01)
     hs = MosfetSpecs.from_mpn('CSD19503KCS', mfr='ti')
     hs.Qg_th = 6.1
     hs.Qgs = 9.8

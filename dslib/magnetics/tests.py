@@ -1,5 +1,5 @@
 from dslib.magnetics import KDM_SendustKS_60, MagInc_KoolMu_60, Micrometals_Sendust_60u, cores
-from dslib.spec_models import DcDcSpecs
+from dslib.spec_models import DcDcLoadParams
 from dslib import rel_err
 
 
@@ -48,18 +48,18 @@ def test_power_loss():
     from dslib.magnetics.powerloss import core_loss_from_dc_bias  # method 2
 
     # example 1: 20A DC, 2A ripple, 100 khz
-    dcdc = DcDcSpecs(85, 6.5, 100e3, io=20, iripple=2)
+    dcdc = DcDcLoadParams(85, 6.5, 100e3, io=20, iripple=2)
     assert abs(rel_err(dcdc.L, coil.L0)) < 0.1
     assert abs(rel_err(core_loss_from_dc_magnetization(dcdc, coil), 44e-3)) < 0.05  # method 1
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil), 44e-3)) < 0.05  # method 2
 
     # example 2: 20A DC, 8A ripple, 100 khz
-    dcdc = DcDcSpecs(100, 60, 100e3, io=20, iripple=8)
+    dcdc = DcDcLoadParams(100, 60, 100e3, io=20, iripple=8)
     assert abs(rel_err(core_loss_from_dc_magnetization(dcdc, coil), 692e-3)) < 0.05
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil), 708e-3)) < 0.05
 
     # example 3: 0A DC, 8A ripple, 100 khz
-    dcdc = DcDcSpecs(100, 60, 100e3, io=0, iripple=8)
+    dcdc = DcDcLoadParams(100, 60, 100e3, io=0, iripple=8)
     assert abs(rel_err(core_loss_from_dc_magnetization(dcdc, coil), 1920e-3)) < 0.05
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil), 2062e-3)) < 0.05
 

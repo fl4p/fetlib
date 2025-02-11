@@ -34,8 +34,8 @@ def _main():
 
     L = 47e-6
 
-    from dslib.spec_models import DcDcSpecs
-    dcdc = DcDcSpecs(vi=66, vo=27, pin=800, f=40e3, Vgs=11, tDead=400e-9, L=L)
+    from dslib.spec_models import DcDcLoadParams
+    dcdc = DcDcLoadParams(vi=66, vo=27, pin=800, f=40e3, Vgs=11, tDead=400e-9, L=L)
 
     core = KDM_KS130_060A.stack(2)
 

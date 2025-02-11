@@ -728,8 +728,8 @@ def test_pdf_ocr():
     assert abs((mf.Qgs + mf.Qgd - mf.Qsw) - mf.Qg_th) < 1e-20
     assert abs((mf.Qgs2 + mf.Qgd) - mf.Qsw) < 1e-20
 
-    from dslib.spec_models import DcDcSpecs
-    dcdc = DcDcSpecs(40, 20, 40e3, 10, 200e-9, 20, ripple_factor=.2)
+    from dslib.spec_models import DcDcLoadParams
+    dcdc = DcDcLoadParams(40, 20, 40e3, 10, 200e-9, 20, ripple_factor=.2)
     from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
     pl_hs = dcdc_buck_hs(dcdc, mf, 6)
     assert pl_hs.P_sw > 0.5

@@ -77,8 +77,8 @@ async def main():
     for p in parts:
         by_mfr[p.mfr].append(p)
 
-    from dslib.spec_models import DcDcSpecs
-    parts = DcDcSpecs.default().select_mosfets(parts)
+    from dslib.spec_models import DcDcLoadParams
+    parts = DcDcLoadParams.default().select_mosfets(parts)
 
     #parts = [p for p in parts if (
     #        (p.specs.Vds_max >= 60 and p.specs.Vds_max <= 200 and p.specs.ID_25 >= 20 and p.specs.Rds_on_10v_max < 10e3)

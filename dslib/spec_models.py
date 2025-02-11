@@ -235,6 +235,13 @@ class MosfetSpecs:
 
 
 class GateDrive:
+    """
+
+    Parameters for a gate drive circuit.
+    Optionally takes miller plateau voltage V_pl (V_gp) which is used can be used as fallback
+    if mosfet doesn't specify it.
+
+    """
 
     def __init__(self, rg_total, Von=10, Voff=0, fallback_V_pl=math.nan):
         self.rg_total = rg_total
@@ -243,14 +250,25 @@ class GateDrive:
         self.fallback_V_pl = fallback_V_pl
 
 
-class DcDcSpecs:
-    # TODO rename LoadCondition or LoadPoint
+class MosfetSlot():
+    """
+    Represents a mosfet slot
+    """
+
+    def __init__(self, mf: MosfetSpecs, rg_total, parallel=1, L_csi=0):
+        assert not L_csi
+        self.mf = mf
+        self.rg_total = rg_total
+        self.parallel = parallel
+
+
+class DcDcLoadParams:
 
     @staticmethod
     def default():
         # return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
         # return DcDcSpecs(vi=75, vo=27 * 2, pin=900, f=40e3, ripple_factor=0.3, tDead=300e-9)
-        return DcDcSpecs(vi=70, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        return DcDcLoadParams(vi=70, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
 
     def __init__(self, vi, vo, f, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
                  L=None):
@@ -396,14 +414,6 @@ class DcDcSpecs:
         return self.Io * self.D_buck * (1 - self.D_buck) / (self.f * (vin_ripple - self.Io * R_esr))
 
 
-class MosfetSlot():
-    def __init__(self, mf: MosfetSpecs, rg_total, parallel=1, L_csi=0):
-        assert not L_csi
-        self.mf = mf
-        self.rg_total = rg_total
-        self.parallel = parallel
-
-
 class BuckConverter():
     def __init__(self, name, Io_max, f_sw, coil: 'CoilSpecs', hs: MosfetSlot, ls: MosfetSlot, output_parasitics,
                  cin_imp=0, cout_imp=0
@@ -421,10 +431,10 @@ class BuckConverter():
         self.cout_imp = cout_imp
         self.cin_imp = cin_imp
 
-    def powerloss(self, dcdc: DcDcSpecs):
+    def powerloss(self, dcdc: DcDcLoadParams):
         coil = self.coil
         Ldc = coil.Ldc(dcdc.Io)
-        dcdc = DcDcSpecs(vi=dcdc.Vi, vo=dcdc.Vo, io=dcdc.Io, f=dcdc.f, Vgs=dcdc.Vgs, tDead=dcdc.tDead, L=Ldc)
+        dcdc = DcDcLoadParams(vi=dcdc.Vi, vo=dcdc.Vo, io=dcdc.Io, f=dcdc.f, Vgs=dcdc.Vgs, tDead=dcdc.tDead, L=Ldc)
 
         from dslib.powerloss import dcdc_buck_hs
         p_hs = dcdc_buck_hs(
@@ -465,13 +475,13 @@ class BuckConverter():
 
 def tests():
     io = 10
-    d1 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=0.001)
+    d1 = DcDcLoadParams(24, 12, 40e3, 10, 0, io=io, ripple_factor=0.001)
     assert abs(d1.Io_mean_squared_on - io ** 2) / io ** 2 < 1e-3
 
-    d2 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=1)
+    d2 = DcDcLoadParams(24, 12, 40e3, 10, 0, io=io, ripple_factor=1)
     assert d2.Io_mean_squared_on > d1.Io_mean_squared_on * 1.05
 
-    d2 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=1.99)
+    d2 = DcDcLoadParams(24, 12, 40e3, 10, 0, io=io, ripple_factor=1.99)
     assert d2.Io_mean_squared_on > d1.Io_mean_squared_on * 1.10
 
 

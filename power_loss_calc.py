@@ -7,7 +7,7 @@ import pandas as pd
 import apps.mppts.libresolar
 from dslib import round_to_n_dec
 from dslib.powerloss import SwitchPowerLoss
-from dslib.spec_models import DcDcSpecs
+from dslib.spec_models import DcDcLoadParams
 
 if __name__ == '__main__':
     """
@@ -24,8 +24,8 @@ if __name__ == '__main__':
 
     def compute_losses(pin):
         # dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
-        dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
-        dcdc = DcDcSpecs(vi=72, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=200e-9, L=buck.coil.L0)
+        dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
+        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=200e-9, L=buck.coil.L0)
 
         # dcdc = DcDcSpecs(vi=67, vo=27, io=13, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
