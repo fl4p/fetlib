@@ -79,7 +79,7 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
 
             try:
                 req = requests.get(du, timeout=6)
-                if req.status_code == 200 and req.headers['Content-Type'] == 'application/pdf' and len(
+                if req.status_code == 200 and req.headers['Content-Type'].split(';')[0] == 'application/pdf' and len(
                         req.content) > 10e3 and req.content.startswith(b"%PDF"):
                     with open(datasheet_path, 'wb') as f:
                         f.write(req.content)
@@ -114,11 +114,12 @@ async def get_browser_page():
     if browser is None:
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
         os.path.exists(userDataDir) or os.makedirs(userDataDir)
-        browser = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir))
+        browser = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir,autoClose=True))
 
         def on_close():
-            global browser
+            global browser, browser_page
             browser = None
+            browser_page = None
 
         browser.on('close', on_close)
 
@@ -179,12 +180,12 @@ async def download_with_chromium(url, filename, click: Union[str, List[str]] = '
 
                 for c in click:
 
-                    for i in range(1, 100):
+                    for i in range(1, 200):
                         if _check_dl():
                             return
 
                         try:
-                            await page.waitFor(c, timeout=200)
+                            await page.waitFor(c, timeout=100)
                             break
                         except Exception as e:
                             # print(e)
