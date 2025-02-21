@@ -14,7 +14,7 @@ def unique_parts(parts: List[DiscoveredPart]):
     for part in parts:
         k = part.mfr, part.mpn
         if k in by:
-            if part.specs.source == 'digikey':
+            if part.specs.source == ['digikey']:
                 continue # digikey data is often wrong
             by[k].package = by[k].package or part.package
             try:

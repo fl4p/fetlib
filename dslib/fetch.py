@@ -226,6 +226,26 @@ async def download_with_chromium(url, filename, click: Union[str, List[str]] = '
                 # await page.close()
 
 
+
+async def get_text_with_chromium(url, close=False):
+    with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
+
+        try:
+            page = await get_browser_page()
+            resp = await page.goto(url)
+            if resp.status in {404}:
+                print(url, 'NOT FOUND')
+                return
+
+            return await resp.text()
+
+        finally:
+            if close and page:
+                if close == 'page':
+                    await page.close()
+                else:
+                    await page.browser.close()
+
 if __name__ == '__main__':
     asyncio.get_event_loop().run_until_complete(
         # download2('https://assets.nexperia.com/documents/data-sheet/BUK763R8-80E.pdf', 'test.pdf')

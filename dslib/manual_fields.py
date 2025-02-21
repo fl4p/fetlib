@@ -12,7 +12,7 @@ def fallback_specs(mfr, mpn):
     mfr = mfr_tag(mfr)
 
     if mfr == 'epc':
-        assert mpn.startswith('EPC')
+        assert mpn.startswith('EPC'), mpn
         return dict(tRise=2, tFall=2)
     elif mfr == 'nxp':
         if mpn.startswith('GAN'):

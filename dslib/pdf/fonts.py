@@ -56,8 +56,20 @@ def pdfminer_fix_custom_glyphs_encoding_monkeypatch():
     #    return _name2unicode(s)
 
 
+@mem_cache(ttl='1h')
+def fontforge_bin():
+    paths = [
+        '/Applications/FontForge.app/Contents/Resources/opt/local/bin/fontforge',
+        '/Volumes/FontForge/FontForge.app/Contents/Resources/opt/local/bin/fontforge',
+    ]
+    for path in paths:
+        if os.path.isfile(path):
+            subprocess.run([path, '-v'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
+            return path
+
+
 def convert_cff(in_path, out_path):
-    cmd = ["/Volumes/FontForge/FontForge.app/Contents/Resources/opt/local/bin/fontforge",
+    cmd = [fontforge_bin(),
            "-lang=ff", "-c", "Open($1); Generate($2)", in_path, out_path]
     # print(' '.join(cmd))
     subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
@@ -80,7 +92,7 @@ def find_good_unicodes_for_name(name) -> List[int]:
     def similar(a, b):
         return SequenceMatcher(None, a.replace(' ', ''), b).ratio()
 
-    # print('looking for a good unicode name match for', repr(name), '..')
+    print('looking for a good unicode name match for', repr(name), '..')
 
     name = name.upper().replace(' ', '')
     names_ration = dict()
@@ -182,7 +194,7 @@ class EmbeddedPdfFont():
             tt.save(font.path)
             tt.close()
         except Exception as e:
-            #print(font, 'probing font file failed', e, '; trying to convert the file to .otf ...')
+            # print(font, 'probing font file failed', e, '; trying to convert the file to .otf ...')
             probe_fail = True
 
         try:
@@ -237,7 +249,7 @@ class EmbeddedPdfFont():
 
                 tt.save(converted_path)
                 tt.close()
-                #print(font, 'conversion successful', converted_path, len(tt.getGlyphNames()), 'glyphs',
+                # print(font, 'conversion successful', converted_path, len(tt.getGlyphNames()), 'glyphs',
                 #      tt.getGlyphNames()[:5])
                 font.ext = 'otf'
         except (KeyboardInterrupt, TimeoutError, NameError, AttributeError):
@@ -354,7 +366,6 @@ def get_symbol_font_unicode():
 @mem_cache(ttl='5min', synchronized=True)
 @disk_cache(ttl='99d', hash_func_code=True)
 def get_font_default_enc(fontname) -> Optional[Dict[int, int]]:
-
     if not isinstance(fontname, str):
         assert isinstance(fontname, bytes)
         return None
