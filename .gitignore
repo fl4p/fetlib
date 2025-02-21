@@ -71,3 +71,5 @@ test/test.csv
 test/test.md
 
 .idea/deployment.xml
+
+*.xls
