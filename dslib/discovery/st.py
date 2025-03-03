@@ -1,13 +1,9 @@
 import json
 import math
-import warnings
+import os
 
-import pandas as pd
-
-from dslib import mfr_tag
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, parts_list_file_name, download_parts_list
+from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, parts_list_file_name
 from dslib.fetch import get_text_with_chromium
-from dslib.field import parse_field_value
 
 
 async def st_mosfets():
@@ -71,48 +67,4 @@ async def st_mosfets():
                                             Qg_typ=float(v.get('Qg', math.nan)),
                                             Qg_max=math.nan, source=['st.com']))
                          )
-    return parts
-
-    # TODO
-    warnings.warn('ST: using static xlsx file')
-    df = pd.read_excel('parts-lists/st/stpower-nch-mosfet-30v-200v-to220.xlsx')
-    parts = []
-
-    urls = [
-        "https://www.st.com/en/power-transistors/stpower-n-channel-mosfets-gt-30-v-to-200-v/products.html",
-
-    ]
-    # for url in urls:
-    if 0:
-        fn = await download_parts_list(
-            'st',
-            url=url,
-            fn_ext='xlsx',
-            click="a:has(> svg.st-svg--export)",
-        )
-
-        df = pd.read_excel(fn)
-
-    if 1:
-        hi = df.iloc[:, 0].str.startswith('Part').idxmax()
-        df.columns = df.iloc[hi, :]
-        df = df.iloc[(hi + 1):]
-
-        for i, row in df.iterrows():
-            mfr = mfr_tag('st')
-            mpn = str(row['Part Number'])
-            ds_url = f'https://www.st.com/resource/en/datasheet/{mpn.lower()}.pdf'
-            # RDS(on) (Ω) (@ 4.5/5V) max
-            parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
-                Vds_max=parse_field_value(row['VDSS (V)']),
-                Rds_on_10v_max=parse_field_value(row['RDS(on) (Ω) (@ VGS = 10V) max']),
-                Qg_max=math.nan,
-                Qg_typ=parse_field_value(row['Qg (nC) typ']),
-                ID_25=parse_field_value(row['Drain Current (Dc) (A) max']),
-                Vgs_th_min=math.nan,
-                Vgs_th_typ=math.nan,
-                Vgs_th_max=math.nan,
-                source=mfr
-            ), package=row['Package']))  # Package Name
-
     return parts

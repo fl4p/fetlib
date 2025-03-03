@@ -1,3 +1,4 @@
+import logging
 import os
 import pickle
 import threading
@@ -6,8 +7,8 @@ from copy import copy
 from typing import Tuple, Dict, Optional, Generic, TypeVar, Callable, Union, List
 
 from dslib.cache import acquire_file_lock
-from dslib.field import DatasheetFields
 from dslib.discovery import DiscoveredPart
+from dslib.field import DatasheetFields
 from dslib.mosfet import MosfetSpecs
 
 
@@ -28,14 +29,15 @@ class Part:
 T = TypeVar('T')
 K = TypeVar('K')
 
+
 class WriteBuffer():
     def __init__(self, write_func):
         self._write_func = write_func
         self._buffer = dict()
-        self._thread:Optional[threading.Thread] = None
+        self._thread: Optional[threading.Thread] = None
         self._running = False
 
-    def add(self, items:dict):
+    def add(self, items: dict):
         self._buffer.update(items)
 
         self._running = True
@@ -75,7 +77,12 @@ class ObjectDatabase(Generic[K, T]):
         with acquire_file_lock(self._lck_path, kill_holder=False, max_time=30):
             if os.path.exists(self._lib_path):
                 with open(self._lib_path, 'rb') as f:
-                    self._lib_mem = pickle.load(f)
+                    try:
+                        self._lib_mem = pickle.load(f)
+                    except (AttributeError, ModuleNotFoundError) as e:
+                        logging.warning(f'Failed to unpickle {self._lib_path}: %s', e)
+                        # some types moved etc
+                        self._lib_mem = {}
                     return self._lib_mem.copy()
 
         if self._lib_mem is None:
@@ -137,8 +144,10 @@ def load_parts():
     return parts_db.load()
 
 
-datasheets_db = ObjectDatabase[Tuple[Mfr, Mpn], DatasheetFields]('datasheets-lib', lambda d: (d.part.mfr, d.part.mpn) if hasattr(d, 'part') else (d.mfr, d.mpn))
-
+datasheets_db = ObjectDatabase[Tuple[Mfr, Mpn], DatasheetFields]('datasheets-lib',
+                                                                 lambda d: (d.part.mfr, d.part.mpn) if hasattr(d,
+                                                                                                               'part') else (
+                                                                 d.mfr, d.mpn))
 
 if __name__ == '__main__':
     parts = load_parts()

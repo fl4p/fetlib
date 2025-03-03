@@ -16,6 +16,7 @@ from dslib import write_csv
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
 from dslib.discovery import DiscoveredPart
+from dslib.pdf.fonts import fontforge_bin
 from dslib.pdf.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
 from dslib.pdf.tabular import tabula_is_running
 from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
@@ -317,6 +318,9 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
 
     if not tabula_is_running():
         raise RuntimeError('tabula is not running')
+
+    if not fontforge_bin():
+        raise RuntimeError('fontforge not found')
 
     import pickle
 
