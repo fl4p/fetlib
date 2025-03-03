@@ -1,11 +1,8 @@
-import math
-
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from apps.mppts.libresolar import LibreSolar_MPPT_2420_HC
-from dslib.magnetics.cores import MicrometalsToroid, MicrometalsT130, MicrometalsT184
-from dslib.powerloss import CoilSpecs, dcdc_buck_coil
+from maglib import MicrometalsToroid
+from dclib.powerloss import CoilSpecs, dcdc_buck_coil
 from dslib.spec_models import DcDcLoadParams
 
 materials = [

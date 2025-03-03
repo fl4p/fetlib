@@ -1,6 +1,6 @@
 import re
 
-from dslib.pdf2txt import whitespaces_to_space
+from dslib.pdf.pdf2txt import whitespaces_to_space
 
 
 def test_pdf_to_ascii():

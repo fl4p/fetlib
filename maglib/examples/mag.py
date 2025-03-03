@@ -1,29 +1,14 @@
-import math
-
-from dslib.magnetics.cores import KDM_KS130_060A
-from dslib.magnetics.materials import KDM_SendustKS_60, MagInc_KoolMu_60, Micrometals_Sendust_60u
-#from dslib.powerloss import MagneticCoreMaterialSpecs, dcdc_buck_coil, CoilSpecs
-
-µ0 = 4 * math.pi * 1e-7
-
-oe = 1000 / (4 * math.pi)
-
-
-def oe2Apm(H_oe):
-    return H_oe * oe
-
-
-def H2oe(H):
-    return H / oe
-
-
 def _main():
+    from maglib.cores import KDM_KS130_060A
+    from maglib.materials import KDM_SendustKS_60, MagInc_KoolMu_60, Micrometals_Sendust_60u
+
+
     materials = [Micrometals_Sendust_60u, MagInc_KoolMu_60, KDM_SendustKS_60]
-    from dslib.magnetics.plot import core_loss_density_curves
+    from maglib.plot import core_loss_density_curves
     core_loss_density_curves(materials, f_khz=40)
-    from dslib.magnetics.plot import dc_bias_curves
+    from maglib.plot import dc_bias_curves
     dc_bias_curves(materials)
-    from dslib.magnetics.plot import dc_magnetization_curves
+    from maglib.plot import dc_magnetization_curves
     dc_magnetization_curves(materials)
     return
 

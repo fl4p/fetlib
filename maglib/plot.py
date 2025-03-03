@@ -4,29 +4,54 @@ from typing import List, Union
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from dslib.magnetics import  oe2Apm, µ0
-from dslib.magnetics.materials import MagneticCoreMaterialSpecs
+from maglib import oe2Apm, µ0
+from maglib.materials import MagneticCoreMaterialSpecs
 
 
-def plot_dc_bias_curve(mat: MagneticCoreMaterialSpecs):
-    H_oe = 1
+# TODO
+"""
+- this file needs some cleanup
+- remove redundant functions
+- normalise names
+"""
 
-    points = dict()
 
-    while H_oe < 2000:
-        ui_pct = mat.dc_bias(H_oe=H_oe) * 100
-        points[H_oe] = ui_pct
-        H_oe *= 1.3
+def plot_dc_bias_curve(mat: Union[List[MagneticCoreMaterialSpecs], MagneticCoreMaterialSpecs],
+                       interactive=False):
+    if isinstance(mat, MagneticCoreMaterialSpecs):
+        mat = [mat]
 
-    s = pd.Series(points)
-    s.plot()
-    plt.title('DC Bias curve %s %s µi=%d' % (mat.mfr, mat.mpn, mat.mu_r))
-    plt.semilogx()
+    for m in mat:
+        H_oe = 1
+
+        points = dict()
+
+        while H_oe < 2000:
+            ui_pct = m.dc_bias(H_oe=H_oe) * 100
+            points[H_oe] = ui_pct
+            H_oe *= 1.3
+
+        s = pd.Series(points)
+
+        if len(mat) == 1:
+            s.plot()
+            plt.title('DC Bias curve `%s %s` (%dµ)' % (m.mfr, m.mpn, m.mu_r))
+        else:
+            s.plot(label='%s %s (%dµ)' % (m.mfr, m.mpn, m.mu_r))
+
     plt.xlabel('H - DC Magnetizing Force (Oe)')  # r'$B_\odot$')
     plt.ylabel(r'% - Initial Permeability (%$µ_i$)')
+    plt.semilogx()
     plt.grid()
-    plt.show()
-    return s
+    if len(mat) > 1:
+        plt.legend(loc='best')
+
+    if interactive:
+        import mpld3
+        from mpld3._server import serve
+        serve(mpld3.fig_to_html(plt.gcf()))
+    else:
+        plt.show()
 
 
 def dc_bias_curves(mats: List[MagneticCoreMaterialSpecs]):

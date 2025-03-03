@@ -5,10 +5,12 @@ import os.path
 import re
 import time
 import traceback
+from functools import partial
 from typing import Union, List
 
 import requests
 
+import dslib.discovery.onsemi
 from dslib.cache import acquire_file_lock
 
 
@@ -52,9 +54,9 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         ds_url = get_datasheet_url(mfr, mpn)
 
     if mfr == 'onsemi':
-        import dslib.parts_discovery
+        import dslib.discovery.parts_discovery
         if not requests.head(ds_url).ok:
-            ds_url = dslib.parts_discovery.onsemi_ds_url(mpn)
+            ds_url = dslib.discovery.onsemi.onsemi_ds_url(mpn)
         # ds_url_alt = ds_url.replace('fdb','fdp')
         # ds_url_alt = lambda : dslib.parts_discovery.onsemi_ds_url(mpn)
 
@@ -103,30 +105,31 @@ def download(url, filename):
             fh.write(chunk)
 
 
-browser_page = None
-browser = None
+browser_pages = {}
+browsers = {}
 
 
 async def get_browser_page():
     import pyppeteer
 
-    global browser, browser_page
-    if browser is None:
+    evl_id = id(asyncio.get_event_loop())
+
+    if evl_id not in browsers:
+        assert not browsers
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
         os.path.exists(userDataDir) or os.makedirs(userDataDir)
-        browser = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir,autoClose=True))
+        browsers[evl_id] = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir, autoClose=True))
 
-        def on_close():
-            global browser, browser_page
-            browser = None
-            browser_page = None
+        def on_close(evl_id):
+            browsers.pop(evl_id, None)
+            browser_pages.pop(evl_id, None)
 
-        browser.on('close', on_close)
+        browsers[evl_id].on('close', partial(on_close, evl_id))
 
-    if browser_page is None or browser_page.isClosed():
-        browser_page = await browser.newPage()
+    if evl_id not in browser_pages  or browser_pages[evl_id].isClosed():
+        browser_pages[evl_id] = await browsers[evl_id].newPage()
 
-    return browser_page
+    return browser_pages[evl_id]
 
 
 """

@@ -1,23 +1,42 @@
 import math
+from typing import Union
 
-import dslib.magnetics.materials as materials
-from dslib import round_to_n
-from dslib.magnetics.materials import MagInc_KoolMu_60, KDM_SendustKS_60, MagneticCoreMaterialSpecs
-from dslib.spec_models import rel_err
+import maglib.materials as materials
+from dslib import round_to_n, rel_err
+from maglib.materials import MagInc_KoolMu_60, KDM_SendustKS_60, MagneticCoreMaterialSpecs
 
 µ0 = 4 * math.pi * 1e-7
 
 
 class ToroidShape():
-    def __init__(self, l_e, A_e, Vol):
+    def __init__(self, name, l_e, A_e, Vol, od=math.nan, id=math.nan, ht=math.nan):
+        """
+
+        :param name:
+        :param l_e:
+        :param A_e:
+        :param Vol:
+        :param od:
+        :param id:
+        :param ht:
+        """
+
+        #assert math.isnan(od), "not implemented"
+        #assert math.isnan(id), "not implemented"
+        #assert math.isnan(ht), "not implemented"
+
+        self.name = name
         self.l_e = l_e
         self.A_e = A_e
         self.Vol = Vol
         assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
 
+    def values(self):
+        return dict(l_e=self.l_e, A_e=self.A_e, Vol=self.Vol)
+
 
 class MagneticCoreSpecs:
-    def __init__(self, mpn, mat: MagneticCoreMaterialSpecs, A_L, l_e, A_e, Vol):
+    def __init__(self, mpn, mat: MagneticCoreMaterialSpecs, l_e, A_e, Vol, A_L=None):
         """
 
         :param mpn:
@@ -26,10 +45,13 @@ class MagneticCoreSpecs:
         :param A_e: eff. magnetic cross-sectional Area in m2
         :param Vol:  core volume in m3
         """
+        if A_L is None:
+            A_L = µ0 * mat.mu_r * A_e / l_e
+
         self.mat = mat
         self.mpn = mpn
         self.A_L = A_L
-        self.l_e = l_e
+        self.l_e = l_e  # magnetic path length
         self.A_e = A_e  # in m2
         self.Vol = Vol
 
@@ -37,8 +59,11 @@ class MagneticCoreSpecs:
         assert abs(rel_err(µ0 * mat.mu_r * A_e / l_e, self.A_L)) < 0.04, (µ0 * mat.mu_r * A_e / l_e, self.A_L)
 
     def stack(self, n):
+        assert n > 0
+        if n == 1:
+            return self
         return MagneticCoreSpecs(
-            f'2s({self.mpn})', self.mat,
+            f'{n}s({self.mpn})', self.mat,
             A_L=self.A_L * n,
             l_e=self.l_e,
             A_e=self.A_e * n,
@@ -69,41 +94,50 @@ KDM_KS130_060A = MagneticCoreSpecs('KDM_KS130_060A', KDM_SendustKS_60,
                                    A_e=0.672e-4,  # cm2
                                    Vol=5.480e-6,
                                    )
-MicrometalsT130 = ToroidShape(l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
-MicrometalsT184 = ToroidShape(l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6)
 
-# https://datasheets.micrometals.com/MS-132060-2-DataSheet.pdf
-Micrometals_MS_130_060 = MagneticCoreSpecs('MS-132060-2',
+KDM_KS184_125A = MagneticCoreSpecs('KDM_KS184_125A', materials.KDM_SendustKS_125,
+                                   A_L=281e-9,  # nH/N2
+                                   l_e=10.74e-2,  # cm
+                                   A_e=1.99e-4,  # cm2
+                                   Vol=21.30e-6,
+                                   )
+
+MicrometalsT130 = ToroidShape('130', l_e=8.15e-2, A_e=0.672e-4, Vol=5.69e-6, od=33.02e-3, id=19.94e-3, ht=10.67e-3)
+MicrometalsT132 = ToroidShape('132', l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
+MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6)
+
+# https://datasheets.micrometals.com/MS-130060-2-DataSheet.pdf
+Micrometals_MS_130_060 = MagneticCoreSpecs('MS-130060-2',
                                            materials.Micrometals_Sendust_60u,
-                                           **MicrometalsT130.__dict__,
-                                           A_L=65e-9,  # nH/N2
+                                           **MicrometalsT130.values(),
+                                           A_L=61e-9,  # nH/N2
                                            )
 
 # https://datasheets.micrometals.com/MS-184060-2-DataSheet.pdf
 Micrometals_MS_184_060 = MagneticCoreSpecs('MS-184060-2',
                                            materials.Micrometals_Sendust_60u,
-                                           **MicrometalsT184.__dict__,
+                                           **MicrometalsT184.values(),
                                            A_L=135e-9,  # nH/N2 (checksum)
                                            )
 
 # https://datasheets.micrometals.com/MS-184090-2-DataSheet.pdf
 Micrometals_MS_184_090 = MagneticCoreSpecs('MS-184090-2',
                                            materials.Micrometals_MS_T_090u,
-                                           **MicrometalsT184.__dict__,
+                                           **MicrometalsT184.values(),
                                            A_L=202e-9,  # nH/N2 (checksum)
                                            )
 
 # https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
 Micrometals_MS_184_125 = MagneticCoreSpecs('MS-184125-2',
                                            materials.Micrometals_MS_T_125u,
-                                           **MicrometalsT184.__dict__,
+                                           **MicrometalsT184.values(),
                                            A_L=281e-9,  # nH/N2
                                            )
 
 # https://datasheets.micrometals.com/OE-184060-2-DataSheet.pdf
 Micrometals_OE_184_060 = MagneticCoreSpecs('OE-184060-2',
                                            materials.Micrometals_OE_60u,
-                                           **MicrometalsT184.__dict__,
+                                           **MicrometalsT184.values(),
                                            A_L=135e-9,  # nH/N2
                                            )
 
@@ -114,3 +148,15 @@ Micrometals_OE_226_060 = MagneticCoreSpecs('OE-226060-2', materials.Micrometals_
                                            A_e=2.29e-4,  # cm2
                                            Vol=28.6e-6,
                                            )
+
+MicrometalsToroidShapes = {
+    130: MicrometalsT130,
+    184: MicrometalsT184,
+}
+
+
+def MicrometalsToroid(mat: materials.MicroMetalsMatLiteral, ui, shape: Union[ToroidShape, int]):
+    if isinstance(shape, int):
+        shape = MicrometalsToroidShapes[shape]
+    mpn = mat + '-' + shape.name + '%03d' % ui
+    return MagneticCoreSpecs(mpn, materials.micrometals_material(mat, 'T', ui), **shape.values())

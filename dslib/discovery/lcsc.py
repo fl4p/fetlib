@@ -40,7 +40,7 @@ def read_lcsc_search_results(html_glob_path):
                 ds_url = ds_url.replace('https://www.lcsc.com/datasheet/lcsc_datasheet_',
                                         'https://wmsc.lcsc.com/wmsc/upload/file/pdf/v2/lcsc/')
 
-                datasheet_path = os.path.join('../datasheets', mfr, mpn + '.pdf')
+                datasheet_path = os.path.join('../../datasheets', mfr, mpn + '.pdf')
                 fetch_datasheet(ds_url, datasheet_path, mfr=mfr, mpn=mpn)
 
 

@@ -1,9 +1,8 @@
-import re
 import unicodedata
 
 import unidecode
 
-from dslib.pdf2txt import strip_no_print_latin, normalize_dash, normalize_text, patch_unidecode
+from dslib.pdf.pdf2txt import strip_no_print_latin, normalize_dash, normalize_text, patch_unidecode
 
 
 def test_strip_no_print_latin():

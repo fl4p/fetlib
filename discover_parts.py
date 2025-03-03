@@ -4,9 +4,20 @@ import os
 from collections import defaultdict
 from typing import List, Dict, Tuple
 
-from dslib import parts_discovery
+import dslib.discovery.ao
+import dslib.discovery.digikey
+import dslib.discovery.epc
+import dslib.discovery.huayi
+import dslib.discovery.infineon
+import dslib.discovery.nxp
+import dslib.discovery.onsemi
+import dslib.discovery.st
+import dslib.discovery.ti
+import dslib.discovery.toshiba
+import dslib.discovery.tw
+import dslib.discovery.vishay
+from dslib.discovery import  DiscoveredPart, benchmark_mpns
 from dslib.fetch import fetch_datasheet
-from dslib.parts_discovery import DiscoveredPart, benchmark_mpns
 
 
 def unique_parts(parts: List[DiscoveredPart]):
@@ -33,17 +44,19 @@ def unique_parts(parts: List[DiscoveredPart]):
 async def discover_mosfets(no_obsolete=False):
     parts: List[DiscoveredPart] = []
 
-    parts += await parts_discovery.onsemi_mosfets()
-    parts += await parts_discovery.aosmd_medium_voltage_mosfets()
-    parts += await parts_discovery.toshiba_mosfets()
-    parts += await parts_discovery.ti_mosfets()
-    parts += await parts_discovery.infineon_mosfets()
-    parts += await parts_discovery.taiwansemi_nfets()
-    parts += await parts_discovery.st_mosfets()
-    parts += await parts_discovery.vishay_mosfets()
-    parts += parts_discovery.huayi_mosfets()
+    parts += await dslib.discovery.onsemi.onsemi_mosfets()
+    parts += await dslib.discovery.ao.aosmd_medium_voltage_mosfets()
+    parts += await dslib.discovery.toshiba.toshiba_mosfets()
+    parts += await dslib.discovery.ti.ti_mosfets()
+    parts += await dslib.discovery.infineon.infineon_mosfets()
+    parts += await dslib.discovery.tw.taiwansemi_nfets()
+    parts += await dslib.discovery.st.st_mosfets()
+    parts += await dslib.discovery.vishay.vishay_mosfets()
+    parts += dslib.discovery.huayi.huayi_mosfets()
+    parts += await dslib.discovery.nxp.nexperia_mosfets()
+    parts += await dslib.discovery.epc.epc_gan()
 
-    parts += parts_discovery.digikey('parts-lists/digikey/*.csv', no_obsolete=no_obsolete)
+    parts += dslib.discovery.digikey.digikey('parts-lists/digikey/*.csv', no_obsolete=no_obsolete)
 
     parts = unique_parts(parts)
 
@@ -77,11 +90,15 @@ async def main():
     for p in parts:
         by_mfr[p.mfr].append(p)
 
-    from dslib.spec_models import DcDcLoadParams
-    parts = DcDcLoadParams.default().select_mosfets(parts)
+    #parts = DcDcLoadParams.default().select_mosfets(parts)
+
+    parts = [p for p in parts if (p.specs.ID_25 >= 2 and p.specs.Rds_on_10v_max < 20e-3)]
+        #        or (p.specs.Vds_max >= 200 and p.specs.Vds_max <= 800 and p.specs.ID_25 >= 10)
+        #        or is_benchmark_part(p)
+        # )]
 
     #parts = [p for p in parts if (
-    #        (p.specs.Vds_max >= 60 and p.specs.Vds_max <= 200 and p.specs.ID_25 >= 20 and p.specs.Rds_on_10v_max < 10e3)
+    #        (p.specs.Vds_max >= 60 and p.specs.Vds_max <= 200 and p.specs.ID_25 >= 20 and p.specs.Rds_on_10v_max < 10e-3)
     #        or (p.specs.Vds_max >= 200 and p.specs.Vds_max <= 800 and p.specs.ID_25 >= 10)
     #        or is_benchmark_part(p)
     #)]

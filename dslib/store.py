@@ -7,8 +7,8 @@ from typing import Tuple, Dict, Optional, Generic, TypeVar, Callable, Union, Lis
 
 from dslib.cache import acquire_file_lock
 from dslib.field import DatasheetFields
-from dslib.parts_discovery import DiscoveredPart
-from dslib.spec_models import MosfetSpecs
+from dslib.discovery import DiscoveredPart
+from dslib.mosfet import MosfetSpecs
 
 
 class Part:
@@ -130,7 +130,7 @@ class ObjectDatabase(Generic[K, T]):
 
 Mfr = str
 Mpn = str
-parts_db = ObjectDatabase[Tuple[Mfr, Mpn], Part]('parts-lib', lambda p: (p.mfr, p.mpn))
+parts_db = ObjectDatabase[Tuple[Mfr, Mpn], Part]('parts-lib', key_func=lambda p: (p.mfr, p.mpn))
 
 
 def load_parts():
@@ -139,3 +139,7 @@ def load_parts():
 
 datasheets_db = ObjectDatabase[Tuple[Mfr, Mpn], DatasheetFields]('datasheets-lib', lambda d: (d.part.mfr, d.part.mpn) if hasattr(d, 'part') else (d.mfr, d.mpn))
 
+
+if __name__ == '__main__':
+    parts = load_parts()
+    print('loaded', len(parts))

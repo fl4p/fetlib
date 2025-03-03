@@ -1,4 +1,4 @@
-from dslib.pdf2txt.parse import parse_datasheet
+from dslib.pdf.parse import parse_datasheet
 
 
 def test_mosfet_specs():

@@ -19,9 +19,9 @@ from dslib.pdf.sheet.spatial import SpatialQuery, take
 from dslib.pdf.sheet.tables import table_segregation, DetectedRowField, Table
 from dslib.pdf.to_html import Annotation
 from dslib.pdf.tree import bbox_union, GraphicBlock, Bbox
-from dslib.pdf2txt import normalize_text, whitespaces_to_space
-from dslib.pdf2txt.expr import get_cond_regex
-from dslib.pdf2txt.parse import detect_fields, DetectedSymbol
+from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
+from dslib.pdf.expr import get_cond_regex
+from dslib.pdf.parse import detect_fields, DetectedSymbol
 
 head_re = re.compile(
     '((\s+|^\s*)('

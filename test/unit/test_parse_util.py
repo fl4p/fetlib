@@ -1,7 +1,7 @@
 import math
 
 def test_right_strip_nan():
-    from dslib.pdf2txt.parse import right_strip_nan
+    from dslib.pdf.parse import right_strip_nan
 
     nan = math.nan
 

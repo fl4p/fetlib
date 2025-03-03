@@ -62,9 +62,9 @@ def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
 @disk_cache(ttl='14d',
             file_dependencies=[
                 0,
-                '../../tesseract-stuff/tesseract.cfg',
-                '../../tesseract-stuff/mosfet.user-words',
-                '../../dslib/ocr/hooks_ocrmypdf.py',
+                '../tesseract-stuff/tesseract.cfg',
+                '../tesseract-stuff/mosfet.user-words',
+                '../../dslib/pdf/ocr/hooks_ocrmypdf.py',
             ],
             out_files=[1],
             salt='v03')
@@ -74,7 +74,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
     # https://vprivalov.medium.com/tesseract-ocr-tips-custom-dictionary-to-improve-ocr-d2b9cd17850b
     not os.path.isfile(out_path) or os.remove(out_path)
 
-    pwd = os.path.realpath(os.path.dirname(__file__) + '/../../')
+    pwd = os.path.realpath(os.path.dirname(__file__) + '/../')
     cfg_file = (pwd + '/tesseract-stuff/tesseract.cfg')  # os.path.realpath
     assert os.path.isfile(cfg_file)
 

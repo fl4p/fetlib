@@ -1,4 +1,3 @@
-import traceback
 import warnings
 
 import matplotlib.pyplot as plt
@@ -6,8 +5,9 @@ import pandas as pd
 
 import apps.mppts.libresolar
 from dslib import round_to_n_dec
-from dslib.powerloss import SwitchPowerLoss
+from dclib.powerloss import SwitchPowerLoss
 from dslib.spec_models import DcDcLoadParams
+from dslib.mosfet import GateDrive
 
 if __name__ == '__main__':
     """
@@ -20,12 +20,14 @@ if __name__ == '__main__':
     # buck = MPPT_2420_HC()
     # buck = apps.mppts.libresolar.FuguWhite184()
     buck = apps.mppts.libresolar.MPPT_Fheat2()
+    gd = GateDrive(rg_total=10, Von=11, fallback_V_pl=4.5)
 
 
     def compute_losses(pin):
         # dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
-        dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
-        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=200e-9, L=buck.coil.L0)
+
+        dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=buck.f_sw,tDead=400e-9, L=buck.coil.L0)
+        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=buck.f_sw,tDead=200e-9, L=buck.coil.L0)
 
         # dcdc = DcDcSpecs(vi=67, vo=27, io=13, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
@@ -34,7 +36,7 @@ if __name__ == '__main__':
         # dcdc = DcDcSpecs(vi=66, vo=27, pin=800, f=40e3, Vgs=11, tDead=400e-9, L=50e-6)
         # dcdc = DcDcSpecs(vi=70, vo=27, io=30, f=40e3, Vgs=11, tDead=100e-9, L=coil.L)
         # dcdc = DcDcSpecs(vi=12, vo=5, io=15, f=40e3, Vgs=5, tDead=100e-9, L=coil.L)
-        return buck.powerloss(dcdc)
+        return buck.powerloss(dcdc, gd)
 
 
     # losses, dcdc = compute_losses(650)
@@ -123,9 +125,11 @@ if __name__ == '__main__':
     loss_df = loss_df[list(loss_df.iloc[-1, :].sort_values().keys())]
     plt.stackplot(loss_df.index.values, loss_df.T.values, labels=loss_df.columns)
     plt.legend(reverse=True)
+    plt.xlabel('Pin')
+    plt.ylabel('Ploss')
     plt.title(
         f'{buck.name} {round_to_n_dec(dcdc.Vi, 2)}/{round_to_n_dec(dcdc.Vo, 2)}V f={round_to_n_dec(buck.f_sw, 2)}Hz')
-    plt.grid()
+    #plt.grid()
 
     # y = np.vstack([y1, y2, y3])
 

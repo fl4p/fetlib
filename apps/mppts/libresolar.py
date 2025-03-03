@@ -1,7 +1,7 @@
 from dslib.field import MpnMfr
-from dslib.magnetics.wire import Winding
-from dslib.powerloss import CoilSpecs
-from dslib.spec_models import BuckConverter, MosfetSlot, MosfetSpecs
+from dclib.powerloss import CoilSpecs
+from dslib.spec_models import BuckConverter
+from dslib.mosfet import MosfetSpecs, MosfetSlot
 from dslib.store import Part
 
 

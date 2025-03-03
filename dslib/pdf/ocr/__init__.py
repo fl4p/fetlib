@@ -9,7 +9,7 @@ def img2table_tables(pdf_path, pages=None, rasterize_dpi=None):
     if rasterize_dpi is not None:
         dpi = rasterize_dpi
         int_file = pdf_path + f'.r{int(dpi)}.pdf'
-        from dslib.pdf2txt.pipeline import rasterize_pdf
+        from dslib.pdf.pipeline import rasterize_pdf
         rasterize_pdf(pdf_path, int_file, dpi=dpi, fitz_method=False)
         pdf_path = int_file
 

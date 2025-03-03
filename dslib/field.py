@@ -6,7 +6,7 @@ from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast, Optional
 
 from dslib import round_to_n_dec
-from dslib.pdf2txt import normalize_text, whitespaces_to_space
+from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 
 
 def first(a):
@@ -251,11 +251,18 @@ class MpnMfr:
         self.mfr = mfr
         self.mpn = mpn
 
+def conditions_to_str(cond):
+    if cond and isinstance(cond, dict) and isinstance(list(cond.keys())[0], str):
+        cond_str = ', '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in sorted(cond.items()))
+    else:
+        cond_str = whitespaces_to_space(', '.join(
+            map(str, (cond.items() if isinstance(cond, dict) else cond)) if cond else []))[:80]
+    return cond_str
 
 class DatasheetFields():
     def __init__(self, mfr=None, mpn=None, part: 'DiscoveredPart' = None, fields: Iterable[Field] = None,
                  date_from_text=None, date_from_meta=None):
-        from dslib.parts_discovery import DiscoveredPart
+        from dslib.discovery import DiscoveredPart
         self.part: Union[DiscoveredPart, MpnMfr] = part or MpnMfr(mfr, mpn)
         self.fields_filled: Dict[str, Field] = {}
         self.fields_lists: Dict[str, List[Field]] = {}
@@ -350,11 +357,7 @@ class DatasheetFields():
 
             cond_str = ''
             if show_cond:
-                if f.cond and isinstance(f.cond, dict) and isinstance(list(f.cond.keys())[0], str):
-                    cond_str = ', '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in sorted(f.cond.items()))
-                else:
-                    cond_str = whitespaces_to_space(', '.join(
-                        map(str, (f.cond.items() if isinstance(f.cond, dict) else f.cond)) if f.cond else []))[:80]
+                cond_str = conditions_to_str(f.cond)
 
             l = '%-12s %7.1f %7.1f %7.1f   %4s %10s %-20s' % (
                 f.symbol, f.min, f.typ, f.max, f.unit, src,
@@ -391,7 +394,7 @@ class DatasheetFields():
         if math.isnan(rds_on):
             rds_on = ds.get_max('Rds_on', cond=dict(Vgs=Vgs))
 
-        from dslib.spec_models import MosfetSpecs
+        from dslib.mosfet import MosfetSpecs
         return MosfetSpecs(
             Vds_max=ds.get_max_or_min('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,

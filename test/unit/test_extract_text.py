@@ -711,7 +711,7 @@ ns
 
 from math import nan
 
-from dslib.pdf2txt.parse import extract_fields_from_text, extract_dates
+from dslib.pdf.parse import extract_fields_from_text, extract_dates
 
 
 def test_fields_from_text():

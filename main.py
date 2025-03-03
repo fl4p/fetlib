@@ -15,10 +15,12 @@ from discover_parts import discover_mosfets
 from dslib import write_csv
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
-from dslib.parts_discovery import DiscoveredPart
-from dslib.pdf2txt.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
-from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
-from dslib.spec_models import DcDcLoadParams, GateDrive
+from dslib.discovery import DiscoveredPart
+from dslib.pdf.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
+from dslib.pdf.tabular import tabula_is_running
+from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+from dslib.spec_models import DcDcLoadParams
+from dslib.mosfet import GateDrive
 from dslib.store import Part
 
 excludes = {
@@ -312,6 +314,9 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
             subprocess.run(['git', 'clone', 'https://github.com/open-pe/fet-datasheets', 'datasheets'])
         except Exception as e:
             print('git clone error:', e)
+
+    if not tabula_is_running():
+        raise RuntimeError('tabula is not running')
 
     import pickle
 

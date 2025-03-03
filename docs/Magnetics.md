@@ -23,3 +23,17 @@ https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulat
 * https://www.coilcraft.com/en-us/tools/power-inductor-finder/#/
 * https://www.quora.com/What-is-the-formula-for-calculating-peak-value-of-flux-density-of-an-inductor
   * "B pk= Inductance x peak current divided by (turns x cross sectional area of the core). If you substitute E=Li/t you also get B pk = volts applied x time applied divided by (turns x core cross sectional area). Current is what causes flux so the first equation is the most direct. The second equation is most useful for square wave voltages applied such as in switched mode converters. The same equation applies for sine waves with a multiplying factor (1/4.44) and 1/frequency instead of time applied."
+
+
+# Resources & Tools
+* micrometals
+* https://www.e-magnetica.pl/doku.php/start
+* https://www.femm.info/wiki/Examples
+
+
+# Books
+* transformer design
+
+
+
+DC inductor tools

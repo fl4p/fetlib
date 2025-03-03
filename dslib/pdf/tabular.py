@@ -24,6 +24,10 @@ class NoTextInPdfError(ValueError):
     pass
 
 
+def tabula_is_running():
+    return requests.get('http://127.0.0.1:8080/').status_code == 200
+
+
 @disk_cache(ttl='99d', file_dependencies=[0], salt='v02', hash_func_code=True)
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:

@@ -26,10 +26,13 @@ import math
 import warnings
 from typing import Tuple
 
+import numpy as np
+
 from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
-from dslib.magnetics.cores import MagneticCoreSpecs
-from dslib.magnetics.wire import d2awg
-from dslib.spec_models import DcDcLoadParams, MosfetSpecs, Qgs2_Qgs_ratio_estimate, GateDrive
+from maglib.cores import MagneticCoreSpecs
+from maglib.wire import d2awg
+from dslib.spec_models import DcDcLoadParams
+from dslib.mosfet import Qgs2_Qgs_ratio_estimate, MosfetSpecs, GateDrive
 
 µ0 = 4 * math.pi * 1e-7
 
@@ -214,7 +217,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, rds_temp_ri
     rds = mf.Rds_on * rds_temp_rise  # temp rise Tj=100°C
 
     if mf.QgdQgsRatio > 1:
-        warnings.warn('Qgd/Qgs %.1f > 1! LS might suffer from self turn-on' % mf.QgdQgsRatio)
+        warnings.warn('%s: Qgd/Qgs %.1f > 1! LS might suffer from self turn-on' % (mf.part, mf.QgdQgsRatio))
 
     return SwitchPowerLoss(
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
@@ -260,7 +263,7 @@ class CoilSpecs():
 
         if wire_awg:
             assert wire_diameter is None
-            from dslib.magnetics.wire import awg2d
+            from maglib.wire import awg2d
             wire_diameter = awg2d(wire_awg)
 
         self.wire_diameter = wire_diameter
@@ -375,7 +378,7 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
 
     P_dcr = I_ms * coil.Rdc
 
-    from dslib.magnetics.wire import ac_resistance_factor, MaterialResistivity
+    from maglib import ac_resistance_factor, MaterialResistivity
     acf, sd = ac_resistance_factor(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f)
     rac = (acf - 1) * coil.Rdc
 
@@ -419,7 +422,7 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
     Bpk_ac = ur * µ0 * Hpk_ac  # peak ac flux density [T]
     B_pk = ur * µ0 * Hpk_ac
     """
-    from dslib.magnetics.powerloss import core_loss_from_dc_bias
+    from maglib import core_loss_from_dc_bias
 
     # P_core1, Bpk1, cld1 = core_loss_from_dc_magnetization(dc, coil)  # method 1
     P_core1, Bpk1, cld1 = 0, 0, 0
@@ -466,11 +469,12 @@ def dcdc_buck_cout(dc: DcDcLoadParams, Z_cin: float, Z_cout: float):
 def mosfet_hs_sw_timings_hs(hs: MosfetSpecs, gd: GateDrive):
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=3  3.1.1
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
+    rg_total = np.nanmax([hs.Rg, gd.rg_total])
     vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     # TODO igon1 + igon2
     assert vpl < gd.Von, "Vpl >= VGS"
-    ig_on = (gd.Voff - vpl) / gd.rg_total
-    ig_off = (vpl - gd.Voff) / gd.rg_total
+    ig_on = (gd.Voff - vpl) / rg_total
+    ig_off = (vpl - gd.Voff) / rg_total
     tr = hs.Qsw / ig_on
     tf = hs.Qsw / ig_off
     return tr, tf
@@ -483,11 +487,13 @@ def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive):
     # equation (6) appears to be wrong.
 
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
+    rg_total = np.nanmax([hs.Rg, gd.rg_total])
+
     vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
-    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * gd.rg_total  # (5)
-    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * gd.rg_total  # (6) *corrected
+    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * rg_total  # (5)
+    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * rg_total  # (6) *corrected
     return tr, tf
 
 
@@ -497,11 +503,12 @@ def mosfet_hs_sw_timings_hs_vishay(hs: MosfetSpecs, gd: GateDrive):
     # needs Ciss(at dc.Vi)
 
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
+    rg_total = np.nanmax([hs.Rg, gd.rg_total])
     vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
-    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * gd.rg_total  # (5)
-    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * gd.rg_total  # (6) *corrected
+    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * rg_total  # (5)
+    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * rg_total  # (6) *corrected
     return tr, tf
 
 
@@ -510,18 +517,19 @@ def mosfet_hs_sw_timings_lcsi(dc: DcDcLoadParams, hs: MosfetSpecs, ls_Qoss, gd: 
     # loss with L_csi considerations
     # https://www.ti.com/lit/an/slpa009a/slpa009a.pdf
     Qgs2 = hs.Qgs2
+    rg_total = np.nanmax([hs.Rg, gd.rg_total])
     vpl = fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
 
     # pw on
-    ig1_on = (gd.Von - vpl) / (gd.rg_total + (Lcsi * dc.Io_min / Qgs2))
+    ig1_on = (gd.Von - vpl) / (rg_total + (Lcsi * dc.Io_min / Qgs2))
     a = (Lcsi * ls_Qoss / hs.Qgd ** 2) if Lcsi else 0
-    b = gd.rg_total
+    b = rg_total
     c = -(gd.Von - vpl)
     ig2_on = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
     tr = (Qgs2 / ig1_on + hs.Qgd / ig2_on)
 
     # pw off
-    ig1_off = (vpl - gd.Voff) / (gd.rg_total + Lcsi * dc.Io_max / Qgs2)
+    ig1_off = (vpl - gd.Voff) / (rg_total + Lcsi * dc.Io_max / Qgs2)
     c = - (vpl - gd.Voff)
     ig2_off = (-b + math.sqrt(b ** 2 - 4 * a * c)) / (2 * a)
     tf = (Qgs2 / ig1_off + hs.Qgd / ig2_off)
@@ -531,7 +539,7 @@ def mosfet_hs_sw_timings_lcsi(dc: DcDcLoadParams, hs: MosfetSpecs, ls_Qoss, gd: 
 
 def capacitor_out():
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf
-    raise NotImplemented()
+    raise NotImplemented("see dcdc_buck_cout()")
 
 
 def tests():

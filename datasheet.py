@@ -11,12 +11,10 @@ from typing import Literal
 
 import pymupdf
 
-from dslib.pdf2txt import normalize_text, whitespaces_to_space
-from dslib.pdf2txt.parse import extract_text, parse_datasheet
+from dslib.field import conditions_to_str
+from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
+from dslib.pdf.parse import extract_text, parse_datasheet
 from dslib.util import open_file_with_default_app, unique_stable
-
-
-# from dslib.pdf2txt.parse import extract_text
 
 
 async def main():
@@ -25,9 +23,13 @@ async def main():
     parser.add_argument('command', choices=(
         'open',
         'ascii',
-        'rasterize', 'html', 'html-pm',
-        'parse', 'read-sheet-debug',
-        'power'), default='power')
+        'rasterize',
+        'html',  # text only with bbox, using pdf_blocks_pdfminer_six
+        'html-pm',  # dfminer.high_level.extract_text_to_fp
+        'parse',  # parses the datasheet and prints all fields
+        'read-sheet-debug',  # runs the spatial query and places annotations
+        'power' # power loss computation
+    ), default='power')
     parser.add_argument('datasheet_file')
 
     parser.add_argument('--dcdc-file')
@@ -50,8 +52,8 @@ async def main():
     if args.datasheet_file == 'random':
         files = glob.glob("datasheets/**/*.pdf", recursive=True)
         random.shuffle(files)
-        ds_path = next(filter(lambda fn : fn.count('.pdf') < 2, files ))
-        #ds_path = files[0]
+        ds_path = next(filter(lambda fn: fn.count('.pdf') < 2, files))
+        # ds_path = files[0]
         print(ds_path)
     else:
         ds_path = os.path.abspath(args.datasheet_file)
@@ -80,13 +82,23 @@ async def main():
         ds = parse_datasheet(ds_path)
         ds.print(show_cond=True, show_sources=True)
         mf = ds.get_mosfet_specs()
+
         from dslib.spec_models import DcDcLoadParams
+        from dslib.mosfet import GateDrive
         dc = DcDcLoadParams.default()
-        from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+
+        gd = GateDrive(rg_total=args.rg_total, Von=10, fallback_V_pl=args.vpl_fallback)
+
+        from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+        print('')
         print('DCDC = %s' % dc)
-        p_hs = dcdc_buck_hs(dc, mf, rg_total=6, fallback_V_pl=4.5)
-        print('P_HS = %.2f W' % p_hs.buck_hs(), p_hs.items() )
-        print('P_LS = %.2f W' % dcdc_buck_ls(dc, mf).buck_ls())
+        print('GDrv = %s' % gd)
+        p_hs = dcdc_buck_hs(dc, mf, gd=gd)
+        p_ls = dcdc_buck_ls(dc, mf, gd=gd)
+        print('P_HS = %6.2f W    ' % p_hs.buck_hs(), conditions_to_str(dict(p_hs.items())))
+        print('P_LS = %6.2f W    ' % p_ls.buck_ls(), conditions_to_str(dict(p_ls.items())))
+
+        return 0
 
     elif args.command == 'ascii':
         from dslib.pdf.ascii import pdf_to_ascii
@@ -96,7 +108,8 @@ async def main():
         overwrite = False
         spacing = 30 * 2
         try:
-            html_path = pdf_to_ascii(ds_path, sort_vert=sort_vert, grouping=grouping, spacing=spacing, overwrite=overwrite)
+            html_path = pdf_to_ascii(ds_path, sort_vert=sort_vert, grouping=grouping, spacing=spacing,
+                                     overwrite=overwrite)
             if html_path:
                 open_file_with_default_app(html_path)
         except Exception as e:
@@ -106,8 +119,8 @@ async def main():
 
     elif args.command == 'rasterize':
         raise NotImplementedError()
-        #import pdfminer.pdfdocument
-        #pdfminer.pdfdocument.choplist(ds_path)
+        # import pdfminer.pdfdocument
+        # pdfminer.pdfdocument.choplist(ds_path)
     elif args.command == 'html':
 
         from dslib.pdf.to_html import pdf_to_html
@@ -126,9 +139,8 @@ async def main():
             pathlib.Path(out_path).parent.mkdir(exist_ok=True, parents=True)
             with open(out_path, "wb") as fpo:
                 import pdfminer.high_level
-                pdfminer.high_level.extract_text_to_fp(fp,fpo, output_type='html',layoutmode='exact')
+                pdfminer.high_level.extract_text_to_fp(fp, fpo, output_type='html', layoutmode='exact')
             open_file_with_default_app(out_path)
-
 
     if False:
         fonts = unique_stable(sum((pdf.get_page_fonts(pno) for pno in range(len(pdf))), []))
@@ -136,11 +148,10 @@ async def main():
         for font in fonts:
             print(font)
 
-
     # print(pdf.get_xml_metadata())
     #
 
-    #print(pdf.xref_xml_metadata())
+    # print(pdf.xref_xml_metadata())
     text = normalize_text(extract_text(ds_path)[0])
     print('Extracted', len(text), 'characters of text:', whitespaces_to_space(text)[:80], '..')
     print(ds_path)
@@ -161,7 +172,7 @@ async def main():
     ds_path = 'datasheets/toshiba/TK46E08N1.pdf'  # column wise text
 
     print('Analysing', ds_path)
-    text,_ = extract_text(ds_path)
+    text, _ = extract_text(ds_path)
 
     print('Extracted', len(text), 'characters of text')
 

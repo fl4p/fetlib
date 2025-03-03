@@ -1,4 +1,5 @@
 import os.path
+from math import nan
 from typing import Callable, Literal
 
 from dslib.cache import mem_cache
@@ -18,10 +19,11 @@ class MagneticCoreMaterialSpecs:
         self.dc_bias = dc_bias
         self.dc_magnetization = dc_magnetization
 
-    def permeability_dc_bias(self, H):
+    def permeability_dc_bias(self, H, no_raise=False):
         H_oe = H / .7958e2
         dc_bias = self.dc_bias(H_oe=H_oe)
-        assert 0.4 <= dc_bias <= 1, "dc bias core saturation too high"
+        if not no_raise:
+            assert 0.28 <= dc_bias <= 1, "dc bias core saturation too high, %%µi = %.0f%%" % (dc_bias * 100)
         # too much DC bias inductivity drop
         return dc_bias * self.mu_r
 
@@ -37,7 +39,7 @@ def micrometals_core_loss_model(a, b, c, d):
 
 
 def micrometals_dc_mag_model(µi, a, b, c, d, e):
-    # Initial BH Curve
+    # Initial BH Curve or Initial Magnetization Curve,
 
     def flux_density_tesla(H_oe):
         H = H_oe
@@ -66,12 +68,21 @@ def micrometals_dc_bias_model(a, b, c, d):
 # https://semic.cz/!old/files/pdf_www/Ljf_KS.pdf
 # https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
 KDM_SendustKS_60 = MagneticCoreMaterialSpecs(
-    'kdm', 'SendustKS60', mu_r=60,
+    'kdm', 'KS60', mu_r=60,
 
     core_loss_density=lambda Bpk_tesla, f_khz: (Bpk_tesla * 10) ** 2.225 * (4.584 * f_khz + 0.0238 * f_khz ** 1.966),
     dc_bias=lambda H_oe: 1 / (1 + 3.57e-4 * H_oe ** 1.748),
     # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
-    dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2.003E+09, d=0.000E-08, e=1.6E+02),
+    dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
+)
+
+KDM_SendustKS_125 = MagneticCoreMaterialSpecs(
+    'kdm', 'KS125', mu_r=125,
+
+    core_loss_density=lambda Bpk_tesla, f_khz: (Bpk_tesla * 10) ** nan * (nan * f_khz + nan * f_khz ** nan),
+    dc_bias=lambda H_oe: 1 / (1 + 1.34e-3 * H_oe ** 1.78),
+    # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
+    # dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
 )
 
 # https://www.mag-inc.com/Media/Magnetics/File-Library/Product%20Literature/Powder%20Core%20Literature/Magnetics-Powder-Core-Catalog-2024.pdf#page=106
@@ -99,20 +110,25 @@ def load_micrometals_materials():
     df = pd.read_csv(os.path.dirname(__file__) + '/micrometals.csv')
     return df
 
+
 def try_float(s):
     try:
         return float(s)
     except ValueError:
         return float('nan')
 
-def micrometals_material(mat: Literal['MS', 'OE', 'OC'], shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int):
+
+MicroMetalsMatLiteral = Literal['MS', 'OE', 'OC', 'GX']
+
+
+def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int):
     df = load_micrometals_materials()
     m = df[(df.iloc[:, 0] == mat) & (df.iloc[:, 1] == shape) & (df.iloc[:, 2] == str(ui))]
     assert len(m) == 1
     m = list(map(try_float, m.iloc[0, :]))
 
     return MagneticCoreMaterialSpecs(
-        'micrometals', 'MS%03u' % ui, mu_r=ui,
+        'micrometals', '%s%03u' % (mat, ui), mu_r=ui,
 
         core_loss_density=micrometals_core_loss_model(*m[9:13]),
         dc_bias=micrometals_dc_bias_model(*m[5:9]),
@@ -121,9 +137,9 @@ def micrometals_material(mat: Literal['MS', 'OE', 'OC'], shape: Literal['B', 'E'
 
 
 # https://www.micrometals.com/products/materials/ms/
-Micrometals_MS_T_060u = micrometals_material('MS', 'T',60)
-Micrometals_MS_T_090u = micrometals_material('MS', 'T',90)
-Micrometals_MS_T_125u = micrometals_material('MS', 'T',125)
+Micrometals_MS_T_060u = micrometals_material('MS', 'T', 60)
+Micrometals_MS_T_090u = micrometals_material('MS', 'T', 90)
+Micrometals_MS_T_125u = micrometals_material('MS', 'T', 125)
 
 # https://www.micrometals.com/products/materials/ms/
 Micrometals_Sendust_125u_2 = MagneticCoreMaterialSpecs(
@@ -134,7 +150,7 @@ Micrometals_Sendust_125u_2 = MagneticCoreMaterialSpecs(
     dc_magnetization=micrometals_dc_mag_model(125, a=2.911E-02, b=1.834E+00, c=2.003E+09, d=1.000E-08, e=7.219E+01),
 )
 
-#assert Micrometals_Sendust_125u_2.core_loss_density == Micrometals_MS_T_125u.core_loss_density
+# assert Micrometals_Sendust_125u_2.core_loss_density == Micrometals_MS_T_125u.core_loss_density
 
 # https://www.micrometals.com/products/materials/oe/
 Micrometals_OE_60u = MagneticCoreMaterialSpecs(
@@ -153,20 +169,3 @@ Micrometals_OC_60u = MagneticCoreMaterialSpecs(
     dc_bias=micrometals_dc_bias_model(a=1.000E-02, b=1.076E-07, c=2.308, d=0.000),
     dc_magnetization=micrometals_dc_mag_model(60, 1.147E-02, 1.891E+00, 2.006E+04, 2.633E+00, 2.204E+02),
 )
-
-
-def _main():
-    import dslib.magnetics.plot as plot
-    materials = [
-        Micrometals_Sendust_60u,
-        Micrometals_OE_60u,
-        MagInc_KoolMu_60,
-        KDM_SendustKS_60
-    ]
-    plot.core_loss_density_curves(materials, f_khz=40)
-    plot.dc_bias_curves(materials)
-    plot.dc_magnetization_curves(materials)
-
-
-if __name__ == '__main__':
-    _main()

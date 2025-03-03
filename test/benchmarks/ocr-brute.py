@@ -1,9 +1,9 @@
 import os
 import traceback
 
-from dslib.ocr import img2table_text
-from dslib.pdf2txt.parse import extract_text, validate_datasheet_text, extract_fields_from_text
-from dslib.pdf2txt.pipeline import pdf2pdf
+from dslib.pdf.ocr import img2table_text
+from dslib.pdf.parse import extract_text, validate_datasheet_text, extract_fields_from_text
+from dslib.pdf.pipeline import pdf2pdf
 
 
 def brute_force_ocr():

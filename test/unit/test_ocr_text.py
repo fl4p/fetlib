@@ -1,8 +1,8 @@
 from pymupdf import get_tessdata
 
-from dslib.ocr import img2table_text
-from dslib.pdf2txt.parse import extract_text
-from dslib.pdf2txt.pipeline import rasterize_pdf, ocrmypdf, rasterize_ocrmypdf
+from dslib.pdf.ocr import img2table_text
+from dslib.pdf.parse import extract_text
+from dslib.pdf.pipeline import rasterize_pdf, ocrmypdf, rasterize_ocrmypdf
 
 
 def _test_mupdfy():

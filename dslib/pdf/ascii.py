@@ -11,7 +11,7 @@ from pdfminer.layout import LAParams
 from dslib.cache import disk_cache
 from dslib.pdf.tree import vertical_sort, vertical_merge, pdf_blocks_pdfminer_six, bbox_union, Word, GraphicBlock, \
     TextBlock
-from dslib.pdf2txt import whitespaces_to_space
+from dslib.pdf.pdf2txt import whitespaces_to_space
 
 
 @disk_cache(ttl='99d', file_dependencies=[0], hash_func_code=True, salt=('v11', pdf_blocks_pdfminer_six.__code__.co_code))

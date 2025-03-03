@@ -3,14 +3,14 @@ import os
 
 import pandas as pd
 
-import dslib.pdf2txt.parse
-import dslib.pdf2txt.pipeline
+import dslib.pdf.parse
+import dslib.pdf.pipeline
 from dslib.field import DatasheetFields, Field
 from dslib.manual_fields import reference_data
-from dslib.pdf2txt import strip_no_print_latin, ocr_post_subs
-from dslib.pdf2txt.expr import dim_regs_csv
-from dslib.pdf2txt.parse import tabula_read, parse_datasheet, parse_field_csv, detect_fields
-from dslib.pdf2txt.tabular import tabula_browser
+from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs
+from dslib.pdf.expr import dim_regs_csv
+from dslib.pdf.parse import tabula_read, parse_datasheet, parse_field_csv, detect_fields
+from dslib.pdf.tabular import tabula_browser
 
 nan = na = math.nan
 
@@ -730,7 +730,7 @@ def test_pdf_ocr():
 
     from dslib.spec_models import DcDcLoadParams
     dcdc = DcDcLoadParams(40, 20, 40e3, 10, 200e-9, 20, ripple_factor=.2)
-    from dslib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+    from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
     pl_hs = dcdc_buck_hs(dcdc, mf, 6)
     assert pl_hs.P_sw > 0.5
     pl_ls = dcdc_buck_ls(dcdc, mf)
@@ -802,7 +802,7 @@ def test_pdf_ocr():
 
 
 def test_convertapi():
-    from dslib.pdf2txt.pipeline import convertapi
+    from dslib.pdf.pipeline import convertapi
     convertapi(
         '../datasheets/infineon/./IPT025N15NM6ATMA1.pdf',
         '../datasheets/infineon/IPT025N15NM6ATMA1.pdf.convertapi_pdf.pdf',
@@ -881,26 +881,26 @@ def test_mosfet_specs():
 
 
 def test_pdf_rasterize():
-    from dslib.pdf2txt.pipeline import rasterize_pdf
+    from dslib.pdf.pipeline import rasterize_pdf
     os.path.exists('../datasheets/onsemi/FDP047N10.r.pdf') and os.remove('../datasheets/onsemi/FDP047N10.r.pdf')
     rasterize_pdf('../datasheets/onsemi/FDP047N10.pdf', '../datasheets/onsemi/FDP047N10.r.pdf')
     assert os.stat('../datasheets/onsemi/FDP047N10.r.pdf').st_size > os.stat('../datasheets/onsemi/FDP047N10.pdf').st_size
 
 
 def test_extract_fields_from_dataframes():
-    ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
+    ds = dslib.pdf.parse.extract_fields_from_dataframes(
         dfs=[pd.DataFrame(['63,Gate charge total’,Qs,-,26 35,"nC | Vop=50 V, />=10 A, Ves=0 to 10 V",,,'.split(',')])],
         mfr='infineon',
         ds_path='')
     assert ds.Qg == (na, 26, 35)
 
-    ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
+    ds = dslib.pdf.parse.extract_fields_from_dataframes(
         dfs=[pd.DataFrame(['43,Qgs,-,27,-,nC,,,,,'.split(',')])],
         mfr='infineon',
         ds_path='')
     assert ds.Qgs.typ == 27
 
-    ds = dslib.pdf2txt.parse.extract_fields_from_dataframes(
+    ds = dslib.pdf.parse.extract_fields_from_dataframes(
         dfs=[pd.DataFrame(['56,Rise time te,,21,,ns,"Voo=75 V, Ves=10 V, Ib=45 A,",,,,'.split(',')])],
         mfr='infineon',
         ds_path='')
@@ -909,16 +909,16 @@ def test_extract_fields_from_dataframes():
 
 def test_substract_symbols():
     need = {'A', ('B', 'C')}
-    assert dslib.pdf2txt.parse.subsctract_needed_symbols(need, {'D'}) is None
+    assert dslib.pdf.parse.subsctract_needed_symbols(need, {'D'}) is None
     assert need == {'A', ('B', 'C')}
 
-    assert dslib.pdf2txt.parse.subsctract_needed_symbols(need, {'A'}) is None
+    assert dslib.pdf.parse.subsctract_needed_symbols(need, {'A'}) is None
     assert need == {('B', 'C')}
 
-    assert dslib.pdf2txt.parse.subsctract_needed_symbols(need, {'C'}) is None
+    assert dslib.pdf.parse.subsctract_needed_symbols(need, {'C'}) is None
     assert not need
 
-    assert dslib.pdf2txt.parse.subsctract_needed_symbols({'A', ('B', 'C')}, {'C', 'B'}, copy=True) == {'A'}
+    assert dslib.pdf.parse.subsctract_needed_symbols({'A', ('B', 'C')}, {'C', 'B'}, copy=True) == {'A'}
 
 
 import urllib.parse
@@ -985,7 +985,7 @@ def test_tabular_browser():
     # assert tabula_browser('../datasheets/infineon/IQE050N08NM5CGATMA1.pdf') # fails need OCR
 
     dfs = tabula_browser('../datasheets/vishay/SIR680ADP-T1-RE3.pdf', pad=20)
-    d = dslib.pdf2txt.parse.extract_fields_from_dataframes(dfs, mfr='vishay')
+    d = dslib.pdf.parse.extract_fields_from_dataframes(dfs, mfr='vishay')
     assert d.Qg
     ref = DatasheetFields("None", "None",
                           fields=[Field("Coss", nan, 614.0, nan, "pF"), Field("Qgs", nan, 17.0, nan, "nC"),
@@ -996,7 +996,7 @@ def test_tabular_browser():
 
     dfs = tabula_browser('../datasheets/littelfuse/IXTQ180N10T.pdf')
     df = pd.concat(dfs, axis=0)
-    d = dslib.pdf2txt.parse.extract_fields_from_dataframes(dfs, mfr='infineon', ds_path='')
+    d = dslib.pdf.parse.extract_fields_from_dataframes(dfs, mfr='infineon', ds_path='')
     assert d.Qg == (na, 151, na)
     assert d.tRise == (na, 54, na)  # todo typ
     assert d.tFall == (na, 31, na)

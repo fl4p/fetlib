@@ -709,7 +709,7 @@ def get_field_detect_regex(mfr):
             re.IGNORECASE),
 
         Vds=(rec(
-            r'(Drain-to-Source[\s-]+(Breakdown[\s-]+)?Voltage|^B?V[ _]?\s*(\(BR\))?dss($|[^/]))',
+            r'(Drain-(to-)?Source[\s-]+(Breakdown[\s-]+)?Voltage|^B?V[ _]?\s*(\(BR\))?dss?($|[^/]))',
             re.IGNORECASE), (
                  'temperature', 'coefficient'  # coefficient
              )),

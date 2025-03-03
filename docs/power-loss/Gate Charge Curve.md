@@ -1,7 +1,18 @@
+TODO:
+writeup:
+- different models (Qsw, ti, vishay)
+- Lcsi
+- voltage dependency of Qgd or Qgs?
+
+Qgs:
+TODO https://github.com/fl4p/fetlib/issues/6
+Ciss: TODO https://github.com/fl4p/fetlib/issues/7
+
 # Vishay AN608A (Feb-2016)
 
 **Power MOSFET Basics: Understanding Gate Charge and Using it to Assess Switching Performance**
 https://www.vishay.com/docs/73217/an608a.pdf
+/using ciss
 
 ![img.png](img/img.webp)
 ![img_1.png](img/img_1.webp)

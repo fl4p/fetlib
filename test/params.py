@@ -4,7 +4,7 @@ import pandas as pd
 
 from dslib import write_csv
 from dslib.field import DatasheetFields
-from dslib.spec_models import MosfetSpecs
+from dslib.mosfet import MosfetSpecs
 from dslib.store import ObjectDatabase, Mfr, Mpn
 
 #from dslib.store import datasheets_db

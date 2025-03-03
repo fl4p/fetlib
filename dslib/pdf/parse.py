@@ -12,10 +12,11 @@ import timeout_decorator
 
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
-from dslib.pdf2txt import expr, strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
+from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
     whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
-from dslib.pdf2txt.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline, date_regexs, months_short
-from dslib.pdf2txt.pipeline import convertapi, pdf2pdf
+from dslib.pdf import expr
+from dslib.pdf.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline, date_regexs, months_short
+from dslib.pdf.pipeline import convertapi, pdf2pdf
 
 
 def _empty(s):
@@ -412,7 +413,7 @@ def tabula_pdf_dataframes(pdf_path=None):
 
     dfs = []
 
-    from dslib.pdf2txt.tabular import tabula_browser, NoTextInPdfError
+    from dslib.pdf.tabular import tabula_browser, NoTextInPdfError
 
     last_e = None
 

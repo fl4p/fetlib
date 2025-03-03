@@ -1,6 +1,6 @@
-from dslib.magnetics import H2oe, µ0
-from dslib.magnetics.cores import MagneticCoreSpecs
-from dslib.powerloss import CoilSpecs
+from maglib import H2oe, µ0
+from maglib.cores import MagneticCoreSpecs
+from dclib.powerloss import CoilSpecs
 from dslib.spec_models import DcDcLoadParams
 
 """

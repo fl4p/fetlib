@@ -7,7 +7,7 @@ import numpy as np
 
 from dslib.cache import disk_cache
 from dslib.pdf.to_html import Annotation
-from dslib.pdf2txt import normalize_text, whitespaces_to_space
+from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 
 
 def draw_annotations(image: PIL.Image.Image, page_annotations: List[Annotation]):

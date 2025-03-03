@@ -5,7 +5,7 @@ from dslib.pdf.ascii import Row
 from dslib.pdf.sheet.annotation import display_borderless_tables
 from dslib.pdf.to_html import Annotation
 from dslib.pdf.tree import Bbox, bbox_union, Page
-from dslib.pdf2txt.parse import DetectedSymbol
+from dslib.pdf.parse import DetectedSymbol
 
 
 class DetectedRowField():
