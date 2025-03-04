@@ -107,7 +107,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
             progress_bar=True,
             max_image_mpixels=500,  # 250 default
             # pages='1,2-4',
-            plugins=pwd + '/dslib/ocr/hooks_ocrmypdf.py',
+            plugins=pwd + '/pdf/ocr/hooks_ocrmypdf.py',
         )
     except Exception as e:
         if try_decrypt and ('is encrypted' in str(e) or isinstance(e, ocrmypdf_.EncryptedPdfError)):

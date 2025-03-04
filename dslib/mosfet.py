@@ -1,7 +1,6 @@
 import math
 import warnings
 
-import dslib.store
 from dslib import isnum, rel_err, round_to_n_dec
 
 Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6

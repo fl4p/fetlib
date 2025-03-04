@@ -1,3 +1,4 @@
+import maglib.cores
 from dslib.field import MpnMfr
 from dclib.powerloss import CoilSpecs
 from dslib.spec_models import BuckConverter
@@ -235,7 +236,7 @@ def MPPT_Fheat2():
         turns=12,
         wire_awg=16.8, wire_strands=10,
         # core=dslib.magnetics.cores.KDM_KS184_125A.stack(2),
-        core=dslib.magnetics.cores.Micrometals_MS_184_125.stack(2),
+        core=maglib.cores.Micrometals_MS_184_125.stack(2),
     )
 
     buck = BuckConverter(

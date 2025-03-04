@@ -61,6 +61,8 @@ def fontforge_bin():
     paths = [
         '/Applications/FontForge.app/Contents/Resources/opt/local/bin/fontforge',
         '/Volumes/FontForge/FontForge.app/Contents/Resources/opt/local/bin/fontforge',
+        '/usr/bin/fontforge',
+        '/usr/local/bin/fontforge',
     ]
     for path in paths:
         if os.path.isfile(path):

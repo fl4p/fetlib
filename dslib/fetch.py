@@ -54,7 +54,7 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         ds_url = get_datasheet_url(mfr, mpn)
 
     if mfr == 'onsemi':
-        import dslib.discovery.parts_discovery
+        #import dslib.discovery.parts_discovery
         if not requests.head(ds_url).ok:
             ds_url = dslib.discovery.onsemi.onsemi_ds_url(mpn)
         # ds_url_alt = ds_url.replace('fdb','fdp')
