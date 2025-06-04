@@ -12,7 +12,8 @@ import pandas as pd
 
 import dslib.manual_fields
 from discover_parts import discover_mosfets
-from dslib import write_csv
+from dslib import write_csv, dotdict
+from dslib.cache import disk_cache
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
 from dslib.discovery import DiscoveredPart
@@ -64,6 +65,7 @@ def main():
     parser.add_argument('--vpl-fallback', default=4.5)
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
+    parser.add_argument('--no-pre-select', action='store_true') # also read datasheets of parts that are out of spec, takes much longer
     parser.add_argument('--clean', action='store_true')
     args = parser.parse_args(sys.argv[1:])
 
@@ -101,7 +103,8 @@ def main():
 
     # pre-select mosfets by voltage and current
     n_pre_select = len(parts)
-    parts = dcdc.select_mosfets(parts)
+    if not args.no_pre_select:
+        parts = dcdc.select_mosfets(parts)
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
     print(set(p.mpn for p in parts))
@@ -111,7 +114,7 @@ def main():
     from wakepy import keep
     with keep.running():
         # do all the magic: download datasheets, read them and compute power loss:
-        parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, args=args)
+        parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, args=dotdict(args.__dict__))
 
     # show parts missing Qsw, no switching loss estimation is possible:
     no_qsw = [p for p in parts if math.isnan(p.specs.Qsw)]
