@@ -17,7 +17,8 @@ class ConductorMaterial():
         self.temp_coefficient_20 = temp_coefficient_20
 
     def resistivity_T(self, temperature):
-        return self.resistivity_20 * temperature
+        raise NotImplementedError()
+        #return self.resistivity_20 * temperature
 
 
 CopperPure = ConductorMaterial('Copper', 1.68e-8, 3.93e-3)
@@ -56,28 +57,92 @@ def d2awg(d):
     return 36 - 39 * (math.log10(d * 1e3 / 0.127) / math.log10(92))
 
 
+def copper_resistivity_tempco(resistivity20, temp, tc=0.00393):
+    return resistivity20 + (temp - 20) * tc
+
+
 def dc_resistance(resistivity, length: float, diameter: float):
+    # Snelling Soft Ferrites p340
     return resistivity * length / (math.pi * (diameter / 2) ** 2)
 
 
 def skin_depth(resistivity: float, f: float, mu_r=1.0):
     # https://en.wikipedia.org/wiki/Skin_effect
+    # mu_r is usually 1 (copper)
     return (2 * resistivity / (2 * math.pi * f * µ0 * mu_r)) ** .5
 
 
 def ac_resistance(resistivity: float, length: float, diameter: float, f: float):
-    # this assumes the conductor is a hollow cylinder
-    # TODO reference
+    """
+
+    Returns the total (Rdc+Rac) resistance considering skin depth.
+    See ac_resistance_factor() for details
+
+    :param resistivity:
+    :param length:
+    :param diameter:
+    :param f:
+    :return:
+    """
+
     sd = skin_depth(resistivity, f)
     assert sd / diameter < 0.25
     return resistivity * length / (math.pi * (diameter - sd) * sd), sd
 
 
 def ac_resistance_factor(resistivity, diameter: float, f):
-    # Rac/Rdc
+    """
+    Compute Rac/Rdc ratio considering the skin effect only (no proximity effect)
+    The conductor is considered a hollow cylinder.
+
+    :param resistivity: Conductor resistivity
+    :param diameter: Wire diameter in mm
+    :param f: frequency in Hz
+    :return:
+    """
     sd = skin_depth(resistivity, f)
-    sd = min(sd, diameter / 2)
+    assert sd / diameter < 0.3
     return diameter ** 2 / (4 * sd * (diameter - sd)), sd
+
+
+def acr_factor_micrometals(resistivity, diameter: float, f, strands, turns, id, od):
+    """
+
+    Fac/dc = Fskin + Fprox
+
+    :param resistivity:
+    :param diameter:
+    :param f:
+    :param strands:
+    :param turns:
+    :param id:
+    :param od:
+    :return: tuple (Fskin, Fprox)
+    """
+    # https://s3.amazonaws.com/micrometals-production/filer_public/7c/72/7c728863-9c0e-40b3-ba86-a3f94d5ad1c1/acresistance_rev0_110123.pdf
+
+    sd = skin_depth(resistivity, f)
+    zeta = diameter / sd
+
+    Ga = zeta ** 6 + 6.1 * zeta ** 5 + 32 * zeta ** 4 + 13 * zeta ** 3 + 90 * zeta ** 2 + 110 * zeta
+    F_hf_s = (1 + Ga / 36864) ** -.5
+
+    # f_skin = 1 + zeta ** 4 / 768 * F_hf_s
+    # here we remove the +1 as we want the F per definition in soft ferrites Rac=Rdc(1+F)
+    f_skin = zeta ** 4 / 768 * F_hf_s
+
+    assert id < od
+    b_eq = math.pi / 2 * (id + od)
+    # for  E, PQ and EQ:
+    # w_h = 2*D (from data sheet)
+    # b_eq = 2*w_h
+
+    G_t = zeta ** 6 + 2.7 * zeta ** 5 - 1.3 * zeta ** 4 - 17 * zeta ** 3 + 85 * zeta ** 2 - 43 * zeta
+    F_hf_p = (1 + G_t / 1024) ** -.5
+
+    f_prox = (math.pi * strands * turns) ** 2 * diameter ** 2 * zeta ** 4 / (192 * b_eq ** 2) * F_hf_p
+
+    return f_skin, f_prox
 
 
 class Winding():
@@ -97,7 +162,13 @@ class Winding():
         d = awg2d(self.awg)
         return dc_resistance(float(self.mat.value), self.avg_wire_length, d) / self.strands
 
-    def Rac(self, f: float):
+    # def Rac(self, f: float):
+    #    d = awg2d(self.awg)
+    #    # r, sd = ac_resistance(float(self.mat.value), self.avg_wire_length, d, f)
+    #    acr_factor_micrometals(float(self.mat.value), d, f, self.strands, self.turns, id, od)
+    # return r / self.strands
+
+    def Rac_sepe(self, f: float, core_id: float, core_od: float):
         d = awg2d(self.awg)
-        r, sd = ac_resistance(float(self.mat.value), self.avg_wire_length, d, f)
-        return r / self.strands
+        F_se, F_pe = acr_factor_micrometals(float(self.mat.value), d, f, self.strands, self.turns, core_id, core_od)
+        return self.Rdc * (1 + F_se + F_pe)
