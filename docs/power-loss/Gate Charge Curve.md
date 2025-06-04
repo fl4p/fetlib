@@ -105,3 +105,6 @@ https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulat
 ## Google searches
 
 * `mosfet switching loss gate charge curve qgs qgd`
+
+* Vpl "While the Miller plateau Vpl (I,TJ ) can be calculated by interpolating the transfer curves like the ones in Figure 6." https://epc-co.com/epc/Portals/0/epc/documents/application-notes/AN030%20Hard%20Switching%20Losses%20Calculation.pdf
+* 
