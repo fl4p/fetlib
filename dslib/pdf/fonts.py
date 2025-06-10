@@ -94,6 +94,8 @@ def find_good_unicodes_for_name(name) -> List[int]:
     def similar(a, b):
         return SequenceMatcher(None, a.replace(' ', ''), b).ratio()
 
+    return list(range(0xE000, 0xF8FF))
+
     print('looking for a good unicode name match for', repr(name), '..')
 
     name = name.upper().replace(' ', '')
@@ -256,8 +258,8 @@ class EmbeddedPdfFont():
                 font.ext = 'otf'
         except (KeyboardInterrupt, TimeoutError, NameError, AttributeError):
             raise
-        except:
-            print(traceback.format_exc())
+        except: # OverflowError
+            print('error probing font', traceback.format_exc())
             os.remove(font.path)
 
     def __str__(self):
