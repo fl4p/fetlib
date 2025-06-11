@@ -70,7 +70,7 @@ async def onsemi_mosfets():
             url=url,
             prefix=prefix,
             fn_ext='csv',
-            click='button.btn-export',
+            click=['button.btn-export', 'button.btn-export'],
         )
 
         df = pd.read_csv(fn)
