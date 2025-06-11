@@ -96,12 +96,17 @@ class SwitchPowerLoss():
         )
 
     def buck_hs(self):
+        """
+        The attributed (not dissipated) power loss when used as high-side (control) switch in buck topology.
+        :return:
+        """
         p = self.P_sw + self.P_cl + self.P_gd + self.P_coss
         return p
 
     def buck_ls(self):
-        # P_rr is induced but not self loss !
-        p = self.P_rr + self.P_cl + self.P_gd + self.P_dt
+        # attributed (not dissipated)
+        # P_rr and P_coss is induced but not self-dissipated!
+        p = self.P_rr + self.P_cl + self.P_gd + self.P_dt + self.P_coss
         # Qoss is recovered, not lost!
         return p
 
@@ -168,16 +173,23 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, 
 
     rds = mf.Rds_on * Rds_temp_rise
 
+    # for Coss the HS contribution is the energy stored in Coss
+    # which is wasted in its own channel during turn-on
+    # mf.Coss is Coss at ~V_bus. Coss is ~1/sqrt(V)
+    # https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
+
+    # TODO compute Coss at given dc.Vi, for 80V fets, this is given at 40V, Coss is ~1/sqrt(V)
+    # TODO consider dc.Vi for Coss loss
+    # instead of: 2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f
+    # use:        2 / 3 * mf.Coss * dc.Vi ** (3/2) * mf.Coss_V0 ** .5 * dc.f,
+
     return SwitchPowerLoss(
         P_cl=i_rms2 * rds,  # conduction loss
         P_sw=(Psw_on + Psw_off),
         P_dt=0,  # body diode never conducts
         P_rr=0,  # body diode never conducts
         P_gd=(gd.Von - gd.Voff) * dc.f * 2 * mf.Qg,
-        P_coss=2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,
-        # TODO  ^ compute Coss at given dc.Vi, for 80V fets, this is given at 40V, Coss is ~1/sqrt(V)
-        # 2/3 comes from integration of Coss(V)
-        # https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
+        P_coss=2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,  # 2/3 comes from integration of Coss(V)
         cond=dict(
             P_sw=dict(
                 **t_cond,
@@ -219,20 +231,27 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, rds_temp_ri
     if mf.QgdQgsRatio > 1:
         warnings.warn('%s: Qgd/Qgs %.1f > 1! LS might suffer from self turn-on' % (mf.part, mf.QgdQgsRatio))
 
+    # charge in Coss is recovered during discharge
+    # the only loss is the during turn-off through the charge "resistor"
+    # P_coss = V_bus * Qoss - Eoss
+    # Eoss = 2 / 3 * Coss * V_bus ** 2 * dc.f
+    #
+
+    qoss = 2 * mf.Coss * dc.Vi
     return SwitchPowerLoss(
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,  # TODO https://www.ti.com/lit/an/slyt664/slyt664.pdf
         P_rr=dc.Vi * dc.f * Qrr_eff,  # this is dissipated in HS
         P_gd=(gd.Von - gd.Voff) * dc.f * 2 * mf.Qg,
-        P_sw=0,  # negligible
-        P_coss=0,  # negligible (charge is recovered)
+        P_sw=0,  # negligible TODO diode?
+        P_coss=4 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,  # charge is recovered, but charging over a resistance path
         cond=dict(
             R_on=dict(Rds=rds),
             P_dt=dict(Vsd=vsd, tDead=dc.tDead),
             P_rr=dict(Qrr=Qrr_eff),
             P_gd=(dict(Qg=mf.Qg)),
+            P_coss=dict(Coss=mf.Coss, Qoss=qoss),
         )
-        # P_coss=.5 * dc.f * dc.Vi ** 2 * mf.Coss,
     )
 
 
