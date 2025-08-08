@@ -65,6 +65,7 @@ def main():
     parser.add_argument('--vpl-fallback', default=4.5)
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
+    parser.add_argument('--no-download', action='store_true')
     parser.add_argument('--no-pre-select', action='store_true') # also read datasheets of parts that are out of spec, takes much longer
     parser.add_argument('--clean', action='store_true')
     args = parser.parse_args(sys.argv[1:])
@@ -123,7 +124,7 @@ def main():
         print(p.discovered.get_ds_path())
 
 
-def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr):
+def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -134,9 +135,6 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
         from dslib.cache import disk_cache_disable
         disk_cache_disable(True)
 
-    if not os.path.exists(ds_path):
-        if not os.path.exists(ds_path):
-            asyncio.run(fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn))
 
     ds = DatasheetFields(part=part)
 
@@ -161,6 +159,9 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
         if ld_keys:
             need_symbols = subsctract_needed_symbols(need_symbols, ld_keys, copy=True)
 
+    if not os.path.exists(ds_path) and not no_download:
+        asyncio.run(fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn))
+
     # parse datasheet (tabula and pdf2txt):
     if ds_path in excludes:
         ds.errors.append('excluded')
@@ -172,6 +173,7 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr)
             ds.date_from_text = dsp.date_from_text
             ds.add_multiple(dsp.all_fields())
         except (KeyError, AttributeError, NameError):  # Type, Timeout, TimeoutError,
+            logging.error('Could not parse datasheet %s', ds_path)
             raise
         except Exception as e:
             if not isinstance(e, (NoTabularData, TooManyPages,)):
