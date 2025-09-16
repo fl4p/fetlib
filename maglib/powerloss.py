@@ -99,6 +99,7 @@ def Bpk_sinusoidal(dc: DcDcLoadParams, coil: CoilSpecs):
 
 
 def core_hysteresis_loss(Bpk: float, core: MagneticCoreSpecs, f: float):
+    # TODO this probably includes eddy current loss
     core_loss_density_mW_cm3 = core.mat.core_loss_density(Bpk_tesla=Bpk, f_khz=f * 1e-3)
     P_core = core_loss_density_mW_cm3 * core.A_e * core.l_e * 1e-3 * 1e6  # coil.core.Vol * 1e6 * 1e-3
     return P_core, Bpk, core_loss_density_mW_cm3

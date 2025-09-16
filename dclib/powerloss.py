@@ -415,9 +415,15 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
 
     P_dcr = I_ms * coil.Rdc
 
-    from maglib import ac_resistance_factor, MaterialResistivity
-    acf, sd = ac_resistance_factor(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f)
-    rac = (acf - 1) * coil.Rdc
+    # acf, sd = ac_resistance_factor(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f)
+    # rac = (acf - 1) * coil.Rdc
+
+    F_se, F_pe = acr_factor_micrometals(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f,
+                                        coil.wire_strands, coil.turns,
+                                        id=coil.core.shape.ID, od=coil.core.shape.OD,
+                                        )
+    rac = (1 + F_se + F_pe) * coil.Rdc
+    sd = skin_depth(MaterialResistivity.CopperAnnealed.value, dc.f)
 
     # notice that this is independent from duty cycle
     # https://www.mouser.com/pdfDocs/Coilcraft_inductorlosses.pdf
@@ -459,7 +465,7 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
     Bpk_ac = ur * µ0 * Hpk_ac  # peak ac flux density [T]
     B_pk = ur * µ0 * Hpk_ac
     """
-    from maglib import core_loss_from_dc_bias
+    from maglib.powerloss import core_loss_from_dc_bias
 
     # P_core1, Bpk1, cld1 = core_loss_from_dc_magnetization(dc, coil)  # method 1
     P_core1, Bpk1, cld1 = 0, 0, 0
@@ -474,7 +480,7 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
         P_core=max(P_core1, P_core2),
         get_cond=lambda k: dict(
             P_dcr=dict(Rdc=coil.Rdc),
-            P_acr=dict(δ=sd, acf=acf),
+            P_acr=dict(Rac=rac, δ=sd, Fskin=F_se, Fprox=F_pe),
             P_core=dict(
                 ΔI=dc.Iripple,
                 Bpk=max(Bpk1, Bpk2),  # peak ac flux density
