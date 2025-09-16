@@ -144,14 +144,15 @@ class DcDcLoadParams:
     def vds_in_range(self, vds):
         if abs(vds) < 2:  # probably invalid
             return True
-        return not (vds < (self.Vi * 1.1)) and not (vds > (self.Vi * 4))
+        return not (vds < (self.Vi * 1.1)) and not (vds > (self.Vi * 5))
 
     def select_mosfets(dcdc, parts: List['DiscoveredPart']):
-        rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2
+        max_parallel = 6
+        rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2 * max_parallel * 2
         # use inverted comparison to pass-through nan-values
         return [p for p in parts if (
                 dcdc.vds_in_range(p.specs.Vds_max)
-                and not (p.specs.ID_25 < dcdc.Io_max * 1.2) and not (p.specs.Rds_on_10v_max > rds_on_max))]
+                and not (p.specs.ID_25 < dcdc.Io_max * 1.2 / max_parallel) and not (p.specs.Rds_on_10v_max > rds_on_max))]
 
     def C_out_min(self, vout_ripple):
         # https://www.ti.com/lit/ds/symlink/lm5163.pdf
