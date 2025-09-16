@@ -1,5 +1,6 @@
 TODO:
 writeup:
+
 - different models (Qsw, ti, vishay)
 - Lcsi
 - voltage dependency of Qgd or Qgs?
@@ -86,16 +87,18 @@ https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulat
 |               |                                                        |
 |               |                                                        |
 
-| AN                 | Ig(t)              | LCSI | Tj                 | self turn-on | overlap loss | comments                                       |
-|--------------------|--------------------|------|--------------------|--------------|--------------|------------------------------------------------|
-| EPC AN030  2024    | ✅                  | no   | ✅                  | no           | ✅            |                                                |
-| Nexperia WP  2024  |                    |      |                    |              |              |                                                |
-| SLVAEQ9–July 2020  | ✅                  | no   | yes, not specified |              |              |                                                |
-| Vishay AN608A 2016 | ✅                  | ✅    | no                 | no           |              |                                                |
-| TI AA 1Q 2016      | yes, not specified | no   | no                 | ✅            |              | BD Conduction loss, freq charts, HS/LS         |
-| TI SLPA009A 2011   | (no) for Qgd>>Qgs2 | ✅    | no                 | no           | no           | need adjustments for modern fets with Qgd<Qgs2 |
-| Infineon AN 2006   |                    |      | ✅                  |              |              | CGD(UDD)                                       |
-| rohm               |                    |      |                    |              |              |                                                |
+Application Notes about power losses in DC-DC converters:
+
+| AN                                                                         | Ig(t)              | LCSI | Tj                 | self turn-on | overlap loss | comments                                       |
+|----------------------------------------------------------------------------|--------------------|------|--------------------|--------------|--------------|------------------------------------------------|
+| EPC AN030  2024                                                            | ✅                  | no   | ✅                  | no           | ✅            |                                                |
+| Nexperia WP  2024                                                          |                    |      |                    |              |              |                                                |
+| SLVAEQ9–July 2020                                                          | ✅                  | no   | yes, not specified |              |              |                                                |
+| Vishay AN608A 2016                                                         | ✅                  | ✅    | no                 | no           |              |                                                |
+| TI AA 1Q 2016                                                              | yes, not specified | no   | no                 | ✅            |              | BD Conduction loss, freq charts, HS/LS         |
+| TI SLPA009A 2011                                                           | (no) for Qgd>>Qgs2 | ✅    | no                 | no           | no           | need adjustments for modern fets with Qgd<Qgs2 |
+| [Infineon AN 2006](https://application-notes.digchip.com/070/70-41484.pdf) |                    |      | ✅                  |              |              | CGD(UDD)                                       |
+| rohm                                                                       |                    |      |                    |              |              |                                                |
 
 # TODO
 
@@ -106,5 +109,7 @@ https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulat
 
 * `mosfet switching loss gate charge curve qgs qgd`
 
-* Vpl "While the Miller plateau Vpl (I,TJ ) can be calculated by interpolating the transfer curves like the ones in Figure 6." https://epc-co.com/epc/Portals/0/epc/documents/application-notes/AN030%20Hard%20Switching%20Losses%20Calculation.pdf
+* Vpl "While the Miller plateau Vpl (I,TJ ) can be calculated by interpolating the transfer curves like the ones in
+  Figure
+  6." https://epc-co.com/epc/Portals/0/epc/documents/application-notes/AN030%20Hard%20Switching%20Losses%20Calculation.pdf
 * 

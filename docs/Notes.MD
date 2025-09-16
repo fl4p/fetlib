@@ -102,6 +102,8 @@ Yoo et al propose a new FOM [[2007, link](https://sci-hub.se/10.1109/EDSSC.2007.
 FOM_new = (Il²) * Rds_on  +  (4 * fs * Vgg) * Qg`
 ```
 
+Fom: https://epc-co.com/epc/Portals/0/epc/documents/papers/eGaN%20FET%20Electrical%20Characteristics.pdf?ver=unEVpnM8lzffpKDhvmPDBg%3d%3d
+
 * `Il`: average load current
 * `fs`: switching frequency
 * `Vgg`: gate driver supply voltage

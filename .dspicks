@@ -39,6 +39,9 @@ doubleChar=datasheets/vishay/SQM120N10-3M8_GE3.pdf
 ; fontTroubles
 ft1=datasheets/infineon/IPF039N08NF2SATMA1.pdf
 
+; Vds = 0.5V wtf
+bsc093=datasheets/infineon/BSC093N15NS5ATMA1.pdf
+; TODO if head row contains the word Diagram, skip whole table
 
 
 ; backfill units

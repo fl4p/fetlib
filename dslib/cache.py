@@ -3,6 +3,7 @@ import hashlib
 import os
 import pickle
 import random
+import re
 import string
 import threading
 import time
@@ -100,9 +101,11 @@ def _disk_cache_housekeeping(days_max=7):
     ran_housekeeping = True
 
 
-def _get_cache_file(host, db, q, index_format: Union[Tuple[str], str]):
+def _get_cache_file(host, db, q, index_format: Union[Tuple[str], str], prefix=None):
     h = hashlib.sha224(
         (((host + ":") if host is not None else '') + db + ">" + q + str(index_format)).encode('utf-8')).hexdigest()
+    if prefix:
+        h = re.sub(r'[^\w_. -]', '_', prefix) + '_'+ h
     return cache_dir + "/" + h + ".pkl"
 
 
@@ -133,6 +136,24 @@ def _get_fn(key, ext):
     except:
         pass
     return path
+
+
+def delete_disk_cache_tree(prefix):
+    assert len(prefix) > 1
+    path = cache_dir + "/" + prefix
+    if os.path.exists(path):
+        assert os.path.isdir(path), path
+        logger.warning('deleting %s/**', path)
+
+        def onerror(*args):
+            logger.warning('error deleting %s', args)
+
+        # shutil.rmtree(path, ignore_errors=True, onerror=onerror)
+
+
+def delete_module_disk_cache_tree(mod):
+    prefix = get_module_cache_key_prefix(mod)
+    delete_disk_cache_tree(prefix)
 
 
 def _set_df_file_store_mtime(fn, df):
@@ -287,8 +308,8 @@ def to_hashable(obj):
     if isinstance(obj, (list, tuple)):
         return tuple(map(to_hashable, obj))
 
-    if isinstance(obj, (Streaming, NDFrame)):
-        return type(obj), id(obj)
+    #if isinstance(obj, (Streaming, NDFrame)):
+    #    return type(obj), id(obj)
 
     raise ValueError(
         "%r can not be hashed. Try providing a custom key function."
@@ -434,7 +455,21 @@ def disk_cache_key(mod, target, ignore_kwargs, args, kwargs):
     mod_file = mod.__file__.replace('__mp_main__', '__main__')
     path_hash = hashlib.sha224(bytes(mod_file, 'utf-8')).hexdigest()[:4]
 
-    cache_key_str = '/'.join([mod_file, path_hash, target.__name__, cache_key_hash])
+    cache_key_prefix = ''
+    for a in args:
+        if isinstance(a, str) and len(a) < 20:
+            cache_key_prefix += a + '_'
+        else:
+            break
+    for k, a in kwargs.items():
+        if isinstance(a, str) and len(a) < 20:
+            cache_key_prefix += k + '=' + a + '_'
+        else:
+            break
+    if cache_key_prefix:
+        cache_key_prefix = re.sub(r'[^\w_. -]', '_', cache_key_prefix)
+
+    cache_key_str = '/'.join([mod_file, path_hash, target.__name__, cache_key_prefix + cache_key_hash])
     return cache_key_str
 
 
@@ -475,6 +510,36 @@ def fallback_cache(exception=None, ignore_kwargs=None):
         return _fallback_cache_wrapper
 
     return decorate
+
+
+class CacheStorageRedis(CacheStorage):
+    def __init__(self, serializer):
+        self.serializer = serializer
+        from lib.data.redis import r_tsc
+        self.redis = r_tsc
+        self._lock = RLock()
+
+    def get(self, key):
+        v = self.redis.get('csr:' + key)
+        if v is None:
+            return None
+        return self.serializer.loads(v)
+
+    def get_default(self, key, default_value, ttl):
+        with self._lock:
+            v = self.get(key)
+            if v is None:
+                v = default_value()
+                self.set(key, v, ttl=ttl)
+        return v
+
+    def set(self, key, value, ttl=None, ignore_overwrite=False):
+        assert isinstance(key, str), "key must be string"
+        ser_val = self.serializer.dumps(value)
+        self.redis.set('csr:' + key, ser_val, px=ttl)
+
+    def __delitem__(self, key):
+        self.redis.delete('csr:' + key)
 
 
 # noinspection PyShadowingNames

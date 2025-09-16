@@ -98,7 +98,7 @@ class MosfetSpecs:
             warnings.warn('abs Vsd is greater than 10, ' + str(Vsd) + ', assuming ' + str(Vsd / 10))
             Vsd /= 10
 
-        self.Coss = Coss
+        self.Coss = Coss # Vds = Vin
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
@@ -110,7 +110,7 @@ class MosfetSpecs:
 
         assert math.isnan(Qg) or .2e-9 < Qg < 2000e-9, (
             "qg range", Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1, FF3MR20KM1HHPSA1
-        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 31000e-9, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC
+        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 200e-6, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC, SUP70042E:189uC
 
         rr = self.Qrr / self.trr
         assert math.isnan(rr) or 0.01 <= rr <= 40, ("qrr/trr ratio", self.Qrr / self.trr, self.Qrr, self.trr)
@@ -206,7 +206,14 @@ class MosfetSpecs:
 
     @property
     def FoM(self):
+        # "Rectification FoM"
         return self.Rds_on * self.Qg * 1e3 * 1e9  # [mΩ*nC]
+
+    #@property
+    #def FoMswitch(self):
+    #    # "Switch FoM" (Qgd plays mayor role in switch losses)
+    #    # https://epc-co.com/epc/Portals/0/epc/documents/papers/eGaN%20FET%20Electrical%20Characteristics.pdf
+    #    return self.Rds_on * self.Qgd * 1e3 * 1e9  # [mΩ*nC]
 
     @property
     def FoMqrr(self):

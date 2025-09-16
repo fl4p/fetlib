@@ -229,7 +229,7 @@ def parse_field_value(s, no_raise=False):
     if not s:
         return math.nan
     s = normalize_text(s.strip().strip(' \x03').rstrip('L.'))
-    if not s or s in {'-', '.', '"', "'", '#', '~NA~', 'N/A'} or set(s) == {'-'}:
+    if not s or s in {'-', '.', '=', '"', "'", '#', '~NA~', 'N/A'} or set(s) == {'-'}:
         return math.nan
     if s.startswith('+- '):
         s = s[3:]
@@ -292,6 +292,10 @@ class DatasheetFields():
         if math.isnan(rds_on_max):
             rds_on_max = ds.get_max('Rds_on', True)
 
+        Id = ds.get_typ_or_max_or_min('ID_25', False)
+        if math.isnan(Id):
+            Id = ds.get_typ_or_max_or_min('Id', False)
+
         return dict(
             mfr=part.mfr,
             mpn=part.mpn,
@@ -299,7 +303,7 @@ class DatasheetFields():
 
             Vds_max=ds.get_max_or_min('Vds', True),
             Rds_max=rds_on_max * 1000,
-            Id=ds.get_typ_or_max_or_min('ID_25', False),
+            Id=Id,
 
             Qg_max=ds.get_max('Qg'),
             Qgs=ds.get_typ_or_max_or_min('Qgs'),

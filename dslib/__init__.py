@@ -9,7 +9,7 @@ def write_csv(df: 'pd.DataFrame', path: str) -> None:
         if col.startswith('P_') or col.startswith('FoM'):
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
 
-    return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 4))
+    return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
 
 
 def get_datasheets_path(mfr=None, mpn=None):
