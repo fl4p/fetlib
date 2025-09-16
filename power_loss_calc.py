@@ -23,19 +23,17 @@ if __name__ == '__main__':
     gd = GateDrive(rg_total=10, Von=11, fallback_V_pl=4.5)
 
 
-    def compute_losses(pin):
-        # dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
+    def compute_losses(pin, fsw=None):
+        # dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=fsw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
-        dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=buck.f_sw,tDead=400e-9, L=buck.coil.L0)
-        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=buck.f_sw,tDead=200e-9, L=buck.coil.L0)
+        fsw = fsw or (buck.f_sw)
+        dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=fsw,tDead=400e-9, L=buck.coil.L0)
+        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=fsw,tDead=200e-9, L=buck.coil.L0)
 
-        # dcdc = DcDcSpecs(vi=67, vo=27, io=13, f=buck.f_sw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
+        # dcdc = DcDcSpecs(vi=67, vo=27, io=13, f=fsw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
         assert dcdc.Io < buck.Io_max
-        # raise ValueError("output current beyond limit for pin= %dW" % pin)
-        # dcdc = DcDcSpecs(vi=66, vo=27, pin=800, f=40e3, Vgs=11, tDead=400e-9, L=50e-6)
-        # dcdc = DcDcSpecs(vi=70, vo=27, io=30, f=40e3, Vgs=11, tDead=100e-9, L=coil.L)
-        # dcdc = DcDcSpecs(vi=12, vo=5, io=15, f=40e3, Vgs=5, tDead=100e-9, L=coil.L)
+
         return buck.powerloss(dcdc, gd)
 
 
@@ -43,7 +41,7 @@ if __name__ == '__main__':
     losses, dcdc = compute_losses(820)
 
     print('Converter', buck.name)
-    print('Rg_total=', buck.hs.rg_total)
+    print('Rg_total=', buck.hs.rg_total, 'Ω')
     print('HS(cntr)=', str(buck.hs.parallel) + 'p', buck.hs.mf.part.mpn, buck.hs.mf)
     print('LS(sync)=', buck.ls.mf.part.mpn, buck.ls.mf, 'Qgs/Qgd=', round(buck.ls.mf.QgdQgsRatio, 1))
     print('Coil=', repr(buck.coil))
@@ -87,10 +85,12 @@ if __name__ == '__main__':
 
     eff_curve = []
     loss_curve = []
+    parts_curve = []
     pin = 5
     while pin < 2000:
         try:
-            losses, dcdc = compute_losses(pin)
+            losses, dcdc = compute_losses(pin, fsw=40e3)
+            assert dcdc.is_ccm, "coil core loss only valid in ccm"
             p_total = sum(map(lambda g: sum(v for v in g.values() if not callable(v)), losses.values()))
             eff = 1 - p_total / pin
             eff_curve.append((pin, eff, dcdc.Iripple))
@@ -107,12 +107,30 @@ if __name__ == '__main__':
                 P_csr=losses.misc['P_csr'],
                 P_cin=losses.cap.P_cin,
                 P_cout=losses.cap.P_cout,
+                P_coss=losses.hs.P_coss + losses.ls.P_coss,
+            ))
+
+            parts_curve.append(dict(
+                pin=pin,
+                P_fet=losses.hs.buck_hs() + losses.ls.buck_ls(),
+                P_coil=(losses.coil.P_dcr+losses.coil.P_acr+losses.coil.P_core),
+                P_caps=losses.cap.P_cin + losses.cap.P_cout,
+                P_rest=sum(losses.misc.values()),
             ))
         except AssertionError as e:
             #print('err with pin', pin, e)
             #print(traceback.format_exc())
             pass
         pin *= 1.1
+
+    loss_df = pd.DataFrame(parts_curve).set_index('pin')
+    loss_df = loss_df[list(loss_df.iloc[-1, :].sort_values().keys())]
+    loss_df.plot()
+    #plt.grid()
+    #plt.ylim((0.95, 1))
+    #plt.xlim((0, eff_curve[-1][0]))
+    plt.title('parts curve f=%shz' % round_to_n_dec(dcdc.f, 2))
+    plt.show()
 
     pd.DataFrame(eff_curve).set_index(0)[1].plot()
     plt.grid()

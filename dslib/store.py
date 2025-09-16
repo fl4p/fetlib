@@ -74,7 +74,7 @@ class ObjectDatabase(Generic[K, T]):
         if self._lib_mem and not reload:
             return self._lib_mem.copy()
 
-        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=30):
+        with acquire_file_lock(self._lck_path, kill_holder=False, max_time=60):
             if os.path.exists(self._lib_path):
                 with open(self._lib_path, 'rb') as f:
                     try:

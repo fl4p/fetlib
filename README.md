@@ -1,20 +1,83 @@
+I’ve been working on this the last years.
+It is 3 projects in one repo:
+
+1) mosfet datasheet parser and advanced parametric search
+2) power mosfet power loss modelling using gate charge curve
+3) inductor core loss
+
+If you’ve been looking for power switches for your dc-dc converter you probably know. there are plenty of good products
+but which one to choose.
+
+What fetlib does:
+
+1) scrape manufacturer websites for parts (currently TODO)
+2) download parts pdf data sheet
+3) read the data sheet and normalize specifications
+
+the data sheet reading uses several techniques:
+
+1) a simple pdf2text and then regex approach. pdf does not understand tables and not even fluent text, each
+   character[README.md](../../heliosync/hw/sensor/debug-probe/README.md)
+   has its own bounding box with coordinates absolute to the page origin. this ensures that pdfs are rendered perfectly
+   equal without using the character width of the font.
+   the first step here is too aggregate characters into words, words into lines, lines into blocks/paragraphs. care must
+   be
+   taken with subscript and superscript, so it doesn’t end up in another line.
+
+2) find tables using tabula. this works ok. due to the nature of data sheet tables that contain a lot of merged
+   vertically and horizontally merged cells, and sometimes frame-less tables/cells.
+
+3) spatial query: this is somewhat a new invention, a mix of regex search and 2d-raytracing.
+
+we also been throwing LLMs (from openai and anthropic and sth open source) in but we couldn't find any advantage as
+compared to regex. They sometimes produces arbitrary
+errors, which can easily stay un-detected. LLMs are non-deterministic behavior and insane waste of energy.
+
+Once the data is extracted, the program does some range checks on the values, especially with the gate charge
+parameters.
+
+datasheets/toshiba/SSM6N15FU.pdf
+
 # Extensive parametric search of MOSFETs for DC-DC converters
 
-![](spreadsheet.png)
+![](docs/spreadsheet.png)
 
-Finding the right switches for your DCDC-Converter might be not as straight forward as it looks on first sight.
-Both switches operate in rather different conditions and especially the reverse recovery loss appears to be often
-overlooked. This program tries to help you with the selection.
+This toolset tries to help you with designing a DC/DC converter.
+
+It basically consists of three parts:
+
+1) FET data sheet parsing (download, normalisation, validation)
+2) Magnetic materials library and tools for DC-biased inductor design
+3) Power loss modeling of switching, inductor, capacitors
 
 What it does:
 
 - Read search results from part suppliers
-- Download parts datasheets in PDF
+- Download parts PDF datasheets
 - Extract specification values from the PDF files
 - Store gathered parts specifications in a database or CSV file
-- Compute power Loss estimation for a given DC-DC converter
+- Compute power Loss modeling for a given DC-DC converter load point
 
-It builds a parts table with additional fields to those you will usually find in parametric search:
+## Switch Loss Intro
+
+You can start by defining your DC/DC load parameters, `DcDcLoadParams`, currently synchronous buck converter only:
+
+* Input voltage (Vin)
+* Output voltage (Vout)
+* Output current (Iout)
+* switching frequency
+* Ripple current (peak-to-peak) OR ripple factor OR DC-biased inductivity
+* Gate Drive
+    * Gate drive voltage
+    * Gate drive resistor
+
+It will then start to discover mosfets directly from manufacturers websites (current implemented: TI, Infineon, Toshiba,
+ST, onsemi, vishay, nexperia/nxp, huayi, Alpha&Omega, TaiwanSemi, Qorvo) or Digikey search results.
+
+After pre-selecting for breakdown voltage and drain current, it'll start downloading the data sheets.
+Once this is done, it processes the data sheets with different methods (see below TODO) and generates a normalised data
+sheet object. Out of this data sheet object we create the MOSFET specifications, which describes the parts Rds_on, gate
+charge curve and other parameters:
 
 * `Qgs`, `Qgd`, `Qgs2`, `Qg_th`, `Q_sw`
 * `V_pl` (miller plateau voltage)
@@ -22,23 +85,53 @@ It builds a parts table with additional fields to those you will usually find in
 * `Qrr`
 * rise and fall times
 
-# How to use
+With the given DC/DC load parameters and gate drive parameters mentioned earlier, we compute gate charge
+curve for the high-side (HS) and low-side (LS) switch. With the gate charge we estimate power loss during (dis-)charge
+of the gate-source and miller capacitance. We also consider revers recovery losses of the synchronous rectifier (buck:
+LS) body diode.
+
+This way we can rank all mosfets by their power loss in the HS or LS slot. This is expected to be much mure accurate
+than
+using the Figure-of-Merit `Rds_ON*Qg`.
+The model was used during the design process of a 1 kW MPPT tracker (Fugu2) and we fed back real-life experience into
+the model. Proper verification still needs to be done (measuring real gate drive curve, reverse recovery effect).
+
+The power loss computation currently lacks a temperature rise model.
+
+References:
+
+- Fundamentals of Power Electronics
+- Discover.ee
+- TI AN
+- Infineon AN
+- Rohm AN
+
+## How to use
+
+- python3.9
+- tabula (`sudo snap install tabula`, https://github.com/tabulapdf/tabula/releases/download/v1.2.1/tabula-jar-1.2.1.zip)
+- fontforge
+- poppler (`sudo apt-get install -y poppler-utils`)
+- tesseract
+- ghoscript 9.55 or higher ( https://askubuntu.com/questions/1076846/how-to-install-newer-version-of-ghostscript-on-server-than-provided-from-ubuntu )
 
 ```
 git clone --recurse-submodules https://github.com/fl4p/fetlib
 cd fetlib
+python3 -m venv venv
+. ./venv/bin/activate 
 pip install -r requirements.txt
-git clone https://github.com/open-pe/fet-datasheets datasheets # fetch a set of data-sheets (80-200V power mosfets)
+# fetch a set of data-sheets (mostly 80-200V power mosfets):
+git clone https://github.com/open-pe/fet-datasheets datasheets
 
 # additional dependencies:
 - `gs` (Ghostscript)
 - qpdf
 - sips
 - CUPS_PDF (www.cups-pdf.de/)
+- Tabula
+- FontForge
 ```
-
-
-
 
 1. acquire a parts list from Digikey. go
    to [digikey.com](https://www.digikey.de/en/products/filter/transistors/fets-mosfets/single-fets-mosfets/278)
@@ -97,14 +190,21 @@ If a input value for power computation is missing the power values will be `floa
 Vsd (body diode forward voltage) defaults to 1 V if not available. `V_plateau` (miller plateau voltage) defaults to
 4.5V.
 
-See the equations in [powerloss.py](dslib/powerloss.py).
+See the equations in [powerloss.py](dclib/powerloss.py).
+
+# Outputs
+
+We pick a set of switches for LS and HS, inductor and capacitors. Then we compute loss for different output currents and
+plot the results like this (the plot includes loss in switches, inductor, capacitors):
+
+![img.png](img.png)
 
 # Acquiring parts list
 
 A good starting point to discovery suitable switches is the DigiKey parametric search (see above how to import CSVs).
 To include the latest and greatest products, you need to go to the manufacturers' website.
 We implemented automated discovery of new products for Infineon, Toshiba and TI,
-see [`dslib/parts_discovery.py`](dslib/parts_discovery.py).
+see [`dslib/parts_discovery.py`](dslib/discovery/parts_discovery.py).
 
 # Acquiring part specifications
 
@@ -141,34 +241,32 @@ We use 3 techniques:
 2. pdf2txt + regex (first symbol)
 3. tabula + regex (first symbol)
 4. Fallback specs (GaN)
-5. 
+5.
 
 For the power loss compution we need a single discrete value of relevant fields (e.g. `Rds_on`, `Qsw`, `Qrr`).
 Datasheet specify min./max/typ values and sometimes there are multiple rows for a single value under different
 testing conditions e.g. temperature, Vdd, Id, and transients di/dt and dv/dt.
 
-|            |      |             |   |
-|------------|------|-------------|---|
+|            |        |             |   |
+|------------|--------|-------------|---|
 | Rds_on     | Vg=10V | max         |   |
-| Qg         |      |             |   |
-| tRise/Fall |      | typ,max,min |   |
-|            |      |             |   |
-|            |      |             |   |
-|            |      |             |   |
-|            |      |             |   |
-
+| Qg         |        |             |   |
+| tRise/Fall |        | typ,max,min |   |
+|            |        |             |   |
+|            |        |             |   |
+|            |        |             |   |
+|            |        |             |   |
 
 ## Benchmarking pipelines
 
 - only take those sybmols relevant for power loss model
-- Score Funcs 
-  - count fields: count symbol with any min/typ/max value
-  - rmse:
-    - define a reference Datasheet
-    - for each relevant symbol -> Sym
-      - for each (min, typ, max) -> Stat
-        - Count += abs((A[Sym][Stat] - B[Sym][Stat]) / B[Sym][Stat]) < ErrThres 
-
+- Score Funcs
+    - count fields: count symbol with any min/typ/max value
+    - rmse:
+        - define a reference Datasheet
+        - for each relevant symbol -> Sym
+            - for each (min, typ, max) -> Stat
+                - Count += abs((A[Sym][Stat] - B[Sym][Stat]) / B[Sym][Stat]) < ErrThres
 
 ## Datasheet download
 
@@ -190,6 +288,12 @@ Chromiums PDF must be disabled, because we cannot access it through pupeteer.
 - Tabula on macos: I had some issues getting java running on Mac M2, use zulu JDK
 
 # Power Loss Model
+
+TODO:
+
+* https://www.infineon.com/dgdl/Infineon-Buck_converters_negative_spike_at_phase_node-AN-v01_00-EN.pdf?fileId=db3a3043338c8ac80133a14f039e4f85
+* table showing what losses matter !!
+* https://www.ti.com/lit/an/slvaeq9/slvaeq9.pdf#page=5 (compute Vpl, Qoss loss )
 
 The power loss model for a DC-DC buck is based on
 the application
@@ -214,8 +318,8 @@ power dissipation).
 
 * Low Rds_on
 * Low Q_rr
-* Low Qgd/Qgs ratio
-* Optimized Vth
+* Low Qgd/Qgs ratio (self turn-on)
+* Optimized Vth (self turn-on)
 * Low r_g
 * Low Vsd
 
@@ -243,14 +347,24 @@ recovery. (TODO verify)
 
 # TODO
 
+Real tests:
+
+* measure mosfet rist/fall times
+*
+    * waveform at driver
+    * waveform at gate
+    * Vds waveform
+* coil ripple current
+* https://www.tek.com/en/documents/application-note/circuit-measurement-inductors-and-transformers-oscilloscope
+
+* why have some mosfets (t6r8) have such long rise times compared to Qsw
+* display datasheet tr,tf and computed
+* consider temperature (e.g. at 70°C)
+    * rds_on rise (assume 125°C x2, linear)
+
 * Use other part list sources
     * https://eu.mouser.com/api-search/#signup
-    * ~~https://www.infineon.com/cms/de/design-support/finder-selection-tools/product-finder/mosfet-finder/~~ DONE
-    * onsemi
-    * NXP
     * goford
-    * vishay
-    * ao
     * littlefuse / ixys
     * https://www.mccsemi.com/products/mosfets/power-mosfets
 
@@ -264,6 +378,10 @@ recovery. (TODO verify)
     * Qgd/Qgs (self turn on)
     * Vsd (body diode forward voltage)
     * r_g
+* conduction loss with temperature considerations (Infineon AN: MOSFET Power Losses Calculation Using The Data-Sheet )
+    * 25 -> 125°C
+        * Rds_on * (1.5 - 2.5)
+        * Qrr * (1.4 - ?) ?
 
 # Resources
 
@@ -274,8 +392,6 @@ recovery. (TODO verify)
     * a very useful tool that comes with power loss calculations. i found some values to be off, e.g. IPA050N10NM5S
       Rds_on_max@10V is 5, in the app its 5.6.
 
-* https://octopart.com/ (Ciss, rise&fall times, )
-
 https://www.discoveree.io/collateral/continental/PCIM2020_DiscoverEE_PowerLossModeling_AudioVisual.mp4
 https://www.discoveree.io/collateral/PCIM_Europe_2020/PCIM2020_DiscoverEE_PowerLossModeling_Slides.pdf
 https://pcimasia-expo.cn.messefrankfurt.com/content/dam/messefrankfurt-redaktion/pcim_asia/download/pac2020/speakers-ppt/1/Shishir%20Rai.pdf
@@ -283,6 +399,12 @@ https://ww1.microchip.com/downloads/en/Appnotes/01471A.pdf
 https://www.st.com/resource/en/application_note/dm00380483-calculation-of-turnoff-power-losses-generated-by-a-ultrafast-diode-stmicroelectronics.pdf
 https://www.vishay.com/docs/73217/an608a.pdf
 https://www.eetimes.com/how-fet-selection-can-optimize-synchronous-buck-converter-efficiency/
+
+https://www.dmcinfo.com/latest-thinking/blog/id/10517/mosfet-power-loss-calculator
+https://lemuruniovi.com/wp-content/uploads/2021/03/Losses-in-Power-Diodes.pdf
+https://www.ti.com/lit/an/snvaaa7/snvaaa7.pdf
+
+![snvaaa7](img.png)
 
 # names
 

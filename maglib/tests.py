@@ -74,8 +74,18 @@ def test_coil():
 
 def test_wire():
     from dslib import rel_err
+
+
+    from maglib.wire import d2awg, awg2d
+    for i in range(1000):
+        import random
+        x = random.random() * 10
+
+        assert abs(rel_err(awg2d(d2awg(x)), x)) < 1e-9
+        assert abs(rel_err(d2awg(awg2d(x)), x)) < 1e-9
+
+
     from maglib.wire import skin_depth, dc_resistance, ac_resistance, ac_resistance_factor
-    from maglib.wire import d2awg
 
     assert abs(rel_err(skin_depth(1.72e-8, f=50), 9.335e-3)) < 1e-4
     assert abs(rel_err(skin_depth(1.72e-8, f=50, mu_r=2), 6.601e-3)) < 1e-4
@@ -88,15 +98,22 @@ def test_wire():
     rdc = dc_resistance(res, 1, d)
     assert abs(rel_err(rdc, 8.1e-3)) < 0.01
 
-    rac = ac_resistance(res, 1, d, 50e3)
+    rac = ac_resistance(res, 1, d, 50e3)[0]
     assert abs(rel_err(rac, 13.7e-3)) < 0.01
 
     acf, sd = ac_resistance_factor(res, d, 50e3)
     assert abs(rel_err(rac, acf * rdc)) < 0.01
 
-    for i in range(1000):
-        import random
-        x = random.random() * 10
+    # example from https://s3.amazonaws.com/micrometals-production/filer_public/7c/72/7c728863-9c0e-40b3-ba86-a3f94d5ad1c1/acresistance_rev0_110123.pdf
+    from maglib.wire import acr_factor_micrometals
+    assert abs(rel_err(2.5060, sum(acr_factor_micrometals(23e-9, 1e-3, 100e3, 1, 32, 14.1e-3, 27.69e-3)))) < 1e-4
 
-        assert abs(rel_err(awg2d(d2awg(x)), x)) < 1e-9
-        assert abs(rel_err(d2awg(awg2d(x)), x)) < 1e-9
+    acr_factor_micrometals()
+
+    ac_resistance_factor(23e-9, 1e-3, 100e3)
+
+    for d in [0.7e-3, 1.0e-3, 1.2e-3, 1.5e-3, 2e-3]:
+        for f in [20e3, 40e3, 100e3, 200e3]:
+            a = ac_resistance_factor(23e-9, d, f)[0]
+            b = acr_factor_micrometals(23e-9, d, f, 1, 32, 14.1e-3, 27.69e-3)[0]
+            assert abs(rel_err(a, b)) < 0.07

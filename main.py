@@ -1,5 +1,7 @@
 import argparse
 import asyncio
+import datetime
+import logging
 import math
 import os.path
 import pickle
@@ -264,12 +266,14 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
         ploss['P_2hs'] = loss_spec.parallel(2).buck_hs()
         ploss['tr'] = round(loss_spec.get_cond('P_sw')['tr'] * 1e9, 1)  # possibly nan!
         ploss['tf'] = round(loss_spec.get_cond('P_sw')['tf'] * 1e9, 1)
+        # ploss['P_coss'] = loss_spec.P_coss
 
         loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd)
-        ploss['P_rr'] = loss_spec.P_rr
-        ploss['P_on_ls'] = loss_spec.P_cl
-        ploss['P_dt_ls'] = loss_spec.P_dt
-        ploss['P_ls'] = loss_spec.buck_ls()
+        ploss['PcossLS'] = loss_spec.P_coss
+        ploss['Prr'] = loss_spec.P_rr
+        ploss['PonLS'] = loss_spec.P_cl
+        ploss['PdtLS'] = loss_spec.P_dt
+        ploss['P_LS'] = loss_spec.buck_ls()
         ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
 
     # except Exception as e:
@@ -282,7 +286,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
         Vth=part.specs.Vgs_th_max,
         Vpl=fet_specs and fet_specs.V_pl,
 
-        FoM=fet_specs.FoM,
+        FoMrect=fet_specs.FoM,
         FoMrr=fet_specs.FoMqrr,
         FoMsw=fet_specs.FoMqsw,
         FoMoss=fet_specs.FoMcoss,
@@ -295,14 +299,8 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     return Part(specs=fet_specs, discovered=part), row
 
 
-def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadParams, args):
-    assert parts, "No parts to generate"
-
-    print('generating power loss estimates for ', len(parts), 'parts')
-
-    result_rows = []  # csv
-    result_parts: List[Part] = []  # db storage
-    all_mpn = set()
+@disk_cache(ttl='999d', salt='01')
+def read_parts_datasheets(parts: List[DiscoveredPart], args):
 
     need_symbols = {
         'tRise', 'tFall',  # HS
@@ -314,6 +312,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
         # 'Qrr'  # LS # kl leave this, many DS dont have this
     }
 
+
     if not os.path.isdir('datasheets'):
         try:
             import subprocess
@@ -321,11 +320,34 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
         except Exception as e:
             print('git clone error:', e)
 
+
     if not tabula_is_running():
         raise RuntimeError('tabula is not running')
 
     if not fontforge_bin():
         raise RuntimeError('fontforge not found')
+
+        # from ocrmypdf.subprocess import check_external_program
+        # check_external_program()
+    """
+    TODO
+    
+    check for:
+    
+    tesseract
+    poppler (img2image)
+    
+     File "/home/fab/fetlib/venv/lib/python3.9/site-packages/pluggy/_callers.py", line 139, in _multicall
+    raise exception.with_traceback(exception.__traceback__)
+    File "/home/fab/fetlib/venv/lib/python3.9/site-packages/pluggy/_callers.py", line 103, in _multicall
+    res = hook_impl.function(*args)
+    File "/home/fab/fetlib/venv/lib/python3.9/site-packages/ocrmypdf/builtin_plugins/ghostscript.py", line 53, in check_options
+    check_external_program(
+    File "/home/fab/fetlib/venv/lib/python3.9/site-packages/ocrmypdf/subprocess/__init__.py", line 341, in check_external_program
+    raise MissingDependencyError(program)
+    ocrmypdf.exceptions.MissingDependencyError: gs
+    
+    """
 
     import pickle
 
@@ -335,12 +357,27 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
     else:
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr) for p in
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr, args.no_download) for p in
                 parts_shuffled}
         results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)
         dss: List[DatasheetFields] = list(results.values())
 
     dss = [d for d in dss if d != (None, None)]
+
+    return dss
+
+
+def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadParams, args):
+    assert parts, "No parts to generate"
+
+    print('generating power loss estimates for ', len(parts), 'parts')
+
+    result_rows = []  # csv
+    result_parts: List[Part] = []  # db storage
+    # all_mpn = set()
+
+
+    dss = read_parts_datasheets(parts, args)
 
     if len(dss) == 1:
         # print(repr(dss[0]))
@@ -375,7 +412,8 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
 
     if len(dss) >= 1:
         os.path.exists('out') or os.makedirs('out', exist_ok=True)
-        out_fn = f'out/fets-loss-{dcdc.fn_str("buck")}-inp{len(parts)}.csv'
+        dat = f'{datetime.datetime.now():%Y-%m-%d}'
+        out_fn = f'out/{dcdc.fn_str("buck")}-{dat}-inp{len(parts)}.csv'
         write_csv(df, out_fn)
         print('written', out_fn)
     else:

@@ -21,22 +21,32 @@ class ToroidShape():
         :param ht:
         """
 
-        #assert math.isnan(od), "not implemented"
-        #assert math.isnan(id), "not implemented"
-        #assert math.isnan(ht), "not implemented"
+        # assert math.isnan(od), "not implemented"
+        # assert math.isnan(id), "not implemented"
+        # assert math.isnan(ht), "not implemented"
 
         self.name = name
         self.l_e = l_e
         self.A_e = A_e
         self.Vol = Vol
+        self.ID = id
+        self.OD=od
+        self.HT=ht
+
         assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
 
     def values(self):
         return dict(l_e=self.l_e, A_e=self.A_e, Vol=self.Vol)
 
+    def stack(self, n):
+        return ToroidShape(f'{n}s({self.name})', l_e=self.l_e, A_e=self.A_e*n, Vol=self.Vol*n, od=self.OD, id=self.ID,
+                           ht=self.HT*n
+                           )
+
 
 class MagneticCoreSpecs:
-    def __init__(self, mpn, mat: MagneticCoreMaterialSpecs, l_e, A_e, Vol, A_L=None):
+    def __init__(self, mpn, mat: MagneticCoreMaterialSpecs, shape: ToroidShape = None, l_e=None, A_e=None, Vol=None,
+                 A_L=None):
         """
 
         :param mpn:
@@ -45,6 +55,18 @@ class MagneticCoreSpecs:
         :param A_e: eff. magnetic cross-sectional Area in m2
         :param Vol:  core volume in m3
         """
+
+        if shape is None:
+            assert l_e is not None
+            assert A_e is not None
+            assert Vol is not None
+        else:
+            l_e = shape.l_e
+            A_e = shape.A_e
+            Vol = shape.Vol
+
+        self.shape = shape
+
         if A_L is None:
             A_L = µ0 * mat.mu_r * A_e / l_e
 
@@ -62,13 +84,20 @@ class MagneticCoreSpecs:
         assert n > 0
         if n == 1:
             return self
-        return MagneticCoreSpecs(
-            f'{n}s({self.mpn})', self.mat,
-            A_L=self.A_L * n,
-            l_e=self.l_e,
-            A_e=self.A_e * n,
-            Vol=self.Vol * n,
-        )
+        if self.shape:
+            shape = self.shape.stack(n)
+            return MagneticCoreSpecs(
+                f'{n}s({self.mpn})', self.mat,
+                shape=shape,
+            )
+        else:
+            return MagneticCoreSpecs(
+                f'{n}s({self.mpn})', self.mat,
+                A_L=self.A_L * n,
+                l_e=self.l_e,
+                A_e=self.A_e * n,
+                Vol=self.Vol * n,
+            )
 
     def __str__(self):
         return (f'Core<{self.mpn}, Al={round_to_n(self.A_L * 1e9, 3)}nH, '
@@ -104,7 +133,8 @@ KDM_KS184_125A = MagneticCoreSpecs('KDM_KS184_125A', materials.KDM_SendustKS_125
 
 MicrometalsT130 = ToroidShape('130', l_e=8.15e-2, A_e=0.672e-4, Vol=5.69e-6, od=33.02e-3, id=19.94e-3, ht=10.67e-3)
 MicrometalsT132 = ToroidShape('132', l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
-MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6)
+MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6, od=46.74e-3, id=24.13e-3)
+# https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
 
 # https://datasheets.micrometals.com/MS-130060-2-DataSheet.pdf
 Micrometals_MS_130_060 = MagneticCoreSpecs('MS-130060-2',
@@ -130,7 +160,7 @@ Micrometals_MS_184_090 = MagneticCoreSpecs('MS-184090-2',
 # https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
 Micrometals_MS_184_125 = MagneticCoreSpecs('MS-184125-2',
                                            materials.Micrometals_MS_T_125u,
-                                           **MicrometalsT184.values(),
+                                           shape=MicrometalsT184,
                                            A_L=281e-9,  # nH/N2
                                            )
 
