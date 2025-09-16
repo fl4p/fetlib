@@ -251,13 +251,15 @@ class MpnMfr:
         self.mfr = mfr
         self.mpn = mpn
 
+
 def conditions_to_str(cond):
     if cond and isinstance(cond, dict) and isinstance(list(cond.keys())[0], str):
-        cond_str = ', '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in sorted(cond.items()))
+        cond_str = ' '.join(f'{f}={round_to_n_dec(v, 3)}' for f, v in sorted(cond.items()))
     else:
         cond_str = whitespaces_to_space(', '.join(
             map(str, (cond.items() if isinstance(cond, dict) else cond)) if cond else []))[:80]
     return cond_str
+
 
 class DatasheetFields():
     def __init__(self, mfr=None, mpn=None, part: 'DiscoveredPart' = None, fields: Iterable[Field] = None,
@@ -343,7 +345,9 @@ class DatasheetFields():
     def print(self, show_cond=False, show_sources=False):
         print('')
         print(self.part.mfr, self.part.mpn)
-        print('Symbol         min     typ     max     unit   source', '   cond' if show_cond else '', )
+        print('Symbol         min     typ     max     unit   ',
+              'cond' if show_cond else '',
+              '                 source' if show_sources else '')
 
         # rows = self.fields_filled.values()
         rows = sum(self.fields_lists.values(), [])
@@ -351,6 +355,11 @@ class DatasheetFields():
         for f in rows:
 
             src = ''
+
+            cond_str = ''
+            if show_cond:
+                cond_str = conditions_to_str(f.cond)
+
             if show_sources:
                 v = list('>'.join(v or '') for v in f._sources.values())
                 if len(set(v)) == 1:
@@ -359,13 +368,8 @@ class DatasheetFields():
                     src = ','.join(v)
                 src = src[:40]
 
-            cond_str = ''
-            if show_cond:
-                cond_str = conditions_to_str(f.cond)
-
-            l = '%-12s %7.1f %7.1f %7.1f   %4s %10s %-20s' % (
-                f.symbol, f.min, f.typ, f.max, f.unit, src,
-                cond_str)
+            l = '%-12s %7.1f %7.1f %7.1f   %4s  %-25s %-30s' % (
+                f.symbol, f.min, f.typ, f.max, f.unit, cond_str, src)
             l = l.replace('nan', ' ⎵ ')
             l = l.replace(' None', '  ⎵  ')
             print(l)
@@ -445,6 +449,7 @@ class DatasheetFields():
     def get_unit(self, sym):
         r = self.fields_filled.get(sym)
         return None if not r else r.unit
+
     def _get_by_cond(self, sym, cond=None):
         e_min = 0.1
         f_min = self.fields_filled.get(sym)

@@ -61,7 +61,7 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         # ds_url_alt = ds_url.replace('fdb','fdp')
         # ds_url_alt = lambda : dslib.parts_discovery.onsemi_ds_url(mpn)
 
-    if not ds_url:
+    if not ds_url or str(ds_url) == 'nan':
         print('SKIP', datasheet_path, 'no url', ds_url)
         return None
 
@@ -122,7 +122,7 @@ async def get_browser_page():
         browsers[evl_id] = await pyppeteer.launch(dict(
             ignoreHTTPSErrors=True,
             headless=False,
-            userDataDir=userDataDir, # this is important for PDF downloads
+            userDataDir=userDataDir, # this is important for PDF downloads (to disable internal pdf viewer)
             #autoClose=True,
             timeout=60000,
         ))

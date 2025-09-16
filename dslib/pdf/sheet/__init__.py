@@ -9,19 +9,19 @@ import math
 import re
 import warnings
 from collections import defaultdict
-from typing import List, Optional
+from typing import List, Optional, Tuple, Dict, Literal
 
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields, parse_field_value
 from dslib.pdf.ascii import pdf_to_ascii, Row, Phrase
+from dslib.pdf.expr import get_cond_regex
+from dslib.pdf.parse import detect_fields, DetectedSymbol
+from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 from dslib.pdf.sheet.annotation import pdf_raster_annot
 from dslib.pdf.sheet.spatial import SpatialQuery, take
 from dslib.pdf.sheet.tables import table_segregation, DetectedRowField, Table
 from dslib.pdf.to_html import Annotation
 from dslib.pdf.tree import bbox_union, GraphicBlock, Bbox
-from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
-from dslib.pdf.expr import get_cond_regex
-from dslib.pdf.parse import detect_fields, DetectedSymbol
 
 head_re = re.compile(
     '((\s+|^\s*)('
@@ -44,6 +44,7 @@ head_stop = (
     'Static', 'Electrical', 'Dynamic', 'curves', 'above',
     'Continuous', 'Pulsed',  # Max drain current
     'Thermal', 'Resistance',
+    'Absolute'  # Toshiba: section head `Absolute Maximum Ratings`
 )
 
 
@@ -114,8 +115,9 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
 @disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
-        return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False, multiline_conditions=multiline_conditions)
-    except AttributeError: # 'PSKeyword' object has no attribute 'decode'
+        return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,
+                                multiline_conditions=multiline_conditions)
+    except AttributeError:  # 'PSKeyword' object has no attribute 'decode'
         from dslib.pdf.pipeline import pdf2pdf
         pdf2pdf(pdf_file, pdf_file + '.gs.pdf', 'gs')
         return read_sheet_inner(pdf_file + '.gs.pdf', expand, merge, debug_annotations=False,
@@ -484,7 +486,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
             unit = str(els[0]) if els else None
 
             # val = defaultdict(list)
-            val_fields = []
+            val_fields: List[Tuple[Bbox, Dict[Literal['min', 'typ', 'max'], str]]] = []
 
             for mtm in ('min', 'typ', 'max'):
                 if not head.get_span(mtm):
@@ -501,7 +503,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                     len(els)
                     # assert len(els) == len(cond), (row.symbol.symbol, row.row, repr(els), repr(cond))
                     for el in els:
-                        annotations.append(Annotation(name=f'{el}({mtm})', bbox=el.bbox, color=(255, 128, 0))) # orange
+                        annotations.append(Annotation(name=f'{el}({mtm})', bbox=el.bbox, color=(255, 128, 0)))  # orange
                         for f_bbox, val in val_fields:
                             if el.bbox.v_overlap_rel(f_bbox) > 0.8:
                                 # assert mtm not in val, "%s: dupe %s=%s in %s" % (row.symbol.symbol, mtm, str(el),val)
@@ -536,7 +538,10 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                         f = Field(row.symbol.symbol,
                                   **{k: val.get(k, math.nan) for k in ('min', 'typ', 'max')},
                                   unit=unit,
-                                  cond=cond)
+                                  cond=cond,
+                                  source=['sheet', f'pg{table.page.page_num+1}',
+                                          f't{round(table.bbox.y2)}',
+                                          f'td{round(f_bbox.y2)}'])
                         fields.append(f)
                         parsed.append(f_bbox)
                     except Exception as e:

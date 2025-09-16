@@ -484,7 +484,7 @@ def check_range(v, range):
 valid_range = dict(
     # min,max,abs?
     Vpl=(1, 10, False),
-    Vsd=(0.1, 4, True),
+    Vsd=(0.1, 6, True),
     # Qgd=(0, 2000, False), # Gate to Drain Charge
 )
 

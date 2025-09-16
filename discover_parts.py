@@ -99,7 +99,7 @@ async def main():
     dcdc_params = DcDcLoadParams.default()
     parts = dcdc_params.select_mosfets(parts)
 
-    parts = [p for p in parts if (p.specs.ID_25 >= 2 and p.specs.Rds_on_10v_max < 20e-3)]
+    #parts = [p for p in parts if (p.specs.ID_25 >= 2 and p.specs.Rds_on_10v_max < 20e-3)]
         #        or (p.specs.Vds_max >= 200 and p.specs.Vds_max <= 800 and p.specs.ID_25 >= 10)
         #        or is_benchmark_part(p)
         # )]

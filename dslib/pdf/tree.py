@@ -269,8 +269,9 @@ class Char:
                 # warnings.warn('char %s in %s' % (cid, fontname))
                 c = chr(cid)
             else:
-                warnings.warn(
-                    "decode_cid_char(%s) not implemented for this font %s type %s" % (cid, fontname, type(font)))
+                # TODO
+                #warnings.warn(
+                #    "decode_cid_char(%s) not implemented for this font %s type %s" % (cid, fontname, type(font)))
                 c = chr(cid)
 
         uc = not has_custom_embed_enc(c, fontname, fonts_enc) and try_decode_to_unicode(c, fontname)
