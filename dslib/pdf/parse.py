@@ -287,7 +287,7 @@ def extract_dates(pdf_text: str):
     return [x[1] for x in sorted(dates, key=lambda x: x[0])]
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True,
+@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
@@ -379,9 +379,12 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
             ds.add_multiple(tabular_ds.all_fields())
     except NoTabularData:
         pass
+    except (LookupError, AttributeError):
+        raise
     except Exception as e:
         print(pdf_path, 'tabula error', type(e).__name__, e)
-        raise
+        ds.errors.append('tabula error {!r}'.format(e))
+        #raise
 
     txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path, verbose=False)
     ds.add_multiple(txt_fields.all_fields())
@@ -404,8 +407,12 @@ except ImportError:
     # print('jpype not found')
     _force_subprocess = True
 
+disk_cache(ttl='999d', file_dependencies=True)
+def tabula_read_pdf_cached(pdf_path, *args, **kwargs):
+    import tabula
+    return tabula.read_pdf(pdf_path, *args, **kwargs)
 
-@disk_cache(ttl='99d', file_dependencies=True, salt='browser_v04_both')
+# @disk_cache(ttl='999d', file_dependencies=True, salt='browser_v04_both')
 def tabula_pdf_dataframes(pdf_path=None):
     import tabula
 
@@ -421,8 +428,8 @@ def tabula_pdf_dataframes(pdf_path=None):
         dfs += tabula_browser(pdf_path)
     except NoTextInPdfError as e:
         print(pdf_path, e)
-    except TimeoutError:
-        raise  # these are fatal, should not happen
+    #except TimeoutError:
+    #    raise  # these are fatal, should not happen
     except Exception as e:
         last_e = e
         print(traceback.format_exc())
@@ -431,7 +438,7 @@ def tabula_pdf_dataframes(pdf_path=None):
         #
 
     try:
-        dfs += tabula.read_pdf(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True,
+        dfs += tabula_read_pdf_cached(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True,
                                # force_subprocess=_force_subprocess
                                )
         for df in dfs:
@@ -582,6 +589,7 @@ def parse_field_csv(csv_line, dim, **kwargs) \
 
 def parse_field_multiline(text, dim, field_sym, cond=None, capture_match=False, source=None, mfr=None) \
         -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
+    assert dim in dim_regs_multiline, "unknown dimension '{}'".format(dim)
     return parse_field(text, dim_regs_multiline[dim], field_sym, cond, capture_match, source, mfr=mfr)
 
 
@@ -811,7 +819,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
     return fields
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt=regex_ver_salt)
+@disk_cache(ttl='999d', file_dependencies=[0], salt=regex_ver_salt)
 def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=False) -> DatasheetFields:
     """
 

@@ -258,8 +258,9 @@ class EmbeddedPdfFont():
                 font.ext = 'otf'
         except (KeyboardInterrupt, TimeoutError, NameError, AttributeError):
             raise
-        except: # OverflowError
-            print('error probing font', traceback.format_exc())
+        except Exception as e: # OverflowError
+            # print('error probing font', traceback.format_exc())
+            print('error probing font', type(e).__name__, e)
             os.remove(font.path)
 
     def __str__(self):

@@ -3,10 +3,12 @@ import re
 
 import requests
 
+from dslib.cache import mem_cache
 from dslib.discovery import MosfetBasicSpecs, DiscoveredPart
 
 
-async def vishay_mosfets():
+@mem_cache(ttl='30d', synchronized=True)
+def vishay_mosfets():
     parts = []
 
     urls = [

@@ -25,10 +25,13 @@ class NoTextInPdfError(ValueError):
 
 
 def tabula_is_running():
-    return requests.get('http://127.0.0.1:8080/').status_code == 200
+    try:
+        return requests.get('http://127.0.0.1:8080/').status_code == 200
+    except requests.exceptions.ConnectionError:
+        return False
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], salt='v02', hash_func_code=True)
+@disk_cache(ttl='999d', file_dependencies=[0], salt='v02', hash_func_code=True)
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
     with _tab_web_lock:
@@ -78,7 +81,7 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
         @backoff.on_exception(backoff.expo, Exception, max_time=180, max_tries=30,
                               backoff_log_level=logging.DEBUG)  # logger=
         def get_tables(fid):
-            res = s.get(f"http://127.0.0.1:8080/pdfs/{fid}/tables.json?_={time.time()}")
+            res = s.get(f"http://127.0.0.1:8080/pdfs/{fid}/tables.json?_={time.time()}", timeout=10)
             if res.status_code != 200:
                 raise ValueError(res.text)
             return res.json()
@@ -136,7 +139,7 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
             print(pdf_path, 'tabula web error', e)
             raise TimeoutError() from e
         finally:
-            s.post(f"http://127.0.0.1:8080/pdf/{fid}", data=dict(_method='delete'))
+            s.post(f"http://127.0.0.1:8080/pdf/{fid}", data=dict(_method='delete'), timeout=10)
 
         dfs = []
         for tab in dat:

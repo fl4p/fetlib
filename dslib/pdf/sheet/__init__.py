@@ -111,9 +111,15 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='99d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
-    return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False, multiline_conditions=multiline_conditions)
+    try:
+        return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False, multiline_conditions=multiline_conditions)
+    except AttributeError: # 'PSKeyword' object has no attribute 'decode'
+        from dslib.pdf.pipeline import pdf2pdf
+        pdf2pdf(pdf_file, pdf_file + '.gs.pdf', 'gs')
+        return read_sheet_inner(pdf_file + '.gs.pdf', expand, merge, debug_annotations=False,
+                                multiline_conditions=multiline_conditions)
 
 
 def _process_page(pdf_file, mfr, rows, pn, annotations: List[Annotation], merge, expand, multiline_conditions) -> List[
