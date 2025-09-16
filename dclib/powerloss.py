@@ -2,6 +2,8 @@
 
 Literature
 
+https://epc-co.com/epc/Portals/0/epc/documents/application-notes/AN030%20Hard%20Switching%20Losses%20Calculation.pdf
+
 https://www.ti.com/lit/an/slyt664/slyt664.pdf
 https://www.ti.com/lit/an/slua341a/slua341a.pdf
     - tf, tr approximation
@@ -29,10 +31,10 @@ from typing import Tuple
 import numpy as np
 
 from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
-from maglib.cores import MagneticCoreSpecs
-from maglib.wire import d2awg
-from dslib.spec_models import DcDcLoadParams
 from dslib.mosfet import Qgs2_Qgs_ratio_estimate, MosfetSpecs, GateDrive
+from dslib.spec_models import DcDcLoadParams
+from maglib.cores import MagneticCoreSpecs
+from maglib.wire import d2awg, MaterialResistivity, acr_factor_micrometals, skin_depth
 
 µ0 = 4 * math.pi * 1e-7
 
@@ -85,7 +87,7 @@ class SwitchPowerLoss():
         :return:
         """
         return SwitchPowerLoss(
-            P_cl=self.P_cl / n * 0.9,  # one switch takes most of the dynamic load, the rest stay cooler
+            P_cl=self.P_cl / n * 0.9,  # HS: one switch takes most of the dynamic load, the rest stay cooler
             P_sw=self.P_sw,
             P_coss=self.P_coss * n,
             P_rr=n * self.P_rr,
@@ -136,8 +138,24 @@ def mosfet_switching_trf(dc: DcDcLoadParams, mf: MosfetSpecs):
     return P_sw
 
 
-def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, Lcsi=0,
-                 use_datasheet_timings=True, Rds_temp_rise=1.35):
+def Rds_on(mf: MosfetSpecs, Id, Tj):
+    # TODO https://application-notes.digchip.com/070/70-41484.pdf (pg5)
+    # Rds_on(Tj) = Rds_on(Tj=25°C) * (1+alpha/100)**(Tj-25°C)
+
+    # TODO Rds_on(Id) model
+    # mostly constant?
+
+    if math.isnan(Tj):
+        # this is a rough approximation from looking at various datasheets from different mfn
+        return mf.Rds_on * 1.35
+
+    assert Tj == 25
+    return mf.Rds_on
+
+
+def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
+                 ls_Qoss=0, Lcsi=0,
+                 use_datasheet_timings=False):
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/power_loss_appli-e.pdf
     # https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
 
@@ -171,7 +189,7 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, 
 
     # P_sw=mosfet_switching_trf(dc, mf),
 
-    rds = mf.Rds_on * Rds_temp_rise
+    rds = Rds_on(mf, dc.Io, Tj)
 
     # for Coss the HS contribution is the energy stored in Coss
     # which is wasted in its own channel during turn-on
@@ -205,7 +223,7 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, ls_Qoss=0, 
     )
 
 
-def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, rds_temp_rise=1.35, Qrr_temp_rise=1.2):
+def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan, Qrr_temp_rise=1.2):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -226,7 +244,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, rds_temp_ri
     # TODO https://application-notes.digchip.com/070/70-41484.pdf
     # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
 
-    rds = mf.Rds_on * rds_temp_rise  # temp rise Tj=100°C
+    rds = Rds_on(mf, dc.Io, Tj)  # temp rise Tj=100°C
 
     if mf.QgdQgsRatio > 1:
         warnings.warn('%s: Qgd/Qgs %.1f > 1! LS might suffer from self turn-on' % (mf.part, mf.QgdQgsRatio))
