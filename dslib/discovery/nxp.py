@@ -13,7 +13,7 @@ async def nexperia_mosfets():
         url='https://www.nexperia.com/products/mosfets/power-mosfets',
         fn_ext='xls',
         # click='::-p-text(Download results as CSV)',
-        eval='CookieSettingsAcceptAll()',
+        eval='(typeof CookieSettingsAcceptAll != "undefined") && CookieSettingsAcceptAll()',
         click="button[data-event^='download-excel']",
     )
 

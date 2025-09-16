@@ -52,14 +52,14 @@ class MosfetBasicSpecs():
 
         assert not (self.Vgs_th_max > 15)
 
-        f = 1000 * self.Rds_on_10v_max / abs(self.Vds_max)
+        f = 1000 * self.Rds_on_10v_max / abs(Vds_max)
         assert not (0.002 > f or f > 1000), (f, Vds_max, self.Rds_on_10v_max)
 
         if Vds_max < 0:
             # p-ch
             assert math.isnan(f * ID_25) or 1 < abs(f * ID_25) < 60, (f * ID_25, f, ID_25)
         else:
-            assert math.isnan(f * ID_25) or 0.1 < abs(f * ID_25) < 60, (f * ID_25, f, ID_25)
+            assert math.isnan(f * ID_25) or 0.1 < abs(f * ID_25) < 60, (self.Rds_on_10v_max, Vds_max, f * ID_25, f, ID_25)
 
     @property
     def Qg_max_or_typ_nC(self):
@@ -69,7 +69,7 @@ class MosfetBasicSpecs():
         return self.Qg_typ_nC
 
     def update(self, specs: 'MosfetBasicSpecs'):
-        assert self.Vds_max == specs.Vds_max
+        assert self.Vds_max == specs.Vds_max, (self.Vds_max, specs.Vds_max)
 
         def mean_chk_std(t, std, fn: Callable = np.nanmean):
             if sum(~np.isnan(t)) == 0:
@@ -138,6 +138,7 @@ class DiscoveredPart:
 def parts_list_file_name(mfr, fn_ext, prefix):
     os.makedirs('parts-lists/' + mfr, exist_ok=True)
     fn = datetime.datetime.now().strftime(f'parts-lists/{mfr}/{prefix}-%Y-%m.{fn_ext}')
+    # fn = f'parts-lists/{mfr}/{prefix}-2025-03.{fn_ext}'
     return fn
 
 

@@ -6,9 +6,10 @@ import re
 import time
 import traceback
 from functools import partial
-from typing import Union, List
+from typing import Union, List, Dict
 
 import requests
+from pyppeteer.page import Page
 
 import dslib.discovery.onsemi
 from dslib.cache import acquire_file_lock
@@ -105,7 +106,7 @@ def download(url, filename):
             fh.write(chunk)
 
 
-browser_pages = {}
+browser_pages:Dict[int, Page] = {}
 browsers = {}
 
 
@@ -118,7 +119,13 @@ async def get_browser_page():
         assert not browsers
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
         os.path.exists(userDataDir) or os.makedirs(userDataDir)
-        browsers[evl_id] = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir, autoClose=True))
+        browsers[evl_id] = await pyppeteer.launch(dict(
+            ignoreHTTPSErrors=True,
+            headless=False,
+            userDataDir=userDataDir, # this is important for PDF downloads
+            #autoClose=True,
+            timeout=60000,
+        ))
 
         def on_close(evl_id):
             browsers.pop(evl_id, None)
@@ -130,6 +137,23 @@ async def get_browser_page():
         browser_pages[evl_id] = await browsers[evl_id].newPage()
 
     return browser_pages[evl_id]
+
+async def close_browser():
+    for k in list(browser_pages.keys()):
+        pg = browser_pages.pop(k)
+        try:
+            pg.isClosed() or await pg.close()
+        except:
+            pass
+
+    for k in list(browsers.keys()):
+        from pyppeteer.browser import Browser
+        bw: Browser = browsers.pop(k)
+        try:
+            await bw.close()
+        except:
+            pass
+
 
 
 """
