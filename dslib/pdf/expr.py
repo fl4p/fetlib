@@ -515,7 +515,7 @@ DIMENSIONS = dotdict(
     ),
     I=Dimension(
         name='Current',
-        head_regex=None,  # TODO
+        head_regex=r'(((continuous )?drain )?current|I[\s_]?[a-z]{1,8})',  # TODO
         unit_regex=r'[muμn]?A',
         signed=True,
     ),
@@ -609,6 +609,7 @@ def get_dimensional_regular_expressions():
 
         C=field_value_regex_variations(DIMENSIONS.C),
         V=field_value_regex_variations(DIMENSIONS.V),
+        I=field_value_regex_variations(DIMENSIONS.I),
         R=field_value_regex_variations(DIMENSIONS.R),
         g=field_value_regex_variations(DIMENSIONS.g),
     )
@@ -642,6 +643,8 @@ def get_field_detect_regex(mfr):
     fields_detect = dict(
 
         Rds_on=(rec(r'(^R[ _]*DS[ _]*\(?on\)?|(Static[- ]+)?Drain([- ]+to)?[ -]+Source On([ -]+state)?[ -]+Resistance)',
+                    re.IGNORECASE)),
+        Id=(rec(r'(^I[ _]*D|Continuous drain current)',
                     re.IGNORECASE)),
         gfs=(rec(r'(^\|?[Yg][ _]*fs\|?|forward transconductance|Forward Transfer Admittance)', re.IGNORECASE)),
 
@@ -704,12 +707,12 @@ def get_field_detect_regex(mfr):
             r'((gate\s+)?plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?($|\*))',
             re.IGNORECASE),
 
-        Vsd=rec(
-            r'((source-(to-)?drain|drain-(to-)?source )?diode[\s-]+forward[\s-]+voltage|forward diode voltage|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
+        Vsd=rec( # Vsd, Vdsf
+            r'((source-(to-)?drain|drain-(to-)?source )?diode[\s-]+forward[\s-]+voltage|forward diode voltage|V[ _]?DSF|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
             re.IGNORECASE),
 
         Vds=(rec(
-            r'(Drain-(to-)?Source[\s-]+(Breakdown[\s-]+)?Voltage|^B?V[ _]?\s*(\(BR\))?dss?($|[^/]))',
+            r'(Drain-(to-)?Source[\s-]+(Breakdown[\s-]+)?Voltage|^B?V[ _]?\s*(\(BR\))?dss?($|[^/f]))',
             re.IGNORECASE), (
                  'temperature', 'coefficient'  # coefficient
              )),

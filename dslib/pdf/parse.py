@@ -671,6 +671,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
         Q={'uC', 'nC', 'μC'},
         C={'uF', 'nF', 'μF'},
         V={'mV', 'V'},
+        I={'μA','uA', 'mA', 'A'},
         R={'mΩ', 'Ω', 'kΩ', 'MΩ', 'mOhm', 'Ohm', 'kOhm', 'MOhm', 'megOhm', 'mW', 'W', 'kW', 'MW', },
         g={'S', 'mS'}
     )
