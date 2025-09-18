@@ -1,5 +1,6 @@
 import json
 import logging
+import random
 import re
 import sys
 import threading
@@ -31,11 +32,15 @@ def tabula_is_running():
         return False
 
 
+tabula_browser_concurrency = 4
+
+
 @disk_cache(ttl='999d', file_dependencies=[0], salt='v02', hash_func_code=True)
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
     with _tab_web_lock:
-        with acquire_file_lock('.tabula_browser.lock', kill_holder=False, max_time=200):
+        with acquire_file_lock(f'.tabula_browser_{random.randint(1, tabula_browser_concurrency)}.lock',
+                               kill_holder=False, max_time=900):
             # with acquire_file_lock(os.path.dirname(__file__) + '/tabula-web.lock', kill_holder=False, max_time=300):
             s = requests.Session()
 
