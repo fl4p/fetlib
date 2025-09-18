@@ -82,7 +82,7 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
 
             try:
                 req = requests.get(du, timeout=6)
-                if req.status_code == 200 and req.headers['Content-Type'].split(';')[0] == 'application/pdf' and len(
+                if req.status_code == 200 and req.headers['Content-Type'].split(';')[0].lower() == 'application/pdf' and len(
                         req.content) > 10e3 and req.content.startswith(b"%PDF"):
                     with open(datasheet_path, 'wb') as f:
                         f.write(req.content)

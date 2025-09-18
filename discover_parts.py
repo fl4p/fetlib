@@ -26,7 +26,7 @@ def unique_parts(parts: List[DiscoveredPart]):
         assert part.mpn and isinstance(part.mpn, str) and part.mpn.lower() != 'nan', part.mpn
         k = part.mfr, part.mpn
         if k in by:
-            if part.specs.source == ['digikey']:
+            if part.specs and part.specs.source == ['digikey']:
                 continue # digikey data is often wrong
             by[k].package = by[k].package or part.package
             try:
@@ -121,16 +121,18 @@ async def main():
 
     download = [p for p in parts if not os.path.exists(p.get_ds_path()) and p.ds_url]
 
-    i = 0
-    for part in download:
-        i += 1
-        print('download', i, '/', len(download))
+    from wakepy import keep
+    with keep.running():
+        i = 0
+        for part in download:
+            i += 1
+            print('download', i, '/', len(download))
 
-        # if os.path.exists('other-' + part.get_ds_path()):
-        #    os.rename('other-' + part.get_ds_path(), part.get_ds_path())
-        #    continue
+            # if os.path.exists('other-' + part.get_ds_path()):
+            #    os.rename('other-' + part.get_ds_path(), part.get_ds_path())
+            #    continue
 
-        await fetch_datasheet(part.ds_url, part.get_ds_path(), mfr=part.mfr, mpn=part.mpn)
+            await fetch_datasheet(part.ds_url, part.get_ds_path(), mfr=part.mfr, mpn=part.mpn)
 
 
 if __name__ == '__main__':

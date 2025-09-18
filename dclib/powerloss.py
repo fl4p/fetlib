@@ -86,6 +86,8 @@ class SwitchPowerLoss():
 
         :return:
         """
+        if n == 1:
+            return self
         return SwitchPowerLoss(
             P_cl=self.P_cl / n * 0.9,  # HS: one switch takes most of the dynamic load, the rest stay cooler
             P_sw=self.P_sw,

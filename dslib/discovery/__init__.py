@@ -36,13 +36,15 @@ def ensure_ohm(s, min, max):
     assert not (s < min or s > max), (min, s, max)
     return s
 
+Substrate = Literal['Si', 'SiC', 'GaN']
 
 class MosfetBasicSpecs():
     def __init__(self, Vds_max, Rds_on_10v_max, ID_25,
                  Vgs_th_min, Vgs_th_typ, Vgs_th_max,
-                 Qg_typ, Qg_max, source: List[str]):
+                 Qg_typ, Qg_max, source: List[str], substrate:Optional[Substrate] = None):
+        self.substrate:Optional[Substrate] = substrate
         self.Vds_max = Vds_max
-        self.Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 500)
+        self.Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 800)
         self.ID_25 = ID_25
         self.Vgs_th_min = Vgs_th_min
         self.Vgs_th_max = Vgs_th_max
@@ -69,7 +71,11 @@ class MosfetBasicSpecs():
         return self.Qg_typ_nC
 
     def update(self, specs: 'MosfetBasicSpecs'):
-        assert self.Vds_max == specs.Vds_max, (self.Vds_max, specs.Vds_max)
+
+        if math.isnan(self.Vds_max):
+            self.Vds_max = specs.Vds_max
+
+        assert math.isnan(specs.Vds_max) or self.Vds_max == specs.Vds_max, (self.Vds_max, specs.Vds_max)
 
         def mean_chk_std(t, std, fn: Callable = np.nanmean):
             if sum(~np.isnan(t)) == 0:

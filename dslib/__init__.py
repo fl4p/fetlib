@@ -3,7 +3,10 @@ import os.path
 
 
 def write_csv(df: 'pd.DataFrame', path: str) -> None:
-    df.sort_values(by=['Vds_max', 'mfr', 'mpn'], inplace=True, kind='mergesort')
+    by = ['Vds_max', 'mfr', 'mpn']
+    if 'mfr' not in df.columns:
+        by.remove('mfr')
+    df.sort_values(by=by, inplace=True, kind='mergesort')
 
     for col in df.columns:
         if col.startswith('P_') or col.startswith('FoM'):
@@ -36,10 +39,11 @@ mfrs = dict(
     winsok='winsok',
     epc_space='epc space',
     goford='goford',
-    littelfuse=('littelfuse', 'ixys'),
+    littelfuse=('littelfuse', 'ixys', 'littelfuse/ixys'),
     onsemi=('onsemi', 'fairchild'),
     analog_power='analog power',
     yageo_xsemi='yageo_xsemi',
+    hxy='hxy mosfet'
 
 )
 

@@ -48,6 +48,7 @@ async def nexperia_mosfets():
             ds_url=ds_url,
             package=v['Package name'] + ',' + v['Package version'],
             specs=MosfetBasicSpecs(
+                substrate='GaN' if v['Type number'].startswith('GAN') else 'Si',
                 Vds_max=parse_field_value(v['VDS [max] (V)']),
                 Rds_on_10v_max=parse_field_value(v['RDSon [max] @ VGS = 10 V (mΩ)']) * 1e-3,
                 ID_25=parse_field_value(v['ID [max] (A)']),

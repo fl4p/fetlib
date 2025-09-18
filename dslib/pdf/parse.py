@@ -245,6 +245,8 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False):
 
 def validate_datasheet_text(mfr, mpn, text):
     if len(text) < 60:
+        if len(text) == 0:
+            print(mfr, mpn, 'no text in PDF!')
         # print('text too short ' + str(len(text)))
         return False
 
@@ -313,7 +315,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     pdf_text, meta = extract_text(pdf_path, try_ocr=False, auto_decrypt=True)
 
     if not validate_datasheet_text(mfr, mpn, pdf_text) or force_ocr:
-        methods = []  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
+        methods = ['gs']  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
         if not no_ocr:
             methods += ['r600_ocrmypdf', ]  # 'ocrmypdf_redo', 'ocrmypdf_r400',
 
@@ -379,7 +381,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
             ds.add_multiple(tabular_ds.all_fields())
     except NoTabularData:
         pass
-    except (LookupError, AttributeError):
+    except (LookupError, AttributeError, TimeoutError):
         raise
     except Exception as e:
         print(pdf_path, 'tabula error', type(e).__name__, e)
@@ -426,6 +428,8 @@ def tabula_pdf_dataframes(pdf_path=None):
 
     try:
         dfs += tabula_browser(pdf_path)
+    except TimeoutError:
+        raise
     except NoTextInPdfError as e:
         print(pdf_path, e)
     #except TimeoutError:

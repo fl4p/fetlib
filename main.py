@@ -13,18 +13,18 @@ from typing import List, Dict, Literal, Tuple, Optional
 import pandas as pd
 
 import dslib.manual_fields
+from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict
 from dslib.cache import disk_cache
+from dslib.discovery import DiscoveredPart
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
-from dslib.discovery import DiscoveredPart
+from dslib.mosfet import GateDrive
 from dslib.pdf.fonts import fontforge_bin
 from dslib.pdf.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
 from dslib.pdf.tabular import tabula_is_running
-from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from dslib.spec_models import DcDcLoadParams
-from dslib.mosfet import GateDrive
 from dslib.store import Part
 
 excludes = {
@@ -68,7 +68,8 @@ def main():
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--no-download', action='store_true')
-    parser.add_argument('--no-pre-select', action='store_true') # also read datasheets of parts that are out of spec, takes much longer
+    parser.add_argument('--no-pre-select',
+                        action='store_true')  # also read datasheets of parts that are out of spec, takes much longer
     parser.add_argument('--clean', action='store_true')
     args = parser.parse_args(sys.argv[1:])
 
@@ -96,7 +97,8 @@ def main():
 
         def _match_part(p: DiscoveredPart):
             for w in words:
-                if w not in p.mfr.lower() and w not in p.mpn.lower() and w not in str(p.mpn2).lower():
+                if (w not in p.mfr.lower() and w not in p.mpn.lower() and w not in str(p.mpn2).lower()
+                        and w not in str(p.package).lower() and w not in str(p.specs.source).lower()):
                     return False
             return True
 
@@ -117,7 +119,7 @@ def main():
     from wakepy import keep
     with keep.running():
         # do all the magic: download datasheets, read them and compute power loss:
-        parts = generate_parts_power_loss_csv(parts, dcdc=dcdc, args=dotdict(args.__dict__))
+        parts = generate_parts_power_loss_csv2(parts, dcdc=dcdc, args=dotdict(args.__dict__))
 
     # show parts missing Qsw, no switching loss estimation is possible:
     no_qsw = [p for p in parts if math.isnan(p.specs.Qsw)]
@@ -136,7 +138,6 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
         # call this here again on all workers
         from dslib.cache import disk_cache_disable
         disk_cache_disable(True)
-
 
     ds = DatasheetFields(part=part)
 
@@ -215,20 +216,15 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
     return ds
 
 
-def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> Tuple[Optional[Part], Dict[str, any]]:
-    if isinstance(ds, tuple):
-        raise ValueError(ds)
-    else:
-        part = ds.part
+def get_fet_specs(ds: DatasheetFields):
+    part = ds.part
     mfr = part.mfr
     mpn = part.mpn
-
-    ds.add_multiple(ds.part.specs.fields())
-
     # parse specification for DC-DC loss model
     try:
         fet_specs = ds.get_mosfet_specs()
         ds.get_row()
+        return fet_specs
     except Exception as e:
         print(ds.ds_path, 'error creating mosfet specs', e, type(e))
         print(traceback.format_exc())
@@ -244,7 +240,18 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
         dslib.store.parts_db.del_obj(part, ignore_missing=True)
 
         ds.errors.append('specs error: ' + str(e))
+        return None
 
+
+def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> Tuple[Optional[Part], Dict[str, any]]:
+    if isinstance(ds, tuple):
+        raise ValueError(ds)
+    else:
+        part = ds.part
+
+    fet_specs = get_fet_specs(ds)
+
+    if fet_specs is None:
         # raise
         return None, dict(mfr=part.mfr,
                           mpn=part.mpn,
@@ -299,9 +306,8 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     return Part(specs=fet_specs, discovered=part), row
 
 
-@disk_cache(ttl='999d', salt='01')
+#@disk_cache(ttl='999d', salt='04')
 def read_parts_datasheets(parts: List[DiscoveredPart], args):
-
     need_symbols = {
         'tRise', 'tFall',  # HS
         'Qgd',  # HS
@@ -312,14 +318,12 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
         # 'Qrr'  # LS # kl leave this, many DS dont have this
     }
 
-
     if not os.path.isdir('datasheets'):
         try:
             import subprocess
             subprocess.run(['git', 'clone', 'https://github.com/open-pe/fet-datasheets', 'datasheets'])
         except Exception as e:
             print('git clone error:', e)
-
 
     if not tabula_is_running():
         raise RuntimeError('tabula is not running')
@@ -357,12 +361,16 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
     else:
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr, args.no_download) for p in
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr, args.no_download)
+                for p in
                 parts_shuffled}
         results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)
         dss: List[DatasheetFields] = list(results.values())
 
     dss = [d for d in dss if d != (None, None)]
+
+    for ds in dss:
+        ds.add_multiple(ds.part.specs.fields())
 
     return dss
 
@@ -375,7 +383,6 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
     result_rows = []  # csv
     result_parts: List[Part] = []  # db storage
     # all_mpn = set()
-
 
     dss = read_parts_datasheets(parts, args)
 
@@ -434,6 +441,147 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
     # - total power values
 
     return result_parts
+
+
+def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadParams, args):
+    assert parts, "No parts to generate"
+
+    print('generating power loss estimates for ', len(parts), 'parts')
+
+    result_rows = []  # csv
+
+    dss = read_parts_datasheets(parts, args)
+
+    print(set(ds.part.mpn for ds in dss))
+    print('computing power loss for %s parts...' % len(dss))
+
+    gd = GateDrive(float(args.rg_total), Von=10, Voff=0, fallback_V_pl=float(args.vpl_fallback))
+
+    parts_loss = []
+
+    for ds in dss:
+        if isinstance(ds, tuple) and ds == (None, None):
+            continue
+        if not dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds')):
+            print(ds.part, 'vds not in range', ds.get_typ_or_max_or_min('Vds'))
+            continue
+        fet_specs = get_fet_specs(ds)
+        if fet_specs is None:
+            continue
+
+        loss_spec = dcdc_buck_hs(dcdc, fet_specs,
+                                 gd=gd,  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
+                                 )
+
+        parts_loss.append((ds, fet_specs, loss_spec))
+
+        ploss = loss_spec.__dict__.copy()
+        del ploss['P_dt'], ploss['P_rr']
+        ploss.pop('_cond', None)
+
+        rds_on_max = ds.get_max('Rds_on_10v', False)
+        if math.isnan(rds_on_max):
+            rds_on_max = ds.get_max('Rds_on', True)
+
+        Id = ds.get_typ_or_max_or_min('ID_25', False)
+        if math.isnan(Id):
+            Id = ds.get_typ_or_max_or_min('Id', False)
+
+        for i in range(1, 3):
+            ls = loss_spec.parallel(i)
+            result_rows.append(dict(
+                mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
+                housing=ds.part.package,
+
+                Vds_max=ds.get_max_or_min('Vds', True),
+                Rds_max=rds_on_max * 1000,
+                Id=Id,
+                Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+                errors=', '.join(ds.errors),
+
+                date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
+                dateC=ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
+
+                P_cl=ls.P_cl,
+                P_sw=ls.P_sw,
+                P_gd=ls.P_gd,
+                P_coss=ls.P_coss,
+                P_tot=ls.buck_hs(),
+            ))
+
+            if math.isnan(ls.buck_hs()):
+                break
+
+    low_sw = sorted(parts_loss, key=lambda pml: (pml[2].P_sw + pml[2].P_coss) if pml[2].P_sw > 0 else 9e9)[:200]
+    low_cl = sorted(parts_loss, key=lambda pml: (pml[2].P_cl + pml[2].P_coss) if pml[2].P_cl > 0 else 9e9)[:200]
+
+    sc_best = {}
+    best = 9e9
+    best_psw = low_sw[0][2].P_sw + low_sw[0][2].P_gd + low_sw[0][2].P_coss
+
+    for ds, fet_specs, ls in low_sw:
+        p_sw = ls.P_sw + ls.P_gd + ls.P_coss
+        if p_sw > best_psw * 4:
+            continue
+        for ds2, fet_specs2, ls2 in low_cl:
+            p = p_sw + ls2.P_cl + ls2.P_gd + ls2.P_coss
+            k = (ds.part.mfr, ds.part.mpn)
+            if p < sc_best.get(k, 9e9):
+                sc_best[k] = p
+            if p < best:
+                best = p
+            if p < best * 1.5 and p < sc_best[k] * 1.1 and p < ls.parallel(2).buck_hs() and p < ls2.parallel(
+                    2).buck_hs():
+
+                rds_on_max = ds2.get_max('Rds_on_10v', False)
+                if math.isnan(rds_on_max):
+                    rds_on_max = ds2.get_max('Rds_on', True)
+
+                result_rows.append(dict(
+                    mpn=f'{ds.part.mpn} || {ds2.part.mpn}',
+                    housing=ds.part.package + ' ' + ds2.part.package,
+
+                    Vds_max=min(ds.get_max_or_min('Vds', True), ds2.get_max_or_min('Vds', True)),
+                    Rds_max=rds_on_max,
+                    Id=math.nan, # TODO min
+                    Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+                    errors=', '.join(ds.errors),
+
+                    date='',  # ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
+                    dateC='',  # ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
+
+                    P_cl=ls2.P_cl,
+                    P_sw=ls.P_sw,
+                    P_gd=ls.P_gd + ls2.P_gd,
+                    P_coss=ls.P_coss + ls2.P_coss,
+                    P_tot=p,
+                ))
+
+                print('framed switching %s + %s (%.2f W)' % (ds.part.mpn, ds2.part.mpn, p))
+
+    df = pd.DataFrame(result_rows)
+
+    if len(dss) >= 1:
+        os.path.exists('out') or os.makedirs('out', exist_ok=True)
+        dat = f'{datetime.datetime.now():%Y-%m-%d}'
+        out_fn = f'out/{dcdc.fn_str("buck")}v2-{dat}-inp{len(parts)}'
+        if args.q:
+            out_fn = f'-q{args.q}'
+        out_fn += '.csv'
+        write_csv(df, out_fn)
+        print('written', out_fn)
+    else:
+        print('skip csv write because only few parts')
+
+    show_summary(dss)
+
+    # report
+    # - total datasheets with at least 1 field
+    # - total fields with at least one value
+    # - total values
+    # - total power values
+
+    return []
 
 
 def num_cores():

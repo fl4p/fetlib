@@ -109,3 +109,4 @@ async def onsemi_mosfets():
             ), package=row['Package Type']))  # Package Name
 
     return parts
+
