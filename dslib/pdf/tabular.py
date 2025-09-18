@@ -32,10 +32,10 @@ def tabula_is_running():
         return False
 
 
-tabula_browser_concurrency = 4
+tabula_browser_concurrency = 5
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt='v02', hash_func_code=True)
+@disk_cache(ttl='999d', file_dependencies=[0], salt='v03', hash_func_code=False)
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
     with _tab_web_lock:
