@@ -236,7 +236,7 @@ class Char:
 
         font = fonts_enc[fontname]
         if isinstance(font, PDFType1Font):
-            if hasattr(font, 'cid2glyph'):
+            if hasattr(font, 'cid2glyph') and len(font.cid2glyph) > (cid - 1):
                 glyph = font.cid2glyph[cid - 1]
                 # assert not isinstance(glyph, int), (repr(glyph), cid)
                 if isinstance(glyph, int) and glyph < 2:

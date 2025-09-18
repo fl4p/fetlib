@@ -2,6 +2,7 @@ import datetime
 import math
 import os.path
 import re
+import time
 import traceback
 import warnings
 from typing import List, Tuple, Union, Optional
@@ -81,10 +82,10 @@ def extract_text(pdf_path, try_ocr=False, auto_decrypt=False) -> Tuple[str, Data
     import fitz  # PyMuPDF
     pdf_document: pymupdf.Document = fitz.open(pdf_path)
 
-    if len(pdf_document) > 30:
+    if len(pdf_document) > 35:
         n = len(pdf_document)
         pdf_document.close()
-        raise TooManyPages(pdf_path + ' has more than 25 pages ' + str(n))
+        raise TooManyPages(pdf_path + ' has more than 35 pages ' + str(n))
 
     meta = DataSheetFileMeta(pdf_document.metadata['title'],
                              ctime=parse_date(pdf_document.metadata['creationDate']),
@@ -411,6 +412,8 @@ except ImportError:
 
 disk_cache(ttl='999d', file_dependencies=True)
 def tabula_read_pdf_cached(pdf_path, *args, **kwargs):
+    if 'silent' not in kwargs:
+        kwargs['silent'] = True
     import tabula
     return tabula.read_pdf(pdf_path, *args, **kwargs)
 
@@ -500,13 +503,22 @@ valid_range = dict(
 def find_iter_timeout(r: re.Pattern, s: str) -> re.Match:
     return next(r.finditer(s), None)
 
+find_iter_t_max = 0
 
 def find_iter(r: re.Pattern, s: str) -> re.Match:
+    global find_iter_t_max
     # print('REGEX:', repr(r.pattern))
     # print('STR: ', repr(s))
     if '?P<cond' in r.pattern:
         try:
-            return find_iter_timeout(r, s)
+            t0 = time.time()
+            r = find_iter_timeout(r, s)
+            dt = time.time() - t0
+            if dt > find_iter_t_max:
+                find_iter_t_max = dt
+                if dt > 0.1:
+                    print('find_iter_t_max:', round(find_iter_t_max, 3) )
+            return r
         except TimeoutError:
             print('TimeoutError with', repr(r.pattern))
             raise

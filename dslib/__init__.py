@@ -3,9 +3,10 @@ import os.path
 
 
 def write_csv(df: 'pd.DataFrame', path: str) -> None:
-    by = ['Vds_max', 'mfr', 'mpn']
-    if 'mfr' not in df.columns:
-        by.remove('mfr')
+    by = ['P_tot', 'Vds_max', 'mfr', 'mpn']
+    for b in list(by):
+        if b not in df.columns:
+            by.remove(b)
     df.sort_values(by=by, inplace=True, kind='mergesort')
 
     for col in df.columns:

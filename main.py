@@ -62,6 +62,7 @@ def main():
     #    'discover', 'download', 'parse', 'power'), default='power')
     parser.add_argument('--dcdc-file')
     parser.add_argument('-q')
+    parser.add_argument('-substrate')
     parser.add_argument('-j', default=8)  # parallel jobs
     parser.add_argument('--rg-total', default=4.7)  # total gate resistance
     parser.add_argument('--vpl-fallback', default=4.5)
@@ -91,6 +92,10 @@ def main():
     # discover available MOSFETS:
     parts = asyncio.run(discover_mosfets(no_obsolete=True))
     print('Discovered', len(parts), 'parts from manufacturers:', ','.join(sorted(set(p.mfr for p in parts))))
+
+    if args.substrate:
+        parts = [p for p in parts if
+                 not hasattr(p.specs, 'substrate') or not p.specs.substrate or p.specs.substrate == args.substrate]
 
     if args.q:
         words = list(map(lambda s: s.strip(), args.q.lower().strip(' "\'').split(' ')))
@@ -157,7 +162,10 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
             if lp_keys:
                 need_symbols = subsctract_needed_symbols(need_symbols, lp_keys, copy=True)
 
-        ld = dslib.store.datasheets_db.load_obj(part)
+        try:
+            ld = dslib.store.datasheets_db.load_obj(part)
+        except:
+            ld = None
         ld_keys = ld.keys() if ld else None
         if ld_keys:
             need_symbols = subsctract_needed_symbols(need_symbols, ld_keys, copy=True)
@@ -306,7 +314,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     return Part(specs=fet_specs, discovered=part), row
 
 
-#@disk_cache(ttl='999d', salt='04')
+@disk_cache(ttl='999d', salt=('07', excludes))
 def read_parts_datasheets(parts: List[DiscoveredPart], args):
     need_symbols = {
         'tRise', 'tFall',  # HS
@@ -512,8 +520,8 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
             if math.isnan(ls.buck_hs()):
                 break
 
-    low_sw = sorted(parts_loss, key=lambda pml: (pml[2].P_sw + pml[2].P_coss) if pml[2].P_sw > 0 else 9e9)[:200]
-    low_cl = sorted(parts_loss, key=lambda pml: (pml[2].P_cl + pml[2].P_coss) if pml[2].P_cl > 0 else 9e9)[:200]
+    low_sw = sorted(parts_loss, key=lambda pml: (pml[2].P_sw + pml[2].P_coss) if pml[2].P_sw > 0 else 9e9)[:5000]
+    low_cl = sorted(parts_loss, key=lambda pml: (pml[2].P_cl + pml[2].P_coss) if pml[2].P_cl > 0 else 9e9)[:5000]
 
     sc_best = {}
     best = 9e9
@@ -523,6 +531,15 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
         p_sw = ls.P_sw + ls.P_gd + ls.P_coss
         if p_sw > best_psw * 4:
             continue
+        Id = ds.get_typ_or_max_or_min('ID_25', False)
+        if math.isnan(Id):
+            Id = ds.get_typ_or_max_or_min('Id', False)
+
+        # here we need the pulsed drain current, which we assume is 4x higher than Id_DC
+        # always verify datasheet 'Maximum Safe Operating Area' diagram
+        if not dcdc.Id_in_range(Id * 4, 1):
+            continue
+
         for ds2, fet_specs2, ls2 in low_cl:
             p = p_sw + ls2.P_cl + ls2.P_gd + ls2.P_coss
             k = (ds.part.mfr, ds.part.mpn)
@@ -530,7 +547,7 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
                 sc_best[k] = p
             if p < best:
                 best = p
-            if p < best * 1.5 and p < sc_best[k] * 1.1 and p < ls.parallel(2).buck_hs() and p < ls2.parallel(
+            if p < best * 1.5 and p < sc_best[k] * 1.2 and p < ls.parallel(2).buck_hs() and p < ls2.parallel(
                     2).buck_hs():
 
                 rds_on_max = ds2.get_max('Rds_on_10v', False)
@@ -565,8 +582,10 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
         os.path.exists('out') or os.makedirs('out', exist_ok=True)
         dat = f'{datetime.datetime.now():%Y-%m-%d}'
         out_fn = f'out/{dcdc.fn_str("buck")}v2-{dat}-inp{len(parts)}'
+        if args.substrate:
+            out_fn += f'-{args.substrate}'
         if args.q:
-            out_fn = f'-q{args.q}'
+            out_fn += f'-q{args.q}'
         out_fn += '.csv'
         write_csv(df, out_fn)
         print('written', out_fn)

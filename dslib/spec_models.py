@@ -16,7 +16,8 @@ class DcDcLoadParams:
     def default():
         # return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
         # return DcDcSpecs(vi=75, vo=27 * 2, pin=900, f=40e3, ripple_factor=0.3, tDead=300e-9)
-        return DcDcLoadParams(vi=70, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        #return DcDcLoadParams(vi=130, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        return DcDcLoadParams(vi=72, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
 
     def __init__(self, vi, vo, f, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
                  L=None):
@@ -146,13 +147,17 @@ class DcDcLoadParams:
             return True
         return not (vds < (self.Vi * 1.1)) and not (vds > (self.Vi * 5))
 
+    def Id_in_range(self, id_max:float, parallel:int):
+        return not (id_max < self.Io_max * 1.2 / parallel)
+
     def select_mosfets(dcdc, parts: List['DiscoveredPart']):
-        max_parallel = 6
-        rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2 * max_parallel * 2
+        max_parallel = 3
+        rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2 * max_parallel
         # use inverted comparison to pass-through nan-values
         return [p for p in parts if (
                 dcdc.vds_in_range(p.specs.Vds_max)
-                and not (p.specs.ID_25 < dcdc.Io_max * 1.2 / max_parallel) and not (p.specs.Rds_on_10v_max > rds_on_max))]
+                and dcdc.Id_in_range(p.specs.ID_25, max_parallel) and not (
+                    p.specs.Rds_on_10v_max > rds_on_max))]
 
     def C_out_min(self, vout_ripple):
         # https://www.ti.com/lit/ds/symlink/lm5163.pdf

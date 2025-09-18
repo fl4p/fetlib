@@ -50,9 +50,9 @@ class Field():
                 mul = 1000
                 unit = 'mΩ'
 
-        min = parse_field_value(min) * mul
-        typ = parse_field_value(typ) * mul
-        max = parse_field_value(max) * mul
+        min = parse_field_value(min, no_raise=True) * mul
+        typ = parse_field_value(typ, no_raise=True) * mul
+        max = parse_field_value(max, no_raise=True) * mul
 
         fill_max_dims = {'Q', 't', 'Vsd', 'Coss'}
         is_fill_max = symbol[0] in fill_max_dims or symbol in fill_max_dims
@@ -229,7 +229,7 @@ def parse_field_value(s, no_raise=False):
     if not s:
         return math.nan
     s = normalize_text(s.strip().strip(' \x03').rstrip('L.'))
-    if not s or s in {'-', '.', '=', '"', "'", '#', '~NA~', 'N/A'} or set(s) == {'-'}:
+    if not s or s in {'-', '~', '.', '=', '"', "'", '#', '~NA~', 'N/A'} or set(s) == {'-', '~'}:
         return math.nan
     if s.startswith('+- '):
         s = s[3:]
@@ -292,7 +292,7 @@ class DatasheetFields():
 
         rds_on_max = ds.get_max('Rds_on_10v', False)
         if math.isnan(rds_on_max):
-            rds_on_max = ds.get_max('Rds_on', True)
+            rds_on_max = ds.get_max('Rds_on', False)
 
         Id = ds.get_typ_or_max_or_min('ID_25', False)
         if math.isnan(Id):
