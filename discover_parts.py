@@ -57,6 +57,9 @@ async def discover_mosfets(no_obsolete=False):
         parts += dslib.discovery.huayi.huayi_mosfets()
         parts += await dslib.discovery.nxp.nexperia_mosfets()
         parts += await dslib.discovery.epc.epc_gan()
+
+        from dslib.discovery.lcsc import discover_china_mosfets_cached
+        parts += discover_china_mosfets_cached()
     except:
         await close_browser()
         raise
