@@ -2,8 +2,8 @@ import math
 import os.path
 
 
-def write_csv(df: 'pd.DataFrame', path: str) -> None:
-    by = ['P_tot', 'Vds_max', 'mfr', 'mpn']
+def write_csv(df: 'pd.DataFrame', path: str, sort_by=['P_tot', 'Vds_max', 'mfr', 'mpn'], power_value_digits=2) -> None:
+    by = list(sort_by)
     for b in list(by):
         if b not in df.columns:
             by.remove(b)
@@ -11,7 +11,7 @@ def write_csv(df: 'pd.DataFrame', path: str) -> None:
 
     for col in df.columns:
         if col.startswith('P_') or col.startswith('FoM'):
-            df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, 2) if isinstance(v, float) else v)
+            df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, power_value_digits) if isinstance(v, float) else v)
 
     return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
 
