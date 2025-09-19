@@ -71,6 +71,11 @@ class Field():
             warnings.warn('Vpl %s out of range, assuming /10' % typ)
             typ /= 10
 
+        if symbol == 'Vds':
+            if abs(typ) < 1: typ = math.nan
+            if abs(min) < 1: min = math.nan
+            if abs(max) < 1: max = math.nan
+
         mtm = (min, typ, max)
 
         if symbol == 'Qrr' and (not unit or unit.lower() == 'c'):
