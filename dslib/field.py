@@ -407,10 +407,15 @@ class DatasheetFields():
         if math.isnan(rds_on):
             rds_on = ds.get_max('Rds_on', cond=dict(Vgs=Vgs))
 
+        Id = ds.get_typ_or_max_or_min('ID_25', False)
+        if math.isnan(Id):
+            Id = ds.get_typ_or_max_or_min('Id', False)
+
         from dslib.mosfet import MosfetSpecs
         return MosfetSpecs(
             Vds_max=ds.get_max_or_min('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,
+            Id=Id,
             Qg=ds.get_typ_or_max_or_min('Qg', cond=dict(Vgs=Vgs)) * 1e-9,
             tRise=ds.get_typ_or_max_or_min('tRise') * 1e-9,
             tFall=ds.get_typ_or_max_or_min('tFall') * 1e-9,

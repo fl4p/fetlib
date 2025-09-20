@@ -31,3 +31,14 @@ def test_validate_datasheet_text():
 
     assert not validate_datasheet_text('mfr', 'HY3810C', 'lorem HY3810NA2P/B ' + ('fill it' * 20))
     assert validate_datasheet_text('mfr', 'HY3810NA2B', 'lorem HY3810NA2P/B '+ ('fill it' * 20))
+
+
+def test_parse_field_value():
+    from dslib.field import parse_field_value
+    assert math.isnan(parse_field_value('---', no_raise=True))
+    assert math.isnan(parse_field_value('~', no_raise=True))
+    assert math.isnan(parse_field_value('~~', no_raise=True))
+
+    from dslib.field import Field
+    f = Field('Qg', '---', 12, '--', '')
+    assert f.typ == 12

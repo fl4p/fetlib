@@ -10,7 +10,7 @@ class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, trr=None, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None,
                  Qsw=None,
-                 Vpl=None, Vsd=None, Coss=math.nan, Rg=math.nan, part=None):
+                 Vpl=None, Vsd=None, Coss=math.nan, Rg=math.nan, Id=math.nan, part=None):
         """
 
         :param Vds_max:
@@ -143,6 +143,7 @@ class MosfetSpecs:
                     warnings.warn(s)
 
         self.Rg = Rg
+        self.Id = Id
         # if not math.isnan(Rg):
         # assert 0.2 < Rg < 200, ("Rg out of range", Rg)
 

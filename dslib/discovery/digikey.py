@@ -21,6 +21,7 @@ def digikey(csv_glob_path, no_obsolete=False):
         mpn = str(row['Mfr Part #'])
         ds_url = row.Datasheet
         parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+            substrate='GaN' if row['Technology'].startswith('GaN') else None,
             Vds_max=float(row['Drain to Source Voltage (Vdss)'].strip(' V')),
             Rds_on_10v_max=(row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip()),
             Qg_max=(row['Gate Charge (Qg) (Max) @ Vgs'].split('@')[0].strip()),

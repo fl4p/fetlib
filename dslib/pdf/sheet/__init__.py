@@ -112,12 +112,12 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=True, salt=('v07'))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v09'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
         return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,
                                 multiline_conditions=multiline_conditions)
-    except AttributeError:  # 'PSKeyword' object has no attribute 'decode'
+    except (AttributeError, PSException):  # 'PSKeyword' object has no attribute 'decode'
         from dslib.pdf.pipeline import pdf2pdf
         pdf2pdf(pdf_file, pdf_file + '.gs.pdf', 'gs')
         return read_sheet_inner(pdf_file + '.gs.pdf', expand, merge, debug_annotations=False,
@@ -539,7 +539,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                                   **{k: val.get(k, math.nan) for k in ('min', 'typ', 'max')},
                                   unit=unit,
                                   cond=cond,
-                                  source=['sheet', f'pg{table.page.page_num+1}',
+                                  source=['sheet', f'pg{table.page.page_num + 1}',
                                           f't{round(table.bbox.y2)}',
                                           f'td{round(f_bbox.y2)}'])
                         fields.append(f)

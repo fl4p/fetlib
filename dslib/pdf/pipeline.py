@@ -173,6 +173,9 @@ def pdf2pdf(in_path, out_path, method):
     #    image.save(out_path % page)
     #    page = page + 1
 
+    if not out_path:
+        out_path = in_path + '.' + method + '.pdf' if method != 'nop' else in_path
+
     def cups():
         # macports
         # https://www.cups-pdf.de/

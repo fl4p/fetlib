@@ -13,10 +13,10 @@ import timeout_decorator
 
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
-from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
-    whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
 from dslib.pdf import expr
 from dslib.pdf.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline, date_regexs, months_short
+from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
+    whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
 from dslib.pdf.pipeline import convertapi, pdf2pdf
 
 
@@ -118,6 +118,10 @@ def extract_text(pdf_path, try_ocr=False, auto_decrypt=False) -> Tuple[str, Data
     return pdf_text, meta
 
 
+regex_ver_salt = ('v46', dim_regs_csv, get_field_detect_regex('any'))
+
+
+@disk_cache(ttl='999d', salt=(regex_ver_salt, 'v01'), hash_func_code=True)
 def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False):
     assert mfr
     mpn = pdf_path.split('/')[-1].split('.')[0] if pdf_path else None
@@ -261,9 +265,6 @@ def validate_datasheet_text(mfr, mpn, text):
     return True
 
 
-regex_ver_salt = ('v46', dim_regs_csv, get_field_detect_regex('any'))
-
-
 class NoTabularData(ValueError):
     pass
 
@@ -290,7 +291,7 @@ def extract_dates(pdf_text: str):
     return [x[1] for x in sorted(dates, key=lambda x: x[0])]
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v01'), ignore_missing_inp_paths=True,
+@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v03'), ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
@@ -360,7 +361,14 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                          )
 
     from dslib.pdf.sheet import read_sheet
-    ds.add_multiple(read_sheet(pdf_path).all_fields(), ['read_sheet'])
+    fields = read_sheet(pdf_path).all_fields()
+    method = 'r600_ocrmypdf'
+    if not fields:
+        f2 = pdf_path + '.' + method + '.pdf' if method != 'nop' else pdf_path
+        pdf2pdf(pdf_path, f2, method)
+        fields = read_sheet(f2).all_fields()
+
+    ds.add_multiple(fields, ['read_sheet'])
 
     if need_symbols:
         subsctract_needed_symbols(need_symbols, ds.keys())
@@ -369,7 +377,9 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     if tabular_pre_methods is None:
         # assert not tabular_pre_methods
-        tabular_pre_methods = ('nop', 'gs',)  # 'cups',
+        tabular_pre_methods = ('nop', 'gs',
+                               'r600_ocrmypdf',  # IPB027N10N3
+                               )  # 'cups',
 
     try:
         # if verbose:
@@ -387,7 +397,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     except Exception as e:
         print(pdf_path, 'tabula error', type(e).__name__, e)
         ds.errors.append('tabula error {!r}'.format(e))
-        #raise
+        # raise
 
     txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path, verbose=False)
     ds.add_multiple(txt_fields.all_fields())
@@ -411,16 +421,17 @@ except ImportError:
     _force_subprocess = True
 
 disk_cache(ttl='999d', file_dependencies=True)
+
+
 def tabula_read_pdf_cached(pdf_path, *args, **kwargs):
     if 'silent' not in kwargs:
         kwargs['silent'] = True
     import tabula
     return tabula.read_pdf(pdf_path, *args, **kwargs)
 
+
 # @disk_cache(ttl='999d', file_dependencies=True, salt='browser_v04_both')
 def tabula_pdf_dataframes(pdf_path=None):
-    import tabula
-
     # /Users/fab/Downloads/tabula/Tabula.app/Contents/Java/tabula.jar
 
     dfs = []
@@ -435,7 +446,7 @@ def tabula_pdf_dataframes(pdf_path=None):
         raise
     except NoTextInPdfError as e:
         print(pdf_path, e)
-    #except TimeoutError:
+    # except TimeoutError:
     #    raise  # these are fatal, should not happen
     except Exception as e:
         last_e = e
@@ -446,8 +457,8 @@ def tabula_pdf_dataframes(pdf_path=None):
 
     try:
         dfs += tabula_read_pdf_cached(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True,
-                               # force_subprocess=_force_subprocess
-                               )
+                                      # force_subprocess=_force_subprocess
+                                      )
         for df in dfs:
             df.index.name = 'tabula_cli_guess'
     except Exception as e:
@@ -503,7 +514,9 @@ valid_range = dict(
 def find_iter_timeout(r: re.Pattern, s: str) -> re.Match:
     return next(r.finditer(s), None)
 
+
 find_iter_t_max = 0
+
 
 def find_iter(r: re.Pattern, s: str) -> re.Match:
     global find_iter_t_max
@@ -517,7 +530,7 @@ def find_iter(r: re.Pattern, s: str) -> re.Match:
             if dt > find_iter_t_max:
                 find_iter_t_max = dt
                 if dt > 0.1:
-                    print('find_iter_t_max:', round(find_iter_t_max, 3) )
+                    print('find_iter_t_max:', round(find_iter_t_max, 3))
             return r
         except TimeoutError:
             print('TimeoutError with', repr(r.pattern))
@@ -674,7 +687,7 @@ def right_strip_nan(v, n):
         v = v[0:i + n + 1]
     return v
 
-
+# TODO cache
 def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', verbose=False) -> DatasheetFields:
     assert mfr
     assert not ds_path or mfr in ds_path, (mfr, ds_path)
@@ -687,7 +700,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
         Q={'uC', 'nC', 'μC'},
         C={'uF', 'nF', 'μF'},
         V={'mV', 'V'},
-        I={'μA','uA', 'mA', 'A'},
+        I={'μA', 'uA', 'mA', 'A'},
         R={'mΩ', 'Ω', 'kΩ', 'MΩ', 'mOhm', 'Ohm', 'kOhm', 'MOhm', 'megOhm', 'mW', 'W', 'kW', 'MW', },
         g={'S', 'mS'}
     )
