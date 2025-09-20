@@ -11,6 +11,8 @@ from typing import Literal
 
 import pymupdf
 
+pymupdf.TOOLS.mupdf_display_errors(False)
+
 from dslib.field import conditions_to_str
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 from dslib.pdf.parse import extract_text, parse_datasheet

@@ -252,6 +252,9 @@ class PickleFileStore:
     def __init__(self):
         pass
 
+    def get_path(self, key):
+        return _get_fn(key, ext='pickle')
+
     # noinspection PyMethodMayBeStatic
     def read(self, key):
         # noinspection PyBroadException
@@ -457,7 +460,7 @@ def disk_cache_key(mod, target, ignore_kwargs, args, kwargs):
 
     cache_key_prefix = ''
     for a in args:
-        if isinstance(a, str) and len(a) < 20:
+        if isinstance(a, str) and len(a) < 20: # TODO increase 20 to 30
             cache_key_prefix += a + '_'
         else:
             break
@@ -766,6 +769,8 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
             return ret
 
         _disk_cache_wrapper.invalidate = _invalidate
+        _disk_cache_wrapper.cache_key = _cache_key
+        _disk_cache_wrapper.store = disk_cache_store
         return _disk_cache_wrapper
 
     return decorate

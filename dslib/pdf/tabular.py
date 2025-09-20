@@ -34,13 +34,14 @@ def tabula_is_running():
 
 tabula_browser_concurrency = 5
 
-
-@disk_cache(ttl='999d', file_dependencies=[0], salt='v03', hash_func_code=False)
+#@disk_cache(ttl='999d', file_dependencies=[0], salt='v02', hash_func_code=True)
+@disk_cache(ttl='999d', file_dependencies=[0], salt='v03')
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
     with _tab_web_lock:
         with acquire_file_lock(f'.tabula_browser_{random.randint(1, tabula_browser_concurrency)}.lock',
                                kill_holder=False, max_time=900):
+
             # with acquire_file_lock(os.path.dirname(__file__) + '/tabula-web.lock', kill_holder=False, max_time=300):
             s = requests.Session()
 
@@ -78,7 +79,7 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
                     pbar.update(res['pct_complete'] - pbar.n)
                     time.sleep(1)
 
-                    #
+                #
 
             # tables = [
             #     [[30.0, 76.0, 245.0, 78.0], [30.0, 167.0, 250.0, 94.0], [30.0, 274.0, 251.0, 72.0]]  # page 1
@@ -145,7 +146,10 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
                 print(pdf_path, 'tabula web error', e)
                 raise TimeoutError() from e
             finally:
-                s.post(f"http://127.0.0.1:8080/pdf/{fid}", data=dict(_method='delete'), timeout=10)
+                try:
+                    s.post(f"http://127.0.0.1:8080/pdf/{fid}", data=dict(_method='delete'), timeout=10)
+                except:
+                    pass
 
             dfs = []
             for tab in dat:

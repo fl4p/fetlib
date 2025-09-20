@@ -100,7 +100,7 @@ async def main():
 
     from dslib.spec_models import DcDcLoadParams
     dcdc_params = DcDcLoadParams.default()
-    parts = dcdc_params.select_mosfets(parts)
+    parts = dcdc_params.select_mosfets(parts, max_parallel=10)
 
     #parts = [p for p in parts if (p.specs.ID_25 >= 2 and p.specs.Rds_on_10v_max < 20e-3)]
         #        or (p.specs.Vds_max >= 200 and p.specs.Vds_max <= 800 and p.specs.ID_25 >= 10)
@@ -121,6 +121,19 @@ async def main():
             print('%-22s with %5d/%5d' % (mfr, len(sel_by_mfr[mfr]), len(by_mfr[mfr])))
 
     print('selected mosfet parts:', len(parts), dcdc_params)
+
+    #for p in parts:
+    #    if ' ' in p.mpn or '/' in p.mpn or ', ' in p.mpn:
+    #        op = os.path.join('datasheets', p.mfr, p.mpn + '.pdf')
+    #        if os.path.exists(op):
+    #            if os.path.exists(p.get_ds_path()):
+    #                print('removed', op, '(new: ', p.get_ds_path())
+    #                os.remove(op)
+    #            else:
+    #                print('rename', op, p.get_ds_path())
+    #                os.rename(op, p.get_ds_path())
+
+                # os.remove(op)
 
     download = [p for p in parts if not os.path.exists(p.get_ds_path()) and p.ds_url]
 

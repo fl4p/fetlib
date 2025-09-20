@@ -32,3 +32,6 @@ def test_read_sheet():
 
     ds = read_sheet('datasheets/nxp/BUK764R2-80E,118.pdf')
     assert ds.Rg.typ != 80
+
+    ds = read_sheet('../../datasheets/littelfuse/IXTA76N25T.pdf')
+    assert ds.Vsd == 1.5

@@ -19,6 +19,7 @@ from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs, whitespaces_t
     whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
 from dslib.pdf.pipeline import convertapi, pdf2pdf
 
+pymupdf.TOOLS.mupdf_display_errors(False)
 
 def _empty(s):
     return not s or str(s).lower() == 'nan'
@@ -420,9 +421,7 @@ except ImportError:
     # print('jpype not found')
     _force_subprocess = True
 
-disk_cache(ttl='999d', file_dependencies=True)
-
-
+@disk_cache(ttl='999d', file_dependencies=True)
 def tabula_read_pdf_cached(pdf_path, *args, **kwargs):
     if 'silent' not in kwargs:
         kwargs['silent'] = True
@@ -539,7 +538,7 @@ def find_iter(r: re.Pattern, s: str) -> re.Match:
         return next(r.finditer(s), None)
 
 
-def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None) \
+def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None, mpn=None,) \
         -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
     range = valid_range.get(field_sym)
     err = []
@@ -572,7 +571,7 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
         stop = False
         for sw in stop_words:
             if sw in head:
-                print('parsing', field_sym, 'in', s, 'but found stop word', sw, 'in match head:', head)
+                print(mpn, 'parsing', field_sym, 'in', s, 'but found stop word', sw, 'in match head:', head)
                 stop = True
                 break
             if sw in m[0]:
@@ -603,7 +602,7 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
             err.append((field_sym, 'error parsing field row', s, e))
             continue
     for e in err:
-        print(*e)
+        print(mpn or '', *e)
 
     if capture_match:
         return None, m
@@ -688,7 +687,7 @@ def right_strip_nan(v, n):
     return v
 
 # TODO cache
-def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', verbose=False) -> DatasheetFields:
+def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', verbose=False, mpn=None) -> DatasheetFields:
     assert mfr
     assert not ds_path or mfr in ds_path, (mfr, ds_path)
     fields_detect = get_field_detect_regex(mfr)
@@ -798,6 +797,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
                                                      capture_match=True,
                                                      source=[source_base, source_name, 'parse_csv'],
                                                      mfr=mfr,
+                                                     mpn=mpn,
                                                      )
 
                 if not field and len(list(filter(bool, row.dropna()))) > 2:
@@ -870,6 +870,7 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=Fa
     """
 
     mfr = ds_path.split('/')[-2]
+    mpn = ds_path.split('/')[-1]
 
     need_symbols = need_symbols and set(need_symbols)
 
@@ -932,7 +933,7 @@ def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=Fa
                 lambda s: (isinstance(s, str) and whitespaces_to_space(ocr_post_subs(normalize_text(s)))) or s).to_csv(
                 side_csv, header=False)
 
-        fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=f2, verbose=verbose)
+        fields = extract_fields_from_dataframes(dfs, mfr=mfr, ds_path=f2, verbose=verbose, mpn=mpn)
 
         if len(fields) > 0:
             combined_fields.add_multiple(fields.all_fields())

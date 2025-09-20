@@ -145,13 +145,12 @@ class DcDcLoadParams:
     def vds_in_range(self, vds):
         if abs(vds) < 2:  # probably invalid
             return True
-        return not (vds < (self.Vi * 1.1)) and not (vds > (self.Vi * 5))
+        return not (vds < (self.Vi * 1.1)) and not (vds > max(50, self.Vi * 3))
 
     def Id_in_range(self, id_max:float, parallel:int):
         return not (id_max < self.Io_max * 1.2 / parallel)
 
-    def select_mosfets(dcdc, parts: List['DiscoveredPart']):
-        max_parallel = 3
+    def select_mosfets(dcdc, parts: List['DiscoveredPart'], max_parallel=3):
         rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2 * max_parallel
         # use inverted comparison to pass-through nan-values
         return [p for p in parts if (

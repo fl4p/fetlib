@@ -130,7 +130,7 @@ class DiscoveredPart:
         self.status = status
 
     def get_ds_path(self):
-        return os.path.join('datasheets', self.mfr, self.mpn + '.pdf')
+        return os.path.join('datasheets', self.mfr, self.mpn.replace('/','_').replace(' ','_').replace(', ',',') + '.pdf')
 
     def __repr__(self):
         return f'DiscoveredPart({self.mfr}, {self.mpn}, ({self.specs}))'

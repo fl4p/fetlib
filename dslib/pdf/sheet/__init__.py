@@ -44,7 +44,8 @@ head_stop = (
     'Static', 'Electrical', 'Dynamic', 'curves', 'above',
     'Continuous', 'Pulsed',  # Max drain current
     'Thermal', 'Resistance',
-    'Absolute'  # Toshiba: section head `Absolute Maximum Ratings`
+    'Absolute',  # Toshiba: section head `Absolute Maximum Ratings`
+    'Diagram', 'C, max'
 )
 
 
@@ -425,7 +426,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
 
                     annotations.append(Annotation(
                         name=row.symbol.symbol + ' ' + g,
-                        bbox=bbox_cell, thickness=2, color=(128, 128, 255)
+                        bbox=bbox_cell, thickness=2, color=(0, 128, 255)
                     ))
 
                 # if row_head_rank > 1:

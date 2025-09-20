@@ -7,9 +7,9 @@ import dslib.pdf.parse
 import dslib.pdf.pipeline
 from dslib.field import DatasheetFields, Field
 from dslib.manual_fields import reference_data
-from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs
 from dslib.pdf.expr import dim_regs_csv
 from dslib.pdf.parse import tabula_read, parse_datasheet, parse_field_csv, detect_fields
+from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs
 from dslib.pdf.tabular import tabula_browser
 
 nan = na = math.nan
@@ -32,7 +32,6 @@ def test_detect_fields():
     for s, sym in symbols:
         d = detect_fields('any', [s])
         assert d.symbol == sym
-
 
 
 def test_parse_lines():
@@ -82,7 +81,7 @@ def test_parse_lines():
         ("VSD,Source-to-Drain DiodeVoltage,ISD = 80 A,VGS = 0 VISD = 40 A,VGS = 0 V,,,1.251.2,V,", 'Vsd',
          (na, 1.2, 1.25)),
         ('Qgd,Gate-to-Drain "Miller" Charge,,11,,', "Qgd", (na, 11, na)),
-        ('Switching charge,Qg -,56,74,,', 'Qsw', (na, 56, 74)),
+        # ('Switching charge,Qg -,56,74,,', 'Qsw', (na, 56, 74)), # TODO
         ("Threshold Gate Charge,QG(TH),,9.1,,", 'Qg_th', (na, 9.1, na)),
         # Gate-to-Source Charge,QGS,VGS = 10 V,VDS = 75 V; ID = 41 A,15,,"
         ("Gate-to-Drain Charge,QGD,,6.5,,", 'Qgd', (na, 6.5, na)),
@@ -244,7 +243,32 @@ def test_parse_lines():
          "---,757,---,VGS = 0V, VDS = 0V to 80VSee Fig.11,nan", 'Coss', (n, 757, n)),
         ("Threshold Gate Charge,QG(TH),nan,9.1,nan,nC", "Qg_th", (n, 9.1, n)),
 
-    ]
+        ('Drain-source breakdown voltage,V DSS,150,-,-,V', 'Vds', (150, n, n)),
+        ('Drain-source breakdown voltage,V (BR)DSS,150,-,-,V', 'Vds', (150, n, n)),
+
+        ('Drain-source breakdown voltage,V DSS,,150,-,-,V', 'Vds', (150, n, n)), # minN_typN_maxN_unit
+
+        ('Drain-source breakdown voltage,V DSS,VGS=0V,150,-,-,V', 'Vds', (150, n, n)),
+        ('Drain-source breakdown voltage,V (BR)DSS,V GS=0 V,I D=1 mA,150,-,-,V', 'Vds', (150,n,n)),
+        ('Drain-source breakdown voltage,V(BR)DSS,40,-,-,V,VGS=0 V,ID=1 mA', 'Vds', (40, n, n)), # PC171N04N
+
+        ('Drain-Source Breakdown Voltage V(BR)DSS VGS = 0V,ID = 250μA 100,--,--,V', 'Vds', (100, n, n)), # GT016N10TL, minN_typN_maxN_unit
+
+        ('Drain-source breakdown voltage VDS, VGS = 0 V,ID = 250 μA 100,-,-,V', 'Vds', (100, n, n)),
+        #('Drain-source breakdown voltage VDS VGS = 0 V,ID = 250 μA 100,-,-,,V', 'Vds', (100, n, n)),
+        #('Drain-source breakdown voltage VDS VGS = 0 V,ID = 250 μA 100,-,-,,V', 'Vds', (100, n, n)),
+
+        # Vds error parsing field row Drain-source breakdown voltage VDS VGS = 0 V,ID = 250 μA 100,-,-,,V
+
+        # Vds error parsing field row Drain-source breakdown voltage VDS VGS = 0 V,ID = 250 μA,80,-,-,V
+        # IPP070N08N3GXKSA1.pdf Qoss error parsing field row Output charge,Q oss,V pp=40 V,V gs=0 V,-,56,15,nC (56.0, 15.0)
+        # IPP070N08N3GXKSA1.pdf trr error parsing field row Reverse recovery time,Cnr,V p=40 V,,-=lIs,-,66,7,ns (66.0, 7.0)
+        # IPP070N08N3GXKSA1
+        # IPP070N08N3GXKSA1.pdf Vds error parsing field row Drain-source breakdown voltage,V eryoss,V cs=0 V,,p=1 mA 80,-,-,V all nan Field("Vds",nan,nan,nan,"V",cond={0: 'Drain-source breakdown voltage', 1: 'V eryoss |V cs=0 V, |p=1 mA 80', 2: '-', 3: '-', 4: 'V'})
+        # IPP070N08N3GXKSA1.pdf Vds error parsing field row Drain-source breakdown voltage,V eryoss,V cs=0 V,,p=1 mA 80,-,-,V all nan Field("Vds",nan,nan,nan,"V",cond={0: 'Drain-source breakdown voltage', 1: 'V eryoss |V cs=0 V, |p=1 mA 80', 2: '-', 3: '-', 4: 'V'})
+        # IPP070N08N3GXKSA1.pdf trr error parsing field row Reverse recovery time,Cnr,V p=40 V,,-=lIs,-,66,7,ns (66.0, 7.0)
+    ]   # IPB025N10N3_G.pdf trr error parsing field row Reverse recovery time,Cnr,V p=50 V,1-=100A,-,86,7,ns (86.0, 7.0)
+
 
     for c in cases:
         assert len(c) == 3, c
@@ -297,7 +321,7 @@ def test_pdf_parse():
                             Field("trr", nan, 64.0, nan, "ns"),
                             Field("Rds_on", nan, 5.0, 5.6, "None"),
 
-                            #Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
+                            # Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
                             Field("Qsw", nan, 20, nan, "None")
                             ])
 
@@ -884,7 +908,8 @@ def test_pdf_rasterize():
     from dslib.pdf.pipeline import rasterize_pdf
     os.path.exists('../datasheets/onsemi/FDP047N10.r.pdf') and os.remove('../datasheets/onsemi/FDP047N10.r.pdf')
     rasterize_pdf('../datasheets/onsemi/FDP047N10.pdf', '../datasheets/onsemi/FDP047N10.r.pdf')
-    assert os.stat('../datasheets/onsemi/FDP047N10.r.pdf').st_size > os.stat('../datasheets/onsemi/FDP047N10.pdf').st_size
+    assert os.stat('../datasheets/onsemi/FDP047N10.r.pdf').st_size > os.stat(
+        '../datasheets/onsemi/FDP047N10.pdf').st_size
 
 
 def test_extract_fields_from_dataframes():

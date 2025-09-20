@@ -29,7 +29,7 @@ class MosfetSpecs:
         :param Coss: output capacity (eff. energy related)
         """
         self.part = part
-        self.Vds = Vds_max
+        self.Vds = int(Vds_max) if int(Vds_max) == Vds_max else Vds_max
 
         if isinstance(Rds_on, str):
             if Rds_on.endswith('mOhm'):

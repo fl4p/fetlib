@@ -151,6 +151,10 @@ def field_value_regex_variations(d: Dimension):
             rf'{head}({test_cond_broad},)?(?P<min>{field_nan}),(?P<typ>{field}),(?P<max>{field_nan}),(nan,)*(?P<unit>{unit})(,|$)',
             re.IGNORECASE),
 
+        re.compile(  # SIM
+            rf'{head}(?P<minN_typN_maxN_unit>{test_cond_broad}[, ])?(?P<min>{field_nan}),(?P<typ>{field_nan}),(?P<max>{field_nan}),(?P<unit>{unit})(,|$)',
+            re.IGNORECASE),
+
         re.compile(  # same as before but max required instead of typ TODO merge?
             #  "Qgs VGS= 10 V,VDS = 0.5 VDSS,ID = 25 A,,39 nC,,Min. Max.,Min. Max."
             rf'(?P<cond_minN_typN_max>.)?{head}({test_cond_broad},)?((?P<min>{field_nan}),)?(?P<typ>{field_nan}),(?P<max>{field})[,\s]I?(?P<unit>{unit})(,|$)',
@@ -499,7 +503,7 @@ DIMENSIONS = dotdict(
         signed=False,
     ),
     V=Dimension(
-        head_regex=r'(((diode )?forward )?voltage|V[\s_]?[a-z]{1,8})',
+        head_regex=r'(((diode )?forward )?voltage|V[\s_]?(\([a-z]{1,4}\)[\s_]?)?[a-z]{1,8})',
         unit_regex=r'[m]?Vv?',
         signed=True,
     ),
@@ -644,8 +648,8 @@ def get_field_detect_regex(mfr):
 
         Rds_on=(rec(r'(^R[ _]*DS[ _]*\(?on\)?|(Static[- ]+)?Drain([- ]+to)?[ -]+Source On([ -]+state)?[ -]+Resistance)',
                     re.IGNORECASE)),
-        Id=(rec(r'(^I[ _]*D|Continuous drain current)',
-                    re.IGNORECASE)),
+        Id=(rec(r'(^I[ _]*D\s*($|@)|Continuous drain current|drain current \(DC\))',
+                re.IGNORECASE)),
         gfs=(rec(r'(^\|?[Yg][ _]*fs\|?|forward transconductance|Forward Transfer Admittance)', re.IGNORECASE)),
 
         tDon=(rec(r'(Turn[−\s]+On[−\s]+Delay[−\s]+Time|^t[\s_]?d[\s_]?\(\s?on\s?\))', re.IGNORECASE),
@@ -707,18 +711,23 @@ def get_field_detect_regex(mfr):
             r'((gate\s+)?plate\s*au\s+voltage|gate[\s-]+source[\s-]+plateau|V[ _]?(gs[ _]?)?\(?(plateau|pl|gp)\)?($|\*))',
             re.IGNORECASE),
 
-        Vsd=rec( # Vsd, Vdsf
-            r'((source-(to-)?drain|drain-(to-)?source )?diode[\s-]+forward[\s-]+voltage|forward diode voltage|V[ _]?DSF|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
+        Vsd=rec(  # Vsd, Vdsf
+            r'((source-(to-)?drain|drain-(to-)?source )?diode[\s-]+forward[\s-]+voltage|forward diode voltage'
+            r'|V[ _]?DSF\s*$|V[ _]?(\s*\([0-9]\)\s*)?sd(\s*\([0-9]\)\s*)?(\s+source[\s-]+drain[\s-]+voltage|\s*forward on voltage)?($|\*|\sIF)|V[ _]?DS_?FW?D?)',
             re.IGNORECASE),
 
         Vds=(rec(
-            r'(Drain-(to-)?Source[\s-]+(Breakdown[\s-]+)?Voltage|^B?V[ _]?\s*(\(BR\))?dss?($|[^/f]))',
+            r'(Drain-(to-)?Source[\s-]+(Breakdown[\s-]+)?Voltage|^B?V[ _]?\s*(\(BR\))?dss?($|[^/fx]))',
+            # V_(BR)dsx: toshiba reverse biased BR voltage
             re.IGNORECASE), (
-                 'temperature', 'coefficient'  # coefficient
+                 'temperature', 'coefficient', 'vds =', 'vds=', 'DSX', 'VGS = -'  # coefficient
              )),
 
+        # IDSS Zero Gate Voltage Drain Current
+        # IGSS Gate-Body Leakage Current
+
         Vgs_th=(rec(
-            r'(Gate[\s-]+Threshold[\s-]+Voltage|V[ _]?\s*gs\(th\)($|[^/]))',
+            r'(Gate[\s-]+Threshold[\s-]+Voltage|V[ _]?\s*gs\(th\)($|[^/])|V[ _]?\s*th($|[^/]))',
             re.IGNORECASE), (
                     'temperature', 'coefficient'  # coefficient
                 )),

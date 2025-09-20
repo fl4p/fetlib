@@ -164,7 +164,7 @@ def table_seg_mu(pdf_path: str, table: Table, annotations: List[Annotation] = No
                 ))
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=True)
+@disk_cache(ttl='999d', file_dependencies=[0], salt='01')
 def tabula_cached(pdf_path: str, page: int, area):
     import tabula
     res = tabula.read_pdf(pdf_path,
@@ -174,6 +174,7 @@ def tabula_cached(pdf_path: str, page: int, area):
                           output_format='json',
                           guess=False,
                           area=area,
+                          silent=True,
                           # stream=True,
                           # options='--use-line-returns'
                           )

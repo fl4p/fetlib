@@ -48,6 +48,7 @@ async def infineon_mosfets():
             mpn2=row['OPN'] if row['OPN'] != 'nan' else None,
             ds_url=row['Datasheet link'],
             specs=MosfetBasicSpecs(
+                substrate='SiC' if 'CoolSiC' in row['Technology'] else 'Si', # infineon no GaN
                 Vds_max=vds,
                 Rds_on_10v_max=parse_field(str(row['RDS (on) (@10V) max']), float),
                 ID_25=parse_field(str(row['ID  (@25&#176;C) max']).strip('A '), float),

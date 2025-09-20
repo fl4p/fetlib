@@ -1,4 +1,6 @@
 [dspicks]
+OneOhm=datasheets/littelfuse/IXTH10P60.pdf
+IdValue=datasheets/infineon/IRL100HS121.pdf
 ___=datasheets/mcc/MCW200N10Y-TP.pdf
 headMTM=datasheets/littelfuse/IXFK170N10P.pdf
 headExt=datasheets/infineon/FF3MR12KM1HPHPSA1.pdf

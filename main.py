@@ -27,6 +27,10 @@ from dslib.pdf.tabular import tabula_is_running
 from dslib.spec_models import DcDcLoadParams
 from dslib.store import Part
 
+MAX_PARALLEL = 2
+
+IDP_ID_RATIO = 10  # GaN pulse current is up to 10x higher than dc (EPC2052)
+
 excludes = {
     'datasheets/infineon/BSC160N15NS5ATMA1.pdf',
     'datasheets/infineon/BSC019N08NS5ATMA1.pdf',
@@ -49,10 +53,13 @@ excludes = {
     'datasheets/infineon/IPP06CN10LG.pdf',
 
     'datasheets/diodes/DMTH15H017SPS-13.pdf',  # `cant find unicode for glyph name`
+
+    'datasheets/littelfuse/IXTH10P60.pdf',  # P-mos todo
 }
 excludes.clear()
 
 excludes.add('datasheets/diodes/DMTH15H017SPS-13.pdf')
+excludes.add('datasheets/littelfuse/IXTH10P60.pdf')
 
 
 def main():
@@ -63,6 +70,7 @@ def main():
     parser.add_argument('--dcdc-file')
     parser.add_argument('-q')
     parser.add_argument('-substrate')
+    parser.add_argument('--swcd', action='store_true')
     parser.add_argument('-j', default=8)  # parallel jobs
     parser.add_argument('--rg-total', default=4.7)  # total gate resistance
     parser.add_argument('--vpl-fallback', default=4.5)
@@ -94,8 +102,10 @@ def main():
     print('Discovered', len(parts), 'parts from manufacturers:', ','.join(sorted(set(p.mfr for p in parts))))
 
     if args.substrate:
+        substrates = set(map(lambda s: s.strip(), args.substrate.split(',')))
+        assert not (substrates - {'GaN', 'Si', 'SiC'})
         parts = [p for p in parts if
-                 not hasattr(p.specs, 'substrate') or not p.specs.substrate or p.specs.substrate == args.substrate]
+                 not hasattr(p.specs, 'substrate') or not p.specs.substrate or p.specs.substrate in substrates]
 
     if args.q:
         words = list(map(lambda s: s.strip(), args.q.lower().strip(' "\'').split(' ')))
@@ -114,10 +124,13 @@ def main():
     # pre-select mosfets by voltage and current
     n_pre_select = len(parts)
     if not args.no_pre_select:
-        parts = dcdc.select_mosfets(parts)
+        parts = dcdc.select_mosfets(parts, max_parallel=IDP_ID_RATIO if args.swcd else MAX_PARALLEL)
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
     print(set(p.mpn for p in parts))
+    print('Vds_max:',
+          sorted(set(int(p.specs.Vds_max) for p in parts if p.specs.Vds_max and not math.isnan(p.specs.Vds_max))))
+    print('Substrates:', set(p.specs.__dict__.get('substrate') for p in parts))
 
     # parts = parts[:100]
 
@@ -314,7 +327,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     return Part(specs=fet_specs, discovered=part), row
 
 
-@disk_cache(ttl='999d', salt=('07', excludes))
+@disk_cache(ttl='999d', salt=('11', excludes))
 def read_parts_datasheets(parts: List[DiscoveredPart], args):
     need_symbols = {
         'tRise', 'tFall',  # HS
@@ -477,6 +490,9 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
         if fet_specs is None:
             continue
 
+        if not dcdc.Id_in_range(fet_specs.Id, IDP_ID_RATIO if args.swcd else MAX_PARALLEL):
+            continue
+
         loss_spec = dcdc_buck_hs(dcdc, fet_specs,
                                  gd=gd,  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
                                  )
@@ -487,23 +503,21 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
         del ploss['P_dt'], ploss['P_rr']
         ploss.pop('_cond', None)
 
-        rds_on_max = ds.get_max('Rds_on_10v', False)
+        rds_on_max = ds.get_max('Rds_on', False)
         if math.isnan(rds_on_max):
-            rds_on_max = ds.get_max('Rds_on', True)
+            rds_on_max = ds.get_max('Rds_on_10v', False)
+        if rds_on_max < 0.1:
+            rds_on_max *= 1000
 
-        Id = ds.get_typ_or_max_or_min('ID_25', False)
-        if math.isnan(Id):
-            Id = ds.get_typ_or_max_or_min('Id', False)
-
-        for i in range(1, 3):
+        for i in range(1, MAX_PARALLEL + 1):
             ls = loss_spec.parallel(i)
             result_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
                 housing=ds.part.package,
 
-                Vds_max=ds.get_max_or_min('Vds', True),
-                Rds_max=rds_on_max * 1000,
-                Id=Id,
+                Vds_max=ds.get_max_or_min_or_typ('Vds', True),
+                Rds_max=rds_on_max / i,
+                Id=fet_specs.Id * i,
                 Qsw=fet_specs and (fet_specs.Qsw * 1e9),
                 errors=', '.join(ds.errors),
 
@@ -520,61 +534,72 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
             if math.isnan(ls.buck_hs()):
                 break
 
-    low_sw = sorted(parts_loss, key=lambda pml: (pml[2].P_sw + pml[2].P_coss) if pml[2].P_sw > 0 else 9e9)[:5000]
-    low_cl = sorted(parts_loss, key=lambda pml: (pml[2].P_cl + pml[2].P_coss) if pml[2].P_cl > 0 else 9e9)[:5000]
+    if args.swcd:
+        # staged switching. one switcher device and one or more parallel conductors
+        # the switcher is fast, low Qsw, higher Rds(on), Id(pulsed) sufficiently high
+        # the conductor is slower, low Rds(on). needs a separate gate drive signal during turn-off
 
-    sc_best = {}
-    best = 9e9
-    best_psw = low_sw[0][2].P_sw + low_sw[0][2].P_gd + low_sw[0][2].P_coss
+        # rank best switchers and conductors
+        low_sw = sorted(parts_loss, key=lambda pml: (pml[2].P_sw + pml[2].P_coss) if pml[2].P_sw > 0 else 9e9)[:5000]
+        low_cl = sorted(parts_loss, key=lambda pml: (pml[2].P_cl + pml[2].P_coss) if pml[2].P_cl > 0 else 9e9)[:5000]
 
-    for ds, fet_specs, ls in low_sw:
-        p_sw = ls.P_sw + ls.P_gd + ls.P_coss
-        if p_sw > best_psw * 4:
-            continue
-        Id = ds.get_typ_or_max_or_min('ID_25', False)
-        if math.isnan(Id):
-            Id = ds.get_typ_or_max_or_min('Id', False)
+        sc_best = {}
+        best = 9e9
+        best_psw = low_sw[0][2].P_sw + low_sw[0][2].P_gd + low_sw[0][2].P_coss
 
-        # here we need the pulsed drain current, which we assume is 4x higher than Id_DC
-        # always verify datasheet 'Maximum Safe Operating Area' diagram
-        if not dcdc.Id_in_range(Id * 4, 1):
-            continue
+        for ds, fet_specs, ls in low_sw:
+            p_sw = ls.P_sw + ls.P_gd + ls.P_coss
+            if p_sw > best_psw * 4:
+                continue
 
-        for ds2, fet_specs2, ls2 in low_cl:
-            p = p_sw + ls2.P_cl + ls2.P_gd + ls2.P_coss
-            k = (ds.part.mfr, ds.part.mpn)
-            if p < sc_best.get(k, 9e9):
-                sc_best[k] = p
-            if p < best:
-                best = p
-            if p < best * 1.5 and p < sc_best[k] * 1.2 and p < ls.parallel(2).buck_hs() and p < ls2.parallel(
-                    2).buck_hs():
+            # here we need the pulsed drain current, which we assume is 4x higher than Id_DC
+            # always verify datasheet 'Maximum Safe Operating Area' diagram
+            if not dcdc.Id_in_range(fet_specs.Id, IDP_ID_RATIO):
+                continue
 
-                rds_on_max = ds2.get_max('Rds_on_10v', False)
-                if math.isnan(rds_on_max):
-                    rds_on_max = ds2.get_max('Rds_on', True)
+            for ds2, fet_specs2, ls2 in low_cl:
+                if not dcdc.Id_in_range(fet_specs2.Id, MAX_PARALLEL):
+                    continue
 
-                result_rows.append(dict(
-                    mpn=f'{ds.part.mpn} || {ds2.part.mpn}',
-                    housing=ds.part.package + ' ' + ds2.part.package,
+                for i in range(1, MAX_PARALLEL + 1):
+                    ls3 = ls2.parallel(i)
 
-                    Vds_max=min(ds.get_max_or_min('Vds', True), ds2.get_max_or_min('Vds', True)),
-                    Rds_max=rds_on_max,
-                    Id=math.nan, # TODO min
-                    Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-                    errors=', '.join(ds.errors),
+                    p = p_sw + ls3.P_cl + ls3.P_gd + ls3.P_coss
 
-                    date='',  # ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
-                    dateC='',  # ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
+                    k = (ds.part.mfr, ds.part.mpn)
+                    if p < sc_best.get(k, 9e9):
+                        sc_best[k] = p
 
-                    P_cl=ls2.P_cl,
-                    P_sw=ls.P_sw,
-                    P_gd=ls.P_gd + ls2.P_gd,
-                    P_coss=ls.P_coss + ls2.P_coss,
-                    P_tot=p,
-                ))
+                    if p < best:
+                        best = p
+                    if p < best * 1.5 and p < sc_best[k] * 1.2 and p < ls.parallel(2).buck_hs() and p < ls3.parallel(
+                            2).buck_hs():
 
-                print('framed switching %s + %s (%.2f W)' % (ds.part.mpn, ds2.part.mpn, p))
+                        rds_on_max = ds2.get_max('Rds_on_10v', False)
+                        if math.isnan(rds_on_max):
+                            rds_on_max = ds2.get_max('Rds_on', True)
+
+                        result_rows.append(dict(
+                            mpn=f'{ds.part.mpn} || {str(i) + p if i > 1 else ""}{ds2.part.mpn}',
+                            housing=ds.part.package + ' & ' + ds2.part.package,
+
+                            Vds_max=f"{fet_specs.Vds}, {fet_specs2.Vds}",
+                            Rds_max=rds_on_max * 1000 / i,
+                            Id=fet_specs.Id,  # TODO min ?
+                            Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+                            errors=', '.join(ds.errors),
+
+                            date='',  # ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
+                            dateC='',  # ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
+
+                            P_cl=ls3.P_cl,
+                            P_sw=ls.P_sw,
+                            P_gd=ls.P_gd + ls3.P_gd,
+                            P_coss=ls.P_coss + ls3.P_coss,
+                            P_tot=p,
+                        ))
+
+                        print('framed switching %s + %s (%.2f W)' % (ds.part.mpn, ds2.part.mpn, p))
 
     df = pd.DataFrame(result_rows)
 
@@ -587,7 +612,7 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
         if args.q:
             out_fn += f'-q{args.q}'
         out_fn += '.csv'
-        write_csv(df, out_fn)
+        write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('written', out_fn)
     else:
         print('skip csv write because only few parts')
