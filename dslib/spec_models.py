@@ -17,6 +17,7 @@ class DcDcLoadParams:
         # return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
         # return DcDcSpecs(vi=75, vo=27 * 2, pin=900, f=40e3, ripple_factor=0.3, tDead=300e-9)
         #return DcDcLoadParams(vi=130, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        # return DcDcLoadParams(vi=72, vo=27, pin=800, f=80e3, ripple_factor=0.3, tDead=300e-9)
         return DcDcLoadParams(vi=72, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
 
     def __init__(self, vi, vo, f, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,

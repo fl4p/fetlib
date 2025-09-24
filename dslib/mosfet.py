@@ -127,7 +127,7 @@ class MosfetSpecs:
 
         assert not isnum(Vsd) or 0.2 < Vsd < 5, "Vsd %s out of range" % Vsd  # FBG10N30BC: 2.5V, FF33MR12W1M1HB11BPSA1: 4.2V
 
-        assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 1e-08, (Qg, Rds_on, Qg * Rds_on)
+        assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 2e-08, (Qg, Rds_on, Qg * Rds_on)
 
         if isnum(Qg_th + Qgs):
             assert 0.2 < (Qg_th / Qgs) < 0.8, ((Qg_th / Qgs), Qg_th, Qgs)

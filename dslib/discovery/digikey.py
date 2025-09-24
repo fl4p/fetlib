@@ -14,7 +14,7 @@ def digikey(csv_glob_path, no_obsolete=False):
     parts = []
 
     for i, row in df.iterrows():
-        if no_obsolete and row['Product Status'] == 'Obsolete':
+        if no_obsolete and row['Product Status'] == 'Obsolete' or row['Product Status'].startswith('Discontinued'):
             continue
 
         mfr = mfr_tag(row.Mfr)

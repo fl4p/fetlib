@@ -64,6 +64,12 @@ class MosfetBasicSpecs():
             assert math.isnan(f * ID_25) or 0.1 < abs(f * ID_25) < 95, (self.Rds_on_10v_max, Vds_max, f * ID_25, f, ID_25)
 
     @property
+    def isGaN(self):
+        if self.substrate is None:
+            return None
+        return self.substrate == 'GaN'
+
+    @property
     def Qg_max_or_typ_nC(self):
         # assert not self.Qg_max or not isinstance(self.Qg_max, str), self.Qg_max
         if self.Qg_max_nC and not math.isnan(self.Qg_max_nC):
