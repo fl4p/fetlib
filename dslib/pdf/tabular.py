@@ -5,6 +5,7 @@ import re
 import sys
 import threading
 import time
+import warnings
 from collections import deque
 from typing import List
 
@@ -19,6 +20,9 @@ _tab_web_lock = threading.Lock()
 
 backend_logger = logging.getLogger('tabula.backend')
 backend_logger.setLevel(logging.ERROR)  # ignore stderr from tabula-java
+
+warnings.filterwarnings(action='ignore', category=FutureWarning,
+                        message=r".*errors='ignore' is deprecated.*")
 
 
 class NoTextInPdfError(ValueError):

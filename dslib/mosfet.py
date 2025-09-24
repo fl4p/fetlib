@@ -29,7 +29,9 @@ class MosfetSpecs:
         :param Coss: output capacity (eff. energy related)
         """
         self.part = part
-        self.Vds = int(Vds_max) if int(Vds_max) == Vds_max else Vds_max
+        if Vds_max and not math.isnan(Vds_max) and int(Vds_max) == Vds_max:
+            Vds_max = int(Vds_max)
+        self.Vds = Vds_max
 
         if isinstance(Rds_on, str):
             if Rds_on.endswith('mOhm'):
@@ -247,11 +249,12 @@ class GateDrive:
 
     """
 
-    def __init__(self, rg_total, Von=10, Voff=0, fallback_V_pl=math.nan):
+    def __init__(self, rg_total, Von=10, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
         self.rg_total = rg_total
         self.Von = Von
         self.Voff = Voff
         self.fallback_V_pl = fallback_V_pl
+        self.tDead = tDead
 
     def __str__(self):
         return f'GateDrive(Rg_tot=%.1fΩ Von=%.1f Voff=%.1f Vpl_fallback=%.1f)' %(self.rg_total, self.Von, self.Voff, self.fallback_V_pl)

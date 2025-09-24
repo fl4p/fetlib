@@ -50,7 +50,7 @@ async def fetch_list_page(brand_id: int, page: int):
             "sec-fetch-site": "same-site",
         },
         "referrer": "https://www.lcsc.com/",
-        "body": "{\"keyword\":\"\",\"catalogIdList\":[381],\"brandIdList\":[\"" + str(
+        "body": "{\"keyword\":\"\",\"catalogIdList\":[874],\"brandIdList\":[\"" + str(
             brand_id) + "\"],\"encapValueList\":[],\"isStock\":false,\"isOtherSuppliers\":false,\"isAsianBrand\":false,\"isDeals\":false,\"isEnvironment\":false,\"paramNameValueMap\":{},\"currentPage\":" + str(
             page) + ",\"pageSize\":100}",
         "method": "POST",
@@ -112,6 +112,9 @@ def read_lcsc_search_results(html_glob_path):
 
 async def discover_mosfets_brand(brand_id: int):
     data = await fetch_list_all(brand_id)
+    if len(data) == 0:
+        raise Exception('no data for brand ' + str(brand_id))
+
     print('lcsc fetched %d rows in total' % len(data))
 
     parts = []
@@ -157,9 +160,12 @@ async def discover_mosfets_brand(brand_id: int):
     return parts
 
 
-@disk_cache(ttl='7d', salt='v01')
+@disk_cache(ttl='7d', salt='v04')
 def discover_china_mosfets_cached():
-    return asyncio.run(discover_china_mosfets())
+    if asyncio.get_event_loop():
+        return asyncio.get_event_loop().run_until_complete(discover_china_mosfets())
+    else:
+        return asyncio.run(discover_china_mosfets())
 
 
 async def discover_china_mosfets():
@@ -170,7 +176,7 @@ async def discover_china_mosfets():
         "CRMICRO": 12027,
         "NCE": 1104,
         "Siliup": 15945,
-        "AGMSEMI": 15179,
+        # "AGMSEMI": 15179, # weird
         # "UMW": 11853, # fake MPNs?
         "HXY": 13437,
     }

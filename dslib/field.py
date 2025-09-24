@@ -413,7 +413,7 @@ class DatasheetFields():
 
         from dslib.mosfet import MosfetSpecs
         return MosfetSpecs(
-            Vds_max=ds.get_max_or_min('Vds'),  # TODO rename 'VdsBR'
+            Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,
             Id=Id,
             Qg=ds.get_typ_or_max_or_min('Qg', cond=dict(Vgs=Vgs)) * 1e-9,

@@ -599,7 +599,9 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
 
             return f
         except Exception as e:
-            err.append((field_sym, 'error parsing field row', s, e))
+            msg = (field_sym, 'error parsing field row', s, e)
+            if msg not in err:
+                err.append(msg)
             continue
     for e in err:
         print(mpn or '', *e)
