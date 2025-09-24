@@ -157,7 +157,7 @@ def Rds_on(mf: MosfetSpecs, Id, Tj):
 
 def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
                  ls_Qoss=0, Lcsi=0,
-                 use_datasheet_timings=False):
+                 use_datasheet_timings=False, isGaN=False):
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/power_loss_appli-e.pdf
     # https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
 
@@ -174,12 +174,13 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
 
     if Lcsi > 0:
         assert ls_Qoss > 0
+        assert not isGaN
         tr, tf, t_cond = mosfet_hs_sw_timings_lcsi(dc, mf, gd=gd,
                                                    ls_Qoss=ls_Qoss,
                                                    Lcsi=Lcsi,
                                                    )
     else:
-        tr, tf = mosfet_hs_sw_timings_hs2(mf, gd)
+        tr, tf = mosfet_hs_sw_timings_hs2(mf, gd, isGaN)
         t_cond = {}
 
     if use_datasheet_timings:
@@ -203,12 +204,15 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     # instead of: 2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f
     # use:        2 / 3 * mf.Coss * dc.Vi ** (3/2) * mf.Coss_V0 ** .5 * dc.f,
 
+    von = gd.Von_GaN if isGaN else gd.Von
+    assert von > 0
+
     return SwitchPowerLoss(
         P_cl=i_rms2 * rds,  # conduction loss
         P_sw=(Psw_on + Psw_off),
         P_dt=0,  # body diode never conducts
         P_rr=0,  # body diode never conducts
-        P_gd=(gd.Von - gd.Voff) * dc.f * 2 * mf.Qg,
+        P_gd=(von - gd.Voff) * dc.f * 2 * mf.Qg,
         P_coss=2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,  # 2/3 comes from integration of Coss(V)
         cond=dict(
             P_sw=dict(
@@ -225,7 +229,7 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     )
 
 
-def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan, Qrr_temp_rise=1.2):
+def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan, Qrr_temp_rise=1.2, isGaN=False):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -257,12 +261,15 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     # Eoss = 2 / 3 * Coss * V_bus ** 2 * dc.f
     #
 
+    von = gd.Von_GaN if isGaN else gd.Von
+    assert von > 0
+
     qoss = 2 * mf.Coss * dc.Vi
     return SwitchPowerLoss(
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,  # TODO https://www.ti.com/lit/an/slyt664/slyt664.pdf
         P_rr=dc.Vi * dc.f * Qrr_eff,  # this is dissipated in HS
-        P_gd=(gd.Von - gd.Voff) * dc.f * 2 * mf.Qg,
+        P_gd=(von    - gd.Voff) * dc.f * 2 * mf.Qg,
         P_sw=0,  # negligible TODO diode?
         P_coss=4 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,  # charge is recovered, but charging over a resistance path
         cond=dict(
@@ -525,7 +532,7 @@ def mosfet_hs_sw_timings_hs(hs: MosfetSpecs, gd: GateDrive):
     return tr, tf
 
 
-def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive):
+def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
     # https://www.tij.co.jp/jp/lit/an/slvaeq9/slvaeq9.pdf#page=4
     # SLVAEQ9–July 2020
     # An Accurate Approach for Calculating the Eff. of a Synch. Buck Converter Using the MOSFET Plateau Voltage
@@ -534,10 +541,15 @@ def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive):
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
     rg_total = np.nanmax([hs.Rg, gd.rg_total])
 
-    vpl = gd.fallback_V_pl if math.isnan(hs.V_pl) else hs.V_pl
+    von = gd.Von_GaN if isGaN else gd.Von
+    assert von > 0
+    if isGaN:
+        assert hs.Qsw < 10e-9
+
+    vpl = (gd.fallback_V_pl/2 if isGaN else gd.fallback_V_pl) if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
-    tr = (hs.Qgs2 / (gd.Von - v_ir) + hs.Qgd / (gd.Von - vpl)) * rg_total  # (5)
+    tr = (hs.Qgs2 / (von - v_ir) + hs.Qgd / (von - vpl)) * rg_total  # (5)
     tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * rg_total  # (6) *corrected
     return tr, tf
 

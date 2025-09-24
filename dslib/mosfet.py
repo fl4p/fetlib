@@ -249,9 +249,10 @@ class GateDrive:
 
     """
 
-    def __init__(self, rg_total, Von=10, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
+    def __init__(self, rg_total, Von=10, Von_GaN=math.nan, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
         self.rg_total = rg_total
         self.Von = Von
+        self.Von_GaN = Von_GaN
         self.Voff = Voff
         self.fallback_V_pl = fallback_V_pl
         self.tDead = tDead
