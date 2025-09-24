@@ -1,16 +1,32 @@
 import datetime
 import math
+import re
 import time
 import warnings
 from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast, Optional
 
 from dslib import round_to_n_dec
+from dslib.pdf.expr import any_unit
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 
 
 def first(a):
     return next((x for x in a if x and not math.isnan(x)), math.nan)
+
+
+def get_value_with_unit(s):
+    if not isinstance(s, str) or not s:
+        return s, None
+
+    ss = re.sub(r'\s+', ' ', s).split(' ')
+    if len(ss) != 2:
+        return s, None
+
+    v = parse_field_value(ss[0], no_raise=True)
+    if not math.isnan(v) and re.match(f'({any_unit})', ss[1]):
+        return v, ss[1]
+    return s, None
 
 
 class Field():
@@ -21,6 +37,19 @@ class Field():
     def __init__(self, symbol: str, min, typ, max, unit=None, mul=1, cond=None, source=None):
         self.symbol = symbol
         self._sources: Dict[Field.StatLiteral, str] = {k: source for k in Field.StatKeys}
+
+        def _unit_value(v):
+            nonlocal unit
+            v2, u = get_value_with_unit(v)
+            if u:
+                assert not unit or unit == u
+                unit = u
+                return v2
+            return v
+
+        min = _unit_value(min)
+        max = _unit_value(max)
+        typ = _unit_value(typ)
 
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
             unit = 'ns'  # ocr confusion
@@ -49,6 +78,7 @@ class Field():
                 assert mul == 1
                 mul = 1000
                 unit = 'mΩ'
+
 
         min = parse_field_value(min, no_raise=True) * mul
         typ = parse_field_value(typ, no_raise=True) * mul
@@ -308,7 +338,7 @@ class DatasheetFields():
             mpn=part.mpn,
             housing=part.package,
 
-            Vds_max=ds.get_max_or_min('Vds', True),
+            Vds_max=ds.get_max_or_min('Vds', False),
             Rds_max=rds_on_max * 1000,
             Id=Id,
 
