@@ -4,11 +4,10 @@ import datetime
 import logging
 import math
 import os.path
-import pickle
 import random
 import sys
 import traceback
-from typing import List, Dict, Literal, Tuple, Optional
+from typing import List, Dict, Literal, Tuple, Optional, Union
 
 import pandas as pd
 
@@ -17,7 +16,7 @@ from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
 from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict
 from dslib.cache import disk_cache
-from dslib.discovery import DiscoveredPart
+from dslib.discovery import DiscoveredPart, Substrate
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields
 from dslib.mosfet import GateDrive
@@ -27,7 +26,7 @@ from dslib.pdf.tabular import tabula_is_running
 from dslib.spec_models import DcDcLoadParams
 from dslib.store import Part
 
-MAX_PARALLEL = 2
+# MAX_PARALLEL = 2
 
 IDP_ID_RATIO = 10  # GaN pulse current is up to 10x higher than dc (EPC2052)
 
@@ -62,6 +61,43 @@ excludes.add('datasheets/diodes/DMTH15H017SPS-13.pdf')
 excludes.add('datasheets/littelfuse/IXTH10P60.pdf')
 
 
+def main_yaml():
+    parser = argparse.ArgumentParser(description='')
+    parser.add_argument('--config-file')
+
+    parser.add_argument('-j', default=8)  # parallel jobs
+    parser.add_argument('--no-cache', action='store_true')
+    parser.add_argument('--no-ocr', action='store_true')
+    parser.add_argument('--no-download', action='store_true')
+
+    cargs = parser.parse_args(sys.argv[1:])
+
+    import yaml
+    with open(cargs.config_file) as fh:
+        conf = yaml.safe_load(fh)
+
+    args = RunArgs(topology=conf['topology'],
+                   substrates=conf['substrates'], packages=conf['packages'],
+                   vdsRange=conf['vdsRange'],
+                   dcdc=DcdcArgs(
+                       controlFet=ControlFetArgs(**conf['controlFet']),
+                       gateDrive=GateDrive(rg_total=float(conf['gateDrive']['rgTotal']),
+                                           Von=float(conf['gateDrive']['voltage']),
+                                           Von_GaN=float(conf['gateDrive'].get('voltageGaN', 'nan')),
+                                           Voff=0,
+                                           fallback_V_pl=float(conf['gateDrive']['vplFallback']),
+                                           tDead=float(conf['gateDrive']['deadTime'])),
+                       syncFet=SyncFetArgs(**conf['syncFet']),
+                       inductor=InductorArgs(**conf['inductor']),
+                   ),
+                   loads=[
+                       DcdcLoadPoint(weight=p['pointWeight'], vIn=p['vIn'], vOut=p['vOut'], pIn=p['pIn'],
+                                     f=float(p['f']))
+                       for p in conf['loadPoints']
+                   ])
+    run(args, cargs, os.path.basename(cargs.config_file).split('.yaml')[0])
+
+
 def main():
     parser = argparse.ArgumentParser(description='')
 
@@ -71,12 +107,15 @@ def main():
     parser.add_argument('-q')
     parser.add_argument('-substrate')
     parser.add_argument('--swcd', action='store_true')
-    parser.add_argument('-j', default=8)  # parallel jobs
+
     parser.add_argument('--rg-total', default=4.7)  # total gate resistance
     parser.add_argument('--vpl-fallback', default=4.5)
+
+    parser.add_argument('-j', default=8)  # parallel jobs
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--no-download', action='store_true')
+
     parser.add_argument('--no-pre-select',
                         action='store_true')  # also read datasheets of parts that are out of spec, takes much longer
     parser.add_argument('--clean', action='store_true')
@@ -97,15 +136,104 @@ def main():
     else:
         raise NotImplemented()
 
-    # discover available MOSFETS:
-    parts = asyncio.run(discover_mosfets(no_obsolete=True))
-    print('Discovered', len(parts), 'parts from manufacturers:', ','.join(sorted(set(p.mfr for p in parts))))
 
-    if args.substrate:
-        substrates = set(map(lambda s: s.strip(), args.substrate.split(',')))
+class ControlFetArgs():
+    def __init__(self, maxParallel, stagedSwitching):
+        self.maxParallel = maxParallel
+        self.stagedSwitching = stagedSwitching
+
+
+class SyncFetArgs():
+    def __init__(self, maxParallel=1, reverseRecoveryFactor: float = 1.0):
+        assert isinstance(maxParallel, int) and maxParallel >= 1 and maxParallel <= 20
+        self.maxParallel = maxParallel
+        assert reverseRecoveryFactor >= 0 and reverseRecoveryFactor <= 1
+        self.reverseRecoveryFactor = reverseRecoveryFactor
+
+
+class InductorArgs():
+
+    def __init__(self, rippleFactor):
+        assert rippleFactor > 0 and rippleFactor <= 1
+        self.rippleFactor = rippleFactor
+
+
+class DcdcArgs():
+
+    def __init__(self, controlFet: ControlFetArgs, gateDrive: GateDrive, syncFet: SyncFetArgs, inductor: InductorArgs):
+        self.controlFet = controlFet
+        self.gateDrive = gateDrive
+        self.syncFet = syncFet
+        self.inductor = inductor
+
+
+class DcdcLoadPoint():
+    def __init__(self, weight, vIn, vOut, pIn, f):
+        self.weight = weight
+        self.vIn = vIn
+        self.vOut = vOut
+        self.pIn = pIn
+        self.f = f
+
+
+class RunArgs():
+    def __init__(self, topology: Literal['buck'],
+                 substrates: Union[List[Substrate], str],
+                 packages: Optional[Literal['TO-220']],
+                 vdsRange: Tuple[float, float],
+                 dcdc: DcdcArgs,
+                 loads: List[DcdcLoadPoint],
+                 includeObsolete: bool = False,
+                 q: Optional[str] = None,
+                 ):
+        assert topology == 'buck'
+        self.topology = topology
+
+        if isinstance(substrates, str):
+            substrates = set(map(lambda s: s.strip(), substrates.split(',')))
+        else:
+            substrates = set(substrates)
         assert not (substrates - {'GaN', 'Si', 'SiC'})
+        self.substrates = substrates
+
+        packages = set(map(lambda s: s.strip(), packages.split(',')) if isinstance(packages, str) else packages or [])
+        assert not (packages - {'TO-220'})
+        self.packages = set(packages)
+
+        self.vdsRange = vdsRange
+        self.dcdc = dcdc
+        self.loads = loads
+        self.includeObsolete = includeObsolete
+        self.q = q
+
+
+def run(args: RunArgs, cargs, name):
+    # discover available MOSFETS:
+    parts = asyncio.run(discover_mosfets(no_obsolete=not args.includeObsolete))
+    print('Discovered', len(parts), 'parts from manufacturers:', ', '.join(sorted(set(p.mfr for p in parts))))
+
+
+    if args.substrates:
         parts = [p for p in parts if
-                 not hasattr(p.specs, 'substrate') or not p.specs.substrate or p.specs.substrate in substrates]
+                 not hasattr(p.specs, 'substrate') or not p.specs.substrate or p.specs.substrate in args.substrates]
+
+    if args.packages:
+        def _match_package(part, packages):
+            if not part.package:
+                return True
+            for pk in packages:
+                p = part.package.upper()
+                if pk == 'TO-220' and 'TO220' in p or 'TO-220' in p or 'T220' in p:
+                    return True
+            return False
+
+        parts = [p for p in parts if _match_package(p, args.packages)]
+
+    if args.vdsRange:
+        assert args.vdsRange[0] < args.vdsRange[1]
+        assert len(args.vdsRange) == 2
+        parts = [p for p in parts if
+                 p.specs.Vds_max > 1 and p.specs.Vds_max >= args.vdsRange[0] and p.specs.Vds_max <= args.vdsRange[1]]
 
     if args.q:
         words = list(map(lambda s: s.strip(), args.q.lower().strip(' "\'').split(' ')))
@@ -119,31 +247,49 @@ def main():
 
         parts = list(filter(_match_part, parts))
 
-        print('Filtered', len(parts), 'parts:', ','.join(p.mpn for p in parts[:20]), '..', args.q)
+    print('Filtered', len(parts), 'parts:', ','.join(p.mpn for p in parts[:20]), '..', args.q)
 
     # pre-select mosfets by voltage and current
     n_pre_select = len(parts)
-    if not args.no_pre_select:
-        parts = dcdc.select_mosfets(parts, max_parallel=IDP_ID_RATIO if args.swcd else MAX_PARALLEL)
+    # if not args.no_pre_select:
+
+    assert len(args.loads) == 1
+    assert args.loads[0].weight == 1
+    l = args.loads[0]
+    dcdc = DcDcLoadParams(l.vIn, l.vOut, l.f, tDead=args.dcdc.gateDrive.tDead, pin=l.pIn,
+                          ripple_factor=args.dcdc.inductor.rippleFactor)
+
+    parts = dcdc.select_mosfets(parts,
+                                max_parallel=IDP_ID_RATIO if args.dcdc.controlFet.stagedSwitching else args.dcdc.controlFet.maxParallel)
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
     print(set(p.mpn for p in parts))
-    print('Vds_max:',
+    print('Vds_max:   ',
           sorted(set(int(p.specs.Vds_max) for p in parts if p.specs.Vds_max and not math.isnan(p.specs.Vds_max))))
-    print('Substrates:', set(p.specs.__dict__.get('substrate') for p in parts))
+    print('Substrates:', (set(p.specs.__dict__.get('substrate') for p in parts)))
 
     # parts = parts[:100]
 
     from wakepy import keep
     with keep.running():
         # do all the magic: download datasheets, read them and compute power loss:
-        parts = generate_parts_power_loss_csv2(parts, dcdc=dcdc, args=dotdict(args.__dict__))
+        dss = read_parts_datasheets(parts, dotdict(cargs.__dict__))
 
-    # show parts missing Qsw, no switching loss estimation is possible:
-    no_qsw = [p for p in parts if math.isnan(p.specs.Qsw)]
-    print('Parts missing Qsw:', len(no_qsw))
-    for p in no_qsw:
-        print(p.discovered.get_ds_path())
+        dss = [ds for ds in dss if dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds'))]
+
+        generate_HS_power_loss_csv(dss,
+                                   args=args.dcdc,
+                                   dcdc=dcdc,
+                                   gd=args.dcdc.gateDrive,
+                                   name=name
+                                   )
+
+        generate_LS_power_loss_csv(dss,
+                                   args=args.dcdc,
+                                   dcdc=dcdc,
+                                   gd=args.dcdc.gateDrive,
+                                   name=name
+                                   )
 
 
 def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False):
@@ -206,20 +352,6 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
             ds.errors.append(f'{type(e).__name__} {e}')
     else:
         ds.errors.append('file not found %s' % ds_path)
-
-    # try nexar api:
-    if 0:
-        try:
-            from dslib.nexar.api import get_part_specs_cached
-            specs = {}  # get_part_specs_cached(mpn, mfr) or {}
-        except Exception as e:
-            print(mfr, mpn, 'get_part_specs_cached', e)
-            specs = {}
-
-        for sym, sn in dict(tRise='risetime', tFall='falltime').items():
-            sv = specs.get(sn) and pd.to_timedelta(specs[sn]).nanoseconds
-            if sv and sym not in ds:
-                ds.add(Field(sym, min=math.nan, typ=sv, max=math.nan))
 
     try:
         # add discovered basic specs
@@ -327,7 +459,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     return Part(specs=fet_specs, discovered=part), row
 
 
-@disk_cache(ttl='999d', salt=('11', excludes))
+@disk_cache(ttl='999d', salt=('13', excludes))
 def read_parts_datasheets(parts: List[DiscoveredPart], args):
     need_symbols = {
         'tRise', 'tFall',  # HS
@@ -464,37 +596,30 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
     return result_parts
 
 
-def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadParams, args):
-    assert parts, "No parts to generate"
-
-    print('generating power loss estimates for ', len(parts), 'parts')
+def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc: DcDcLoadParams, gd: GateDrive,
+                               name):
+    assert dss, "No parts to generate"
+    print('generating power loss estimates for ', len(dss), 'parts')
 
     result_rows = []  # csv
-
-    dss = read_parts_datasheets(parts, args)
 
     print(set(ds.part.mpn for ds in dss))
     print('computing power loss for %s parts...' % len(dss))
 
-    gd = GateDrive(float(args.rg_total), Von=10, Voff=0, fallback_V_pl=float(args.vpl_fallback))
-
     parts_loss = []
 
     for ds in dss:
-        if isinstance(ds, tuple) and ds == (None, None):
-            continue
-        if not dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds')):
-            print(ds.part, 'vds not in range', ds.get_typ_or_max_or_min('Vds'))
-            continue
         fet_specs = get_fet_specs(ds)
         if fet_specs is None:
             continue
 
-        if not dcdc.Id_in_range(fet_specs.Id, IDP_ID_RATIO if args.swcd else MAX_PARALLEL):
+        if not dcdc.Id_in_range(fet_specs.Id,
+                                IDP_ID_RATIO if args.controlFet.stagedSwitching else args.controlFet.maxParallel):
             continue
 
         loss_spec = dcdc_buck_hs(dcdc, fet_specs,
                                  gd=gd,  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
+                                 isGaN=ds.part.specs.isGaN
                                  )
 
         parts_loss.append((ds, fet_specs, loss_spec))
@@ -509,13 +634,13 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
         if rds_on_max < 0.1:
             rds_on_max *= 1000
 
-        for i in range(1, MAX_PARALLEL + 1):
+        for i in range(1, args.controlFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
             result_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
                 housing=ds.part.package,
 
-                Vds_max=ds.get_max_or_min_or_typ('Vds', True),
+                Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Rds_max=rds_on_max / i,
                 Id=fet_specs.Id * i,
                 Qsw=fet_specs and (fet_specs.Qsw * 1e9),
@@ -534,7 +659,7 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
             if math.isnan(ls.buck_hs()):
                 break
 
-    if args.swcd:
+    if args.controlFet.stagedSwitching:
         # staged switching. one switcher device and one or more parallel conductors
         # the switcher is fast, low Qsw, higher Rds(on), Id(pulsed) sufficiently high
         # the conductor is slower, low Rds(on). needs a separate gate drive signal during turn-off
@@ -549,19 +674,24 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
 
         for ds, fet_specs, ls in low_sw:
             p_sw = ls.P_sw + ls.P_gd + ls.P_coss
-            if p_sw > best_psw * 4:
+            if p_sw > best_psw * 6:
                 continue
 
             # here we need the pulsed drain current, which we assume is 4x higher than Id_DC
             # always verify datasheet 'Maximum Safe Operating Area' diagram
-            if not dcdc.Id_in_range(fet_specs.Id, IDP_ID_RATIO):
-                continue
-
-            for ds2, fet_specs2, ls2 in low_cl:
-                if not dcdc.Id_in_range(fet_specs2.Id, MAX_PARALLEL):
+            idp = ds.get_max_or_min_or_typ('Idp')
+            if math.isnan(idp):
+                if not dcdc.Id_in_range(fet_specs.Id, IDP_ID_RATIO):
+                    continue
+            else:
+                if idp < dcdc.Io_max * 1.2:
                     continue
 
-                for i in range(1, MAX_PARALLEL + 1):
+            for ds2, fet_specs2, ls2 in low_cl:
+                if not dcdc.Id_in_range(fet_specs2.Id, args.controlFet.maxParallel):
+                    continue
+
+                for i in range(1, args.controlFet.maxParallel + 1):
                     ls3 = ls2.parallel(i)
 
                     p = p_sw + ls3.P_cl + ls3.P_gd + ls3.P_coss
@@ -572,20 +702,20 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
 
                     if p < best:
                         best = p
-                    if p < best * 1.5 and p < sc_best[k] * 1.2 and p < ls.parallel(2).buck_hs() and p < ls3.parallel(
+                    if p < best * 2.0 and p < sc_best[k] * 1.5 and p < ls.parallel(2).buck_hs() and p < ls3.parallel(
                             2).buck_hs():
 
-                        rds_on_max = ds2.get_max('Rds_on_10v', False)
-                        if math.isnan(rds_on_max):
-                            rds_on_max = ds2.get_max('Rds_on', True)
+                        #rds_on_max = ds2.get_max('Rds_on_10v', False)
+                        #if math.isnan(rds_on_max):
+                        # rds_on_max = ds2.get_max('Rds_on', False)
 
                         result_rows.append(dict(
-                            mpn=f'{ds.part.mpn} || {str(i) + p if i > 1 else ""}{ds2.part.mpn}',
+                            mpn=f'{ds.part.mpn} || {str(i) + "p " if i > 1 else ""}{ds2.part.mpn}',
                             housing=ds.part.package + ' & ' + ds2.part.package,
 
                             Vds_max=f"{fet_specs.Vds}, {fet_specs2.Vds}",
-                            Rds_max=rds_on_max * 1000 / i,
-                            Id=fet_specs.Id,  # TODO min ?
+                            Rds_max=fet_specs2.Rds_on * 1000 / i,
+                            Id=idp if not math.isnan(idp) else fet_specs.Id,  # TODO min ?
                             Qsw=fet_specs and (fet_specs.Qsw * 1e9),
                             errors=', '.join(ds.errors),
 
@@ -606,11 +736,12 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
     if len(dss) >= 1:
         os.path.exists('out') or os.makedirs('out', exist_ok=True)
         dat = f'{datetime.datetime.now():%Y-%m-%d}'
-        out_fn = f'out/{dcdc.fn_str("buck")}v2-{dat}-inp{len(parts)}'
-        if args.substrate:
-            out_fn += f'-{args.substrate}'
-        if args.q:
-            out_fn += f'-q{args.q}'
+        # out_fn = f'out/{dcdc.fn_str("buck")}v2-{dat}-inp{len(parts)}'
+        # if args.substrate:
+        #    out_fn += f'-{args.substrate}'
+        # if args.q:
+        #    out_fn += f'-q{args.q}'
+        out_fn = f'out/{name}-{dat}-{dcdc.fn_str("buck")}-HS-inp{len(dss)}'
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('written', out_fn)
@@ -619,13 +750,82 @@ def generate_parts_power_loss_csv2(parts: List[DiscoveredPart], dcdc: DcDcLoadPa
 
     show_summary(dss)
 
+    # show parts missing Qsw, no switching loss estimation is possible:
+    no_qsw = [pml[0] for pml in parts_loss if math.isnan(pml[1].Qsw)]
+    print('Parts missing Qsw:', len(no_qsw))
+    for p in no_qsw:
+        print(p.part.mfr, p.part.mpn)
+
     # report
     # - total datasheets with at least 1 field
     # - total fields with at least one value
     # - total values
     # - total power values
 
-    return []
+
+def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc: DcDcLoadParams, gd: GateDrive, name):
+    assert dss, "No parts to generate"
+
+    result_rows = []
+
+    for ds in dss:
+        fet_specs = get_fet_specs(ds)
+        if fet_specs is None:
+            continue
+
+        if not dcdc.Id_in_range(fet_specs.Id, args.syncFet.maxParallel):
+            continue
+
+        if fet_specs.QgdQgsRatio > 1:
+            # mosfet might self turn-on
+            continue
+
+        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, isGaN=ds.part.specs.isGaN)
+
+        rds_on_max = ds.get_max('Rds_on', False)
+        if math.isnan(rds_on_max):
+            rds_on_max = ds.get_max('Rds_on_10v', False)
+        if rds_on_max < 0.1:
+            rds_on_max *= 1000
+
+        for i in range(1, args.syncFet.maxParallel + 1):
+            ls = loss_spec.parallel(i)
+            result_rows.append(dict(
+                mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
+                housing=ds.part.package,
+
+                Vds_max=ds.get_max_or_min_or_typ('Vds', False),
+                Rds_max=rds_on_max / i,
+                Id=fet_specs.Id * i,
+                Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+                errors=', '.join(ds.errors),
+
+                date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
+                dateC=ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
+
+                P_cl=ls.P_cl,
+                P_rr=ls.P_rr,
+                P_gd=ls.P_gd,
+                P_coss=ls.P_coss,
+                P_tot=ls.buck_ls(),
+            ))
+
+            if math.isnan(ls.buck_ls()):
+                break
+
+    df = pd.DataFrame(result_rows)
+
+    if len(dss) >= 1:
+        os.path.exists('out') or os.makedirs('out', exist_ok=True)
+        dat = f'{datetime.datetime.now():%Y-%m-%d}'
+        out_fn = f'out/{name}-{dat}-{dcdc.fn_str("buck")}-LS-inp{len(dss)}'
+        out_fn += '.csv'
+        write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
+        print('written', out_fn)
+    else:
+        print('skip csv write because only few parts')
+
+    # show_summary(dss)
 
 
 def num_cores():
@@ -692,13 +892,14 @@ def show_summary(dss: List[DatasheetFields]):
 
 
 if __name__ == '__main__':
-    if os.path.isfile('fet-datasheets.pkl'):
-        with(open('fet-datasheets.pkl', 'rb')) as f:
-            dss: List[DatasheetFields] = pickle.load(f)
+    # if os.path.isfile('fet-datasheets.pkl'):
+    #    with(open('fet-datasheets.pkl', 'rb')) as f:
+    #        dss: List[DatasheetFields] = pickle.load(f)
+    #
+    #    dss = [d for d in dss if d != (None, None)]
+    #    show_summary(dss)
 
-        dss = [d for d in dss if d != (None, None)]
-        show_summary(dss)
-
-        # exit(0)
+    # exit(0)
     # parse_pdf_tests()
-    main()
+    # main()
+    main_yaml()
