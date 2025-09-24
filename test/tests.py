@@ -268,7 +268,13 @@ def test_parse_lines():
         # IPP070N08N3GXKSA1.pdf Vds error parsing field row Drain-source breakdown voltage,V eryoss,V cs=0 V,,p=1 mA 80,-,-,V all nan Field("Vds",nan,nan,nan,"V",cond={0: 'Drain-source breakdown voltage', 1: 'V eryoss |V cs=0 V, |p=1 mA 80', 2: '-', 3: '-', 4: 'V'})
         # IPP070N08N3GXKSA1.pdf trr error parsing field row Reverse recovery time,Cnr,V p=40 V,,-=lIs,-,66,7,ns (66.0, 7.0)
     ]   # IPB025N10N3_G.pdf trr error parsing field row Reverse recovery time,Cnr,V p=50 V,1-=100A,-,86,7,ns (86.0, 7.0)
-
+    # FDB0190N807L.pdf Vds error parsing field row BVDSS,Drain to Source Breakdown Voltage,ID = 250 μA,VGS = 0 V,80,nan,nan,nan,V,nan
+    # IRFB4020.pdf parsing Qsw in Qsw,Switch Charge (Qgs2 + Qgd),---,6.7,---,nC,nan but found stop word Qg in match head: Qsw,Switch Charge (Qgs2 + Qgd),---,
+    #,BVDSSDrain-to-Source Voltage,VGS = 0V,ID = 250μA,100,V,,
+    # BVDSS Drain-to-Source Voltage VGS = 0 V,ID = 300 μA 100,V
+    # MCU7D5N10YL-TP.pdf Vds error parsing field row Drain-Source Breakdown Voltage,V(BR)DSS,VGS=0V,ID=250μA,100,nan,nan,nan,V
+# Drain-Source Breakdown Voltage,BV(BR)DSS,VGS=0V,ID=250μA,100,nan,nan,nan,V,nan,nan
+# Drain-Source Breakdown Voltage BVDSS,VGS=0V,ID=250uA 100,-,,-,V
 
     for c in cases:
         assert len(c) == 3, c
@@ -661,6 +667,16 @@ def test_pdf_parse():
 
     d = parse_datasheet(mfr='onsemi', mpn='FDP027N08B')
     assert d['Qrr'].typ == 112
+
+    d = parse_datasheet(mfr='infineon', mpn='IRFB4020')
+    assert d.Qsw.typ == 6.7
+
+    d = parse_datasheet(mfr='infineon', mpn='IRFI4019HG-117P')
+    assert d.Qsw.typ == 4.1
+
+    #.pdf parsing Qsw in Qsw,Switch Charge (Qgs2 + Qgd),---,4.1,---,nC
+
+
 
 
 def test_pdf_ocr():

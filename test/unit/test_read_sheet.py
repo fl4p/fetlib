@@ -35,3 +35,16 @@ def test_read_sheet():
 
     ds = read_sheet('../../datasheets/littelfuse/IXTA76N25T.pdf')
     assert ds.Vsd == 1.5
+
+    ds = read_sheet('../../datasheets/epc/EPC2016C.pdf')
+    assert ds.Idp == 22
+
+    ds = read_sheet('../../datasheets/infineon/IPT015N10N5.pdf')
+    assert ds.Vds == 100
+
+    ds = read_sheet('../../datasheets/diotec/DI048N08PQ.pdf')
+    assert ds.Vsd == 1
+
+    ds = read_sheet('../../datasheets/littelfuse/IXFN300N10P.pdf')
+    assert ds.Qrr == 710e-9
+    assert ds.trr == 200e-9
