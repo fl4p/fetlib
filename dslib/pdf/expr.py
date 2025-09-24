@@ -298,7 +298,6 @@ def line_regex_variations(dim: Dimension):
     unit = dim.unit_regex
     num_signed = NumValReSet(True, False).val
 
-    any_unit = '|'.join(d.unit_regex for d in DIMENSIONS.values())
     any_head = '|'.join(d.head_regex for d in DIMENSIONS.values() if d.head_regex)
 
     param_name_char = '[- .,()a-z0-9]'  # "Reverse transfer capacitance"
@@ -648,8 +647,8 @@ def get_field_detect_regex(mfr):
 
         Rds_on=(rec(r'(^R[ _]*DS[ _]*\(?on\)?|(Static[- ]+)?Drain([- ]+to)?[ -]+Source On([ -]+state)?[ -]+Resistance)',
                     re.IGNORECASE)),
-        Id=(rec(r'(^I[ _]*D\s*($|@)|Continuous drain current|drain current \(DC\))',
-                re.IGNORECASE)),
+        Id=(rec(r'(^I[ _]*D\s*($|@)|Continuous drain current|drain current \(DC\))',re.IGNORECASE)),
+        Idp=(rec(r'(^I[ _]*DP\s*($|@)|Pulsed drain current|Pulsed\s+\()',        re.IGNORECASE)),
         gfs=(rec(r'(^\|?[Yg][ _]*fs\|?|forward transconductance|Forward Transfer Admittance)', re.IGNORECASE)),
 
         tDon=(rec(r'(Turn[−\s]+On[−\s]+Delay[−\s]+Time|^t[\s_]?d[\s_]?\(\s?on\s?\))', re.IGNORECASE),

@@ -292,7 +292,7 @@ def extract_dates(pdf_text: str):
     return [x[1] for x in sorted(dates, key=lambda x: x[0])]
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v03'), ignore_missing_inp_paths=True,
+@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v04'), ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,

@@ -11,10 +11,12 @@ import warnings
 from collections import defaultdict
 from typing import List, Optional, Tuple, Dict, Literal
 
+from pdfminer.psexceptions import PSException
+
 from dslib.cache import disk_cache
-from dslib.field import Field, DatasheetFields, parse_field_value
+from dslib.field import Field, DatasheetFields, parse_field_value, get_value_with_unit
 from dslib.pdf.ascii import pdf_to_ascii, Row, Phrase
-from dslib.pdf.expr import get_cond_regex
+from dslib.pdf.expr import get_cond_regex, any_unit
 from dslib.pdf.parse import detect_fields, DetectedSymbol
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 from dslib.pdf.sheet.annotation import pdf_raster_annot
@@ -29,13 +31,13 @@ head_re = re.compile(
     '|(?P<param>Parameters?|Characteristics?)'
     '|(?P<min>Min(\.|imum)?)'
     '|(?P<typ>Typ(\.|ycal)?)'
-    '|(?P<max>Max(\.|imum)?)'
+    '|(?P<max>Max(\.|imum)?|LIMIT)'
     '|(?P<cond>(Note *(/|or)? *)?(Test(ing)?\s+)?Conditions?)'
     '|(?P<values>(Value|Rating)s?)'
     '|(?P<unit>Units?)'
     ')(?=$|\s+))+', re.IGNORECASE)
 
-head_re_groups = ('sym', 'param', 'min', 'typ', 'max', 'unit', 'cond')
+head_re_groups = ('sym', 'param', 'min', 'typ', 'max', 'values', 'unit', 'cond')
 
 head_stop = (
     # 'RATINGS', 'Ratings',
@@ -113,7 +115,7 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v09'))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v10'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
         return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,
@@ -329,6 +331,12 @@ def parse_cond_str(cond):
 def _is_valid_value(mtm, s):
     if mtm not in Field.StatKeys or not math.isnan(parse_field_value(s, no_raise=True)):
         return True
+
+    v,u =  get_value_with_unit(s)
+    if u:
+        return True
+
+
     return False
 
 
@@ -398,8 +406,9 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                     is_last = starts_idx[-1] == g or g == 'max'
 
                     # if we can't find a covering cell, horizontally extend
-                    right = sq.ray('x1', head_bbox, 60 if is_last else 200, 0.2, 10)
-                    left = sq.ray('x2', head_bbox, 60 if is_first else 200, 0.2, 10)
+                    right_ray_len = 40 if '/littelfuse/' in pdf_file else 60
+                    right = sq.ray('x1', head_bbox, right_ray_len if is_last else 200, 0.2, 10)
+                    left = sq.ray('x2', head_bbox, 200 if '/epc' in pdf_file else 60 if is_first else 200, 0.2, 10)
 
                     bbox = head_bbox
                     x1 = bbox.x1
@@ -489,7 +498,13 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
             # val = defaultdict(list)
             val_fields: List[Tuple[Bbox, Dict[Literal['min', 'typ', 'max'], str]]] = []
 
+            has_mtm = False
             for mtm in ('min', 'typ', 'max'):
+                if head.get_span(mtm):
+                    has_mtm = True
+                    break
+
+            for mtm in ('min', 'typ', 'max') if has_mtm else ('values',):
                 if not head.get_span(mtm):
                     # warnings.warn('Detected field %s in %r, but no typ header' % (row.symbol.symbol, row))
                     pass
@@ -502,6 +517,8 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                     els = filter(lambda el: el.bbox.x1 > bbox_sym.x2, els)
                     els = take(els, 10)
                     len(els)
+                    if mtm == 'values':
+                        mtm = 'typ'
                     # assert len(els) == len(cond), (row.symbol.symbol, row.row, repr(els), repr(cond))
                     for el in els:
                         annotations.append(Annotation(name=f'{el}({mtm})', bbox=el.bbox, color=(255, 128, 0)))  # orange
@@ -546,7 +563,7 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
                         fields.append(f)
                         parsed.append(f_bbox)
                     except Exception as e:
-                        print(pdf_file, 'error parsing field %s in %r: %s' % (row.symbol.symbol, row.row, e))
+                        print(pdf_file, 'error parsing field %s in %r (val=%r): %s' % (row.symbol.symbol, row.row,val, e))
                         # raise
 
     return fields
