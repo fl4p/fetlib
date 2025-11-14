@@ -149,7 +149,10 @@ def Rds_on(mf: MosfetSpecs, Id, Tj):
 
     if math.isnan(Tj):
         # this is a rough approximation from looking at various datasheets from different mfn
-        return mf.Rds_on * 1.35
+        # TODO temp rise?
+        #if mf.part.specs.isGaN:
+        return mf.Rds_on * 1.22
+        #return mf.Rds_on * 1.35
 
     assert Tj == 25
     return mf.Rds_on
