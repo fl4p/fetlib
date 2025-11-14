@@ -1,4 +1,9 @@
 pandas~=2.2.2
+pyyaml
+aiohttp
+
+fontTools
+pympler
 
 pymupdf~=1.24.10
 pyppeteer
@@ -43,3 +48,5 @@ pytz~=2024.2
 joblib~=1.4.2
 
 pdf2image
+
+matplotlib

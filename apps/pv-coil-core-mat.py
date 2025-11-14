@@ -1,9 +1,10 @@
 import pandas as pd
 from matplotlib import pyplot as plt
 
-from maglib import MicrometalsToroid
 from dclib.powerloss import CoilSpecs, dcdc_buck_coil
-from dslib.spec_models import DcDcLoadParams
+from dslib.spec_models import DcDcLoadParams, DCMNotImplemented
+from maglib.cores import MicrometalsToroid, MicrometalsT184
+from maglib.materials import MaterialNotFound
 
 materials = [
     'GX',
@@ -14,19 +15,20 @@ materials = [
 ]
 
 shape = 130 #MicrometalsT130
+shape = MicrometalsT184
 #shape = MicrometalsT184
 L0 = 55e-6
 Io = .5 #0.5
 fsw = 200e3
 stacks = (
-#    1,
+    1,
     2,
 )
 uis = (
     60,
-    #75,
+    75,
      90,
-    #125
+    125
 )
 points = []
 idx = []
@@ -35,11 +37,11 @@ while Io < 33:
 
     point = dict()
     for mat in materials:
-        for ui in uis: #(60,75,90,125):
+        for ui in uis:
             for stack in stacks:
                 try:
                     core = MicrometalsToroid(mat, ui, shape).stack(stack)
-                    coil = CoilSpecs(1e-3, L0=L0, core=core, wire_diameter=1e-3)
+                    coil = CoilSpecs(1e-3, L0=L0, core=core, wire_diameter=1e-3, wire_strands=1)
                     #coil =  MPPT_2420_HC().coil
                     #dcdc = DcDcSpecs(75, 30, fsw, io=Io, L=coil.Ldc(Io))
                     dcdc = DcDcLoadParams(66, 27, fsw, io=Io, L=coil.Ldc(Io))
@@ -48,7 +50,10 @@ while Io < 33:
                     if len(points) == 0:
                         print(coil.core.mpn, coil.micrometals_analyzer(dcdc))
                     point[f'{coil.core.mpn} {round(coil.turns)}T'] = loss['P_core']
-                except:
+                except (DCMNotImplemented, MaterialNotFound):
+                    pass
+                except Exception as e:
+                    raise
                     # point[core.mpn] = math.nan
                     continue
             #break

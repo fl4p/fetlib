@@ -130,7 +130,9 @@ async def main():
         open_file_with_default_app(html_path)
 
     elif args.command == 'parse':
-        parse_datasheet(ds_path).print(True, True)
+        ds = parse_datasheet(ds_path)
+        ds.print(True, True)
+        print(ds.get_mosfet_specs())
     elif args.command == 'read-sheet-debug':
         from dslib.pdf.sheet import read_sheet_debug
         read_sheet_debug(ds_path).print(True, True)

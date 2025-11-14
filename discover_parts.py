@@ -86,6 +86,7 @@ def is_benchmark_part(part: DiscoveredPart):
 
 
 async def main():
+    # discover available MOSFETS:
     parts = await discover_mosfets()
 
     # move_low_voltage_datasheets(parts)

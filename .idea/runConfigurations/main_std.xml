@@ -9,7 +9,7 @@
       <env name="JAVA_HOME" value="/Library/Java/JavaVirtualMachines/zulu-21.jdk/Contents/Home" />
     </envs>
     <option name="SDK_HOME" value="" />
-    <option name="SDK_NAME" value="fetlib" />
+    <option name="SDK_NAME" value="Python 3.10 (fetlib)" />
     <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
     <option name="IS_MODULE_SDK" value="false" />
     <option name="ADD_CONTENT_ROOTS" value="true" />

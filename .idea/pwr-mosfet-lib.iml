@@ -5,7 +5,7 @@
       <sourceFolder url="file://$MODULE_DIR$/test/unit" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/dslib/chromium-user-data-dir" />
     </content>
-    <orderEntry type="jdk" jdkName="fetlib" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.10 (fetlib)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="fet-datasheets" />
   </component>

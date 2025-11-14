@@ -537,6 +537,13 @@ def find_iter(r: re.Pattern, s: str) -> re.Match:
     else:
         return next(r.finditer(s), None)
 
+import re
+
+RE_D = re.compile('\d')
+
+def has_digits(string):
+    res = RE_D.search(string)
+    return res is not None
 
 def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None, mpn=None,) \
         -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
@@ -599,9 +606,10 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
 
             return f
         except Exception as e:
-            msg = (field_sym, 'error parsing field row', s, e)
-            if msg not in err:
-                err.append(msg)
+            if has_digits(str(s)):
+                msg = (field_sym, 'error parsing field row', s, e)
+                if msg not in err:
+                    err.append(msg)
             continue
     for e in err:
         print(mpn or '', *e)

@@ -1,3 +1,4 @@
+import asyncio
 import datetime
 import hashlib
 import os
@@ -39,8 +40,13 @@ def get_parquet_engine():
         import pyarrow
         return 'pyarrow'
     except ImportError:
-        logger.warning("pyarrow not installed, using engine `fastparquet`")
-        return 'fastparquet'
+        logger.warning("pyarrow not installed")
+        try:
+            import fastparquet
+            return 'fastparquet'
+        except ImportError:
+            logger.warning("fastparquet not installed")
+            return 'auto'
 
 
 parquet_engine = get_parquet_engine()
@@ -118,6 +124,8 @@ def read_influx_cache(**kwargs):
             return df
         else:
             return None
+    except EOFError:
+        return None
     finally:
         _disk_cache_housekeeping()
 
@@ -518,8 +526,8 @@ def fallback_cache(exception=None, ignore_kwargs=None):
 class CacheStorageRedis(CacheStorage):
     def __init__(self, serializer):
         self.serializer = serializer
-        from lib.data.redis import r_tsc
-        self.redis = r_tsc
+        # from lib.data.redis import r_tsc
+        self.redis = None # r_tsc
         self._lock = RLock()
 
     def get(self, key):
@@ -620,6 +628,33 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
 _disk_cache_disabled = False
 
 
+def _disk_cache_get_file_names(args, kwargs,pwd, deps, ignore_missing_inp_paths):
+    if not deps:
+        return []
+
+    file_names = []
+    fd_arg_names = deps
+    if isinstance(fd_arg_names, bool) and fd_arg_names == True:
+        fd_arg_names = [0]
+    for arg_name in fd_arg_names:
+        if isinstance(arg_name, int):
+            arg_val = args[arg_name] if arg_name < len(args) else None
+        elif isinstance(arg_name, str) and ('.' in arg_name or '/' in arg_name):
+            arg_val = arg_name
+            if not os.path.isabs(arg_val):
+                arg_val = os.path.join(pwd, arg_val)
+        else:
+            arg_val = kwargs.get(arg_name)
+        if arg_val is None:
+            if ignore_missing_inp_paths:
+                arg_val = None
+            else:
+                raise ValueError('missing input file path arg %s' % arg_name)
+        else:
+            arg_val = os.path.realpath(arg_val)
+        file_names.append(arg_val)
+    return file_names
+
 def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
                ignore_missing_inp_paths=False,
                hash_func_code=False):
@@ -636,39 +671,13 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
 
         source_code = inspect.getsource(target) if hash_func_code else None
 
-        def get_file_names(args, kwargs, deps):
-            if not deps:
-                return []
-
-            file_names = []
-            fd_arg_names = deps
-            if isinstance(fd_arg_names, bool) and fd_arg_names == True:
-                fd_arg_names = [0]
-            for arg_name in fd_arg_names:
-                if isinstance(arg_name, int):
-                    arg_val = args[arg_name] if arg_name < len(args) else None
-                elif isinstance(arg_name, str) and ('.' in arg_name or '/' in arg_name):
-                    arg_val = arg_name
-                    if not os.path.isabs(arg_val):
-                        arg_val = os.path.join(pwd, arg_val)
-                else:
-                    arg_val = kwargs.get(arg_name)
-                if arg_val is None:
-                    if ignore_missing_inp_paths:
-                        arg_val = None
-                    else:
-                        raise ValueError('missing input file path arg %s' % arg_name)
-                else:
-                    arg_val = os.path.realpath(arg_val)
-                file_names.append(arg_val)
-            return file_names
 
         def _cache_key(*args, **kwargs):
             mtimes = {}
             if file_dependencies:
                 mtimes = {
                     '__mtime:' + fn: (os.path.getmtime(fn))
-                    for fn in get_file_names(args, kwargs, file_dependencies) if
+                    for fn in _disk_cache_get_file_names(args, kwargs, pwd, file_dependencies, ignore_missing_inp_paths) if
                     not ignore_missing_inp_paths or fn is not None}
             if salt is not None:
                 mtimes['__salt__'] = salt
@@ -686,13 +695,17 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                 return
             disk_cache_store.delete(cache_key_str)
 
+        is_coro = asyncio.iscoroutinefunction(target)
+        async def call_target(*args, **kwargs):
+            return await target(*args, **kwargs) if is_coro else target(*args, **kwargs)
+
         # noinspection PyBroadException
         @wraps(target)
         def _disk_cache_wrapper(*args, **kwargs):
             cache_key_str = _cache_key(*args, **kwargs)
 
             if cache_key_str is None:
-                return target(*args, **kwargs)
+                return call_target(*args, **kwargs)
 
             inv = False
 
@@ -702,12 +715,12 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
             if out_files:
                 # TODO store times in cache and
                 assert file_dependencies
-                out_fns = get_file_names(args, kwargs, out_files)
+                out_fns = _disk_cache_get_file_names(args, kwargs, out_files)
                 out_mtimes = {fn: os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns}
                 out_sizes = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
 
                 # warnings.warn('out_files not checking for external change %s' % (out_fns))
-                in_fns = get_file_names(args, kwargs, file_dependencies)
+                in_fns = _disk_cache_get_file_names(args, kwargs, file_dependencies)
                 in_mtime = max(os.path.getmtime(fn) for fn in in_fns)
                 if in_mtime > min(out_mtimes.values()):
                     inv = True
@@ -741,11 +754,13 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                         else:
                             ret, exp, meta = cache_val
                         if now() <= exp and meta_valid(meta):
-                            return ret
+                            async def _async_ret():
+                                return ret
+                            return _async_ret() if is_coro else ret
                 except Exception as _e:
                     logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
 
-            ret = target(*args, **kwargs)
+            ret = call_target(*args, **kwargs)
 
             meta = {}
 
@@ -761,17 +776,28 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                 meta['out_files_sizes'] = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
 
             try:
-                disk_cache_store.write(cache_key_str, (ret, now() + ttl, meta))
+                store_val = asyncio.run(ret) if is_coro else ret
+                disk_cache_store.write(cache_key_str, (store_val, now() + ttl, meta))
             except Exception as _e:
                 logger.warning('Disk cache: error storing: %s', _e)
                 pass
 
             return ret
 
-        _disk_cache_wrapper.invalidate = _invalidate
-        _disk_cache_wrapper.cache_key = _cache_key
-        _disk_cache_wrapper.store = disk_cache_store
+
+        if is_coro:
+            async def asnyc_wrapper(*args, **kwargs):
+                return await _disk_cache_wrapper(*args, **kwargs)
+            _ret_wrapper = asnyc_wrapper
+        else:
+            _ret_wrapper = _disk_cache_wrapper
+
+        _ret_wrapper.invalidate = _invalidate
+        _ret_wrapper.cache_key = _cache_key
+        _ret_wrapper.store = disk_cache_store
+
         return _disk_cache_wrapper
+
 
     return decorate
 

@@ -90,6 +90,9 @@ class ObjectDatabase(Generic[K, T]):
 
         return {}
 
+    def keys(self):
+        return self._lib_mem.keys()
+
     def load_obj(self, key: K) -> T:
         if not self._lib_mem:
             self.load()
