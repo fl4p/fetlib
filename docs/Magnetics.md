@@ -24,6 +24,8 @@ https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulat
 * https://www.quora.com/What-is-the-formula-for-calculating-peak-value-of-flux-density-of-an-inductor
   * "B pk= Inductance x peak current divided by (turns x cross sectional area of the core). If you substitute E=Li/t you also get B pk = volts applied x time applied divided by (turns x core cross sectional area). Current is what causes flux so the first equation is the most direct. The second equation is most useful for square wave voltages applied such as in switched mode converters. The same equation applies for sine waves with a multiplying factor (1/4.44) and 1/frequency instead of time applied."
 
+https://resources.altium.com/p/ferrite-core-selection-and-design-decisions
+
 
 # Resources & Tools
 * micrometals
