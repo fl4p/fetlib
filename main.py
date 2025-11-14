@@ -66,6 +66,7 @@ def main_yaml():
     parser.add_argument('--config-file')
 
     parser.add_argument('-j', default=8)  # parallel jobs
+    parser.add_argument('-q')
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--no-download', action='store_true')
@@ -82,6 +83,7 @@ def main_yaml():
                    dcdc=DcdcArgs(
                        controlFet=ControlFetArgs(**conf['controlFet']),
                        gateDrive=GateDrive(rg_total=float(conf['gateDrive']['rgTotal']),
+                                           rg_total_dis=float(conf['gateDrive']['rgTotalOff']),
                                            Von=float(conf['gateDrive']['voltage']),
                                            Von_GaN=float(conf['gateDrive'].get('voltageGaN', 'nan')),
                                            Voff=0,
@@ -94,7 +96,9 @@ def main_yaml():
                        DcdcLoadPoint(weight=p['pointWeight'], vIn=p['vIn'], vOut=p['vOut'], pIn=p['pIn'],
                                      f=float(p['f']))
                        for p in conf['loadPoints']
-                   ])
+                   ],
+                   q=cargs.q,
+                )
     run(args, cargs, os.path.basename(cargs.config_file).split('.yaml')[0])
 
 
@@ -208,9 +212,10 @@ class RunArgs():
 
 
 def run(args: RunArgs, cargs, name):
-    # discover available MOSFETS:
+
     parts = asyncio.run(discover_mosfets(no_obsolete=not args.includeObsolete))
     print('Discovered', len(parts), 'parts from manufacturers:', ', '.join(sorted(set(p.mfr for p in parts))))
+    print('all parts:', ','.join(sorted(set(p.mpn for p in parts))))
 
 
     if args.substrates:
@@ -607,11 +612,14 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     print('computing power loss for %s parts...' % len(dss))
 
     parts_loss = []
+    parts = []
 
     for ds in dss:
         fet_specs = get_fet_specs(ds)
         if fet_specs is None:
             continue
+
+        parts.append(Part(specs=fet_specs, discovered=ds.part))
 
         if not dcdc.Id_in_range(fet_specs.Id,
                                 IDP_ID_RATIO if args.controlFet.stagedSwitching else args.controlFet.maxParallel):
@@ -649,6 +657,8 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
                 dateC=ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
 
+                # TODO tr,tf
+
                 P_cl=ls.P_cl,
                 P_sw=ls.P_sw,
                 P_gd=ls.P_gd,
@@ -658,6 +668,8 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
             if math.isnan(ls.buck_hs()):
                 break
+
+    dslib.store.parts_db.add(parts, overwrite=True)
 
     if args.controlFet.stagedSwitching:
         # staged switching. one switcher device and one or more parallel conductors
@@ -741,7 +753,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         #    out_fn += f'-{args.substrate}'
         # if args.q:
         #    out_fn += f'-q{args.q}'
-        out_fn = f'out/{name}-{dat}-{dcdc.fn_str("buck")}-HS-inp{len(dss)}'
+        out_fn = f'out/{name}/{dat}-{dcdc.fn_str("buck")}-HS-inp{len(dss)}'
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('written', out_fn)
@@ -797,7 +809,12 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Rds_max=rds_on_max / i,
                 Id=fet_specs.Id * i,
-                Qsw=fet_specs and (fet_specs.Qsw * 1e9),
+
+                # sync fet specific:
+                Qrr=fet_specs and (fet_specs.Qrr * 1e9) * i,
+                Vsd=fet_specs and (fet_specs.Vsd),
+                QgdQgs=fet_specs and fet_specs.QgdQgsRatio,
+
                 errors=', '.join(ds.errors),
 
                 date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
@@ -818,7 +835,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     if len(dss) >= 1:
         os.path.exists('out') or os.makedirs('out', exist_ok=True)
         dat = f'{datetime.datetime.now():%Y-%m-%d}'
-        out_fn = f'out/{name}-{dat}-{dcdc.fn_str("buck")}-LS-inp{len(dss)}'
+        out_fn = f'out/{name}/{dat}-{dcdc.fn_str("buck")}-LS-inp{len(dss)}'
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('written', out_fn)

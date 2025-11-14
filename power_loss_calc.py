@@ -4,10 +4,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import apps.mppts.libresolar
-from dslib import round_to_n_dec
 from dclib.powerloss import SwitchPowerLoss
-from dslib.spec_models import DcDcLoadParams
+from dslib import round_to_n_dec
 from dslib.mosfet import GateDrive
+from dslib.spec_models import DcDcLoadParams
 
 if __name__ == '__main__':
     """
@@ -19,16 +19,28 @@ if __name__ == '__main__':
 
     # buck = MPPT_2420_HC()
     # buck = apps.mppts.libresolar.FuguWhite184()
-    buck = apps.mppts.libresolar.MPPT_Fheat2()
-    gd = GateDrive(rg_total=10, Von=11, fallback_V_pl=4.5)
+    # buck = apps.mppts.libresolar.MPPT_Fheat2()
+
+    buck = apps.mppts.libresolar.Fugu2_tall()
+
+    gd = GateDrive(rg_total=buck.hs.rg_total,
+                   rg_total_dis=buck.hs.rg_total_dis,
+                   Von=11,
+                   Von_GaN=5,
+                   fallback_V_pl=4.5,
+                   tDead=1e-9 * (8.6 * 33 + 13),  # ucc2333
+                   )
 
 
     def compute_losses(pin, fsw=None):
         # dcdc = DcDcSpecs(vi=66, vo=27, pin=pin, f=fsw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
         fsw = fsw or (buck.f_sw)
-        dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=fsw,tDead=400e-9, L=buck.coil.L0)
-        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=fsw,tDead=200e-9, L=buck.coil.L0)
+        # dcdc = DcDcLoadParams(vi=66, vo=27, pin=pin, f=fsw,tDead=400e-9, L=buck.coil.L0)
+        # dcdc = DcDcLoadParams(vi=40, vo=27, pin=800, f=fsw,tDead=200e-9, L=buck.coil.L0)
+        # dcdc = DcDcLoadParams(vi=60, vo=9.9, pin=pin, f=fsw, tDead=300e-9, L=buck.coil.L0)
+        # dcdc = DcDcLoadParams(vi=75, vo=27, pin=pin, f=fsw, tDead=gd.tDead, L=buck.coil.L0)
+        dcdc = DcDcLoadParams(vi=71.5, vo=27.1, pin=pin, f=fsw, tDead=gd.tDead, L=buck.coil.L0) # L arg is irrelevant here
 
         # dcdc = DcDcSpecs(vi=67, vo=27, io=13, f=fsw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
@@ -37,8 +49,8 @@ if __name__ == '__main__':
         return buck.powerloss(dcdc, gd)
 
 
-    # losses, dcdc = compute_losses(650)
-    losses, dcdc = compute_losses(820)
+    losses, dcdc = compute_losses(800)
+    # losses, dcdc = compute_losses(60 * 0.48)
 
     print('Converter', buck.name)
     print('Rg_total=', buck.hs.rg_total, 'Ω')
@@ -69,7 +81,7 @@ if __name__ == '__main__':
     print('')
     print('Io = %.2f A, Ipp = %.2f A' % (dcdc.Io, dcdc.Iripple))
     print('Total Ploss = %.2f W (%4.2f%% of Pout %.1fW)' % (p_total_total, p_total_total / dcdc.Pout * 100, dcdc.Pout))
-    print('Efficiency = %.1f%%' % ((1 - p_total_total / dcdc.Pout) * 100))
+    print('Efficiency = %.2f%%' % ((1 - p_total_total / dcdc.Pout) * 100))
 
     coil_core_loss_ratio = losses.coil.P_core / (losses.coil.P_dcr + losses.coil.P_core)
 
@@ -89,7 +101,7 @@ if __name__ == '__main__':
     pin = 5
     while pin < 2000:
         try:
-            losses, dcdc = compute_losses(pin, fsw=40e3)
+            losses, dcdc = compute_losses(pin)
             assert dcdc.is_ccm, "coil core loss only valid in ccm"
             p_total = sum(map(lambda g: sum(v for v in g.values() if not callable(v)), losses.values()))
             eff = 1 - p_total / pin
@@ -104,7 +116,7 @@ if __name__ == '__main__':
                 P_ldcr=losses.coil.P_dcr,
                 P_lacr=losses.coil.P_acr,
                 P_lcore=losses.coil.P_core,
-                P_csr=losses.misc['P_csr'],
+                P_csr=losses.misc.get('P_csr', 0),
                 P_cin=losses.cap.P_cin,
                 P_cout=losses.cap.P_cout,
                 P_coss=losses.hs.P_coss + losses.ls.P_coss,
@@ -113,22 +125,22 @@ if __name__ == '__main__':
             parts_curve.append(dict(
                 pin=pin,
                 P_fet=losses.hs.buck_hs() + losses.ls.buck_ls(),
-                P_coil=(losses.coil.P_dcr+losses.coil.P_acr+losses.coil.P_core),
+                P_coil=(losses.coil.P_dcr + losses.coil.P_acr + losses.coil.P_core),
                 P_caps=losses.cap.P_cin + losses.cap.P_cout,
                 P_rest=sum(losses.misc.values()),
             ))
         except AssertionError as e:
-            #print('err with pin', pin, e)
-            #print(traceback.format_exc())
+            # print('err with pin', pin, e)
+            # print(traceback.format_exc())
             pass
         pin *= 1.1
 
     loss_df = pd.DataFrame(parts_curve).set_index('pin')
     loss_df = loss_df[list(loss_df.iloc[-1, :].sort_values().keys())]
     loss_df.plot()
-    #plt.grid()
-    #plt.ylim((0.95, 1))
-    #plt.xlim((0, eff_curve[-1][0]))
+    # plt.grid()
+    # plt.ylim((0.95, 1))
+    # plt.xlim((0, eff_curve[-1][0]))
     plt.title('parts curve f=%shz' % round_to_n_dec(dcdc.f, 2))
     plt.show()
 
@@ -139,6 +151,13 @@ if __name__ == '__main__':
     plt.title('f=%shz' % round_to_n_dec(dcdc.f, 2))
     plt.show()
 
+    pd.DataFrame(eff_curve).set_index(0)[2].plot()
+    plt.grid()
+    #plt.ylim((0.95, 1))
+    plt.xlim((0, eff_curve[-1][0]))
+    plt.title('Ipp f=%shz)' % round_to_n_dec(dcdc.f, 2))
+    plt.show()
+
     loss_df = pd.DataFrame(loss_curve).set_index('pin')
     loss_df = loss_df[list(loss_df.iloc[-1, :].sort_values().keys())]
     plt.stackplot(loss_df.index.values, loss_df.T.values, labels=loss_df.columns)
@@ -147,7 +166,7 @@ if __name__ == '__main__':
     plt.ylabel('Ploss')
     plt.title(
         f'{buck.name} {round_to_n_dec(dcdc.Vi, 2)}/{round_to_n_dec(dcdc.Vo, 2)}V f={round_to_n_dec(buck.f_sw, 2)}Hz')
-    #plt.grid()
+    # plt.grid()
 
     # y = np.vstack([y1, y2, y3])
 
