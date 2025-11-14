@@ -16,15 +16,24 @@ import dslib.discovery.ti
 import dslib.discovery.toshiba
 import dslib.discovery.tw
 import dslib.discovery.vishay
+from dslib import mfr_tag
 from dslib.discovery import  DiscoveredPart, benchmark_mpns
 from dslib.fetch import fetch_datasheet, close_browser
 
 
 def unique_parts(parts: List[DiscoveredPart]):
+
+    def normal_mpn(mpn, mfr):
+        if  mfr_tag(mfr) == 'infineon':
+            if mpn.endswith('AKMA1') or mpn.endswith('AKSA1') or mpn.endswith('XKSA1') or mpn.endswith('XKMA1'):
+                mpn = mpn[:-5]
+
+        return mpn
+
     by: Dict[Tuple[str, str], DiscoveredPart] = {}
     for part in parts:
         assert part.mpn and isinstance(part.mpn, str) and part.mpn.lower() != 'nan', part.mpn
-        k = part.mfr, part.mpn
+        k = part.mfr, normal_mpn(part.mpn, part.mfr)
         if k in by:
             if part.specs and part.specs.source == ['digikey']:
                 continue # digikey data is often wrong
