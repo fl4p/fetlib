@@ -168,8 +168,9 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     assert mf.Qrr is not None, 'Qrr must be set ' + mf.__repr__()
     assert math.isnan(dc.Iripple) or dc.Iripple > 0
 
-    if gd.rg_total < mf.Rg:
+    if gd.rg_total < mf.Rg or gd.rg_total_dis < mf.Rg:
         warnings.warn('Rg_total %.1f < MF internal Rg %.1f' % (gd.rg_total, mf.Rg))
+
 
     i_rms2 = dc.D_buck * dc.Io_mean_squared_on
 
@@ -272,7 +273,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
         P_dt=vsd * dc.Io * (dc.tDead * 2) * dc.f,  # TODO https://www.ti.com/lit/an/slyt664/slyt664.pdf
         P_rr=dc.Vi * dc.f * Qrr_eff,  # this is dissipated in HS
-        P_gd=(von    - gd.Voff) * dc.f * 2 * mf.Qg,
+        P_gd=(von - gd.Voff) * dc.f * 2 * mf.Qg,
         P_sw=0,  # negligible TODO diode?
         P_coss=4 / 3 * mf.Coss * dc.Vi ** 2 * dc.f,  # charge is recovered, but charging over a resistance path
         cond=dict(
@@ -503,13 +504,20 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
     )
 
 
-def dcdc_buck_cout(dc: DcDcLoadParams, Z_cin: float, Z_cout: float):
+def dcdc_buck_caps(dc: DcDcLoadParams, Z_cin: float, Z_cout: float):
     i_ac_rms2 = dc.Il_ac_rms2
 
+    # TODO this appears to be quite high
     i_cin_rms = dc.Io * ((dc.Vi - dc.Vo) * dc.Vo) ** .5 / dc.Vi
 
     # cout & cin:
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf#page=4
+    # TODO
+    # - ESR = R ?
+    # - ESR(f) ?
+    # - main part of current is shoot-through/self-turn-on (Qoss, Qrr)??
+    # TODO https://www.ti.com/lit/an/slvaeq9/slvaeq9.pdf?ts=1763058938809#page=5
+    # https://www.analog.com/en/resources/app-notes/buck-power-stage-design-equations.html
 
     return dotdict(
         P_cin=i_cin_rms ** 2 * Z_cin,
@@ -543,17 +551,24 @@ def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
 
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
     rg_total = np.nanmax([hs.Rg, gd.rg_total])
+    rg_total_dis = np.nanmax([hs.Rg, gd.rg_total_dis])
 
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
     if isGaN:
         assert hs.Qsw < 10e-9
+        assert von < 6
 
-    vpl = (gd.fallback_V_pl/2 if isGaN else gd.fallback_V_pl) if math.isnan(hs.V_pl) else hs.V_pl
+    vpl = (gd.fallback_V_pl / 2 if isGaN else gd.fallback_V_pl) if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
+    if math.isnan(vgs_th):
+        warnings.warn(f'{hs.part.mpn} vgs_th is NaN')
+    else:
+        assert vpl > vgs_th, (hs.part.mpn, vpl, vgs_th)
+    assert von > vpl
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
     tr = (hs.Qgs2 / (von - v_ir) + hs.Qgd / (von - vpl)) * rg_total  # (5)
-    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * rg_total  # (6) *corrected
+    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * rg_total_dis  # (6) *corrected
     return tr, tf
 
 
