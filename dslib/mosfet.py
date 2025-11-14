@@ -249,8 +249,9 @@ class GateDrive:
 
     """
 
-    def __init__(self, rg_total, Von=10, Von_GaN=math.nan, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
+    def __init__(self, rg_total,rg_total_dis, Von=10, Von_GaN=math.nan, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
         self.rg_total = rg_total
+        self.rg_total_dis = rg_total_dis
         self.Von = Von
         self.Von_GaN = Von_GaN
         self.Voff = Voff
@@ -266,8 +267,9 @@ class MosfetSlot():
     Represents a mosfet slot
     """
 
-    def __init__(self, mf: MosfetSpecs, rg_total, parallel=1, L_csi=0):
+    def __init__(self, mf: MosfetSpecs, rg_total, rg_total_dis=math.nan, parallel=1, L_csi=0):
         assert not L_csi
         self.mf = mf
         self.rg_total = rg_total
+        self.rg_total_dis = rg_total_dis if not math.isnan(rg_total_dis) else rg_total
         self.parallel = parallel

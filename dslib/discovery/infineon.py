@@ -51,14 +51,14 @@ async def infineon_mosfets():
                 substrate='SiC' if 'CoolSiC' in row['Technology'] else 'Si', # infineon no GaN
                 Vds_max=vds,
                 Rds_on_10v_max=parse_field(str(row['RDS (on) (@10V) max']), float),
-                ID_25=parse_field(str(row['ID  (@25&#176;C) max']).strip('A '), float),
+                ID_25=parse_field(str(row['ID  (@25°C) max']).strip('A '), float), # ID  (@25°C) max
                 Vgs_th_min=parse_field(str(row['VGS(th) min']).strip('V '), float),
                 Vgs_th_typ=parse_field(row['VGS(th)'].strip('V '), float),
                 Vgs_th_max=parse_field(str(row['VGS(th) max']).strip('V '), float),
                 Qg_typ=parse_field(str(row['QG (typ @10V)']).replace(' nC', ''), float),
                 Qg_max=parse_field(str(row['QG (typ @10V) max']).replace(' nC', ''), float),
                 source=['infineon_products'],
-            ), package=parse_field(row['Package'], str),
+            ), package=parse_field(row['Package name'], str),
         ))
 
     return parts

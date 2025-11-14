@@ -169,7 +169,7 @@ async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], prefix='
     return fn
 
 
-@disk_cache(ttl='7d')
+@disk_cache(ttl='90d')
 def fetch_json_cached(u):
     return requests.get(u).json()
 

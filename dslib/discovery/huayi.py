@@ -6,6 +6,10 @@ from dslib.field import parse_field_value
 from dslib.pdf.pdf2txt import whitespaces_to_space
 
 
+vds_fixes = {
+    "HY3215B": 150,
+}
+
 def huayi_mosfets():
     from bs4 import BeautifulSoup
     parts = []
@@ -24,6 +28,9 @@ def huayi_mosfets():
             # vg_ciss_typpf
             # vg_package
             vds = float(row.find_next('div', attrs={'class': 'vg_vds_min_v'}).text)
+            if mpn in vds_fixes:
+                vds = vds_fixes[mpn]
+
             rds = parse_field_value(row.find_next('div', attrs={'class': 'vg_rdson_max_10vm'}).text) * 1e-3
             qg = float(row.find_next('div', attrs={'class': 'vg_qg_typnc'}).text)
             if rds < 20e-3 and vds > 200:
