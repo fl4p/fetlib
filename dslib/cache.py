@@ -16,7 +16,6 @@ from typing import Callable, Optional, Tuple, Union
 
 import pandas as pd
 import psutil
-from pandas.core.generic import NDFrame
 
 from dslib import get_logger
 
@@ -111,7 +110,7 @@ def _get_cache_file(host, db, q, index_format: Union[Tuple[str], str], prefix=No
     h = hashlib.sha224(
         (((host + ":") if host is not None else '') + db + ">" + q + str(index_format)).encode('utf-8')).hexdigest()
     if prefix:
-        h = re.sub(r'[^\w_. -]', '_', prefix) + '_'+ h
+        h = re.sub(r'[^\w_. -]', '_', prefix) + '_' + h
     return cache_dir + "/" + h + ".pkl"
 
 
@@ -301,6 +300,96 @@ def hashable_to_sha224(obj):
 dict_keys_t = type({}.keys())
 
 
+# def _chunk_cache_default_store():
+#    return PandasPickleFileStore
+
+def get_module_cache_key_prefix(mod):
+    return mod.__name__
+
+
+def chunk_cache(chunk_time, no_data_exception=NoDataException, write_empty=True, store=ParquetFileStore(),
+                upper_cache_time: Callable = None):
+    chunk_time = pd.to_timedelta(chunk_time)
+    _mem_cache = shared_managed_mem_cache()
+    mem_ttl = datetime.timedelta(seconds=120)
+
+    def decorate(target):
+        import inspect
+        mod = inspect.getmodule(target)
+        func_name = (mod.__file__, target.__name__)
+        _last_err_str = None
+
+        @mem_cache(ttl=mem_ttl, ignore_kwargs={'args', 'kwargs', 'use_cache'}, synchronized=True)
+        def _chunk(args, kwargs, tr, use_cache, cache_key_str):
+            chunk = store.read(cache_key_str) if use_cache != False and store else None
+
+            if chunk is None:
+                try:
+                    chunk = target(*args, time_range=tr, **kwargs)
+                except no_data_exception:
+                    chunk = pd.DataFrame()
+
+                if write_empty or not chunk.empty and use_cache:
+                    # print('cache write', cache_key_obj)
+                    try:
+                        store.write(cache_key_str, chunk)
+                    except Exception as e:
+                        nonlocal _last_err_str
+                        if str(e) != _last_err_str:  # to prevent spamming logs
+                            logger.warning('Error storing DataFrame using %s: %s', store, e)
+                            _last_err_str = str(e)
+
+            return chunk
+
+        def _chunk_cache_wrapper(*args, **kwargs):
+            _upper_cache_time = upper_cache_time() if upper_cache_time is not None else None
+
+            _now = now()
+            tr_inp = kwargs.pop('time_range', None)  # or kwargs.pop('since', None) or kwargs.pop('date_range', None)
+            assert tr_inp, "chunk_cache decorator expects a `time_range`, `since` or `date_range` kwarg"
+            tr_inp = to_closed_time_range(tr_inp)
+            t0 = tr_inp[0].floor(chunk_time)
+            t_end = min(tr_inp[1], _now)
+
+            chunks = []
+            while t0 < t_end:
+                tr = [t0, min(t0 + chunk_time, t_end)]
+
+                use_cache = store is not None and min(tr[1] - tr[0], _now - tr[1]) > chunk_time / 4
+                if use_cache and _upper_cache_time is not None:
+                    use_cache &= (tr[1] < _upper_cache_time)
+
+                cache_key_obj = (func_name, to_hashable(args), to_hashable(kwargs), to_hashable(tr))
+                cache_key_hash = hashlib.sha224(bytes(str(cache_key_obj), 'utf-8')).hexdigest()
+                cache_key_str = '/'.join([mod.__name__, target.__name__, cache_key_hash])
+
+                chunk = _mem_cache.get(cache_key_str)
+                if chunk is None:
+                    chunk = _chunk(args=args, kwargs=kwargs, tr=tr, use_cache=use_cache, cache_key_str=cache_key_str)
+
+                if not chunk.empty:
+                    if chunk.index[0] < tr[0]:
+                        chunk = chunk.loc[tr[0]:]
+                    assert chunk.index[0] >= tr[0], "chunk start %s < tr[0]=%s" % tuple(to_iso([chunk.index[0], tr[0]]))
+                    if chunk.index[-1] > tr[1]:
+                        store.delete(cache_key_str)
+                        _mem_cache.set(cache_key_str, None, ttl=0)
+                        raise ValueError("chunk ends %s, after tr[1] %s, %s" % (chunk.index[-1], tr[1], chunk.tail()))
+                    chunks.append(chunk)
+
+                t0 += chunk_time
+
+            df = concat(chunks)
+
+            return df
+
+        return _chunk_cache_wrapper
+
+    return decorate
+
+
+# cache_key_str = hashlib.sha224(bytes(str(cache_key_obj), 'utf-8')).hexdigest()
+
 def _sort_key(o):
     return str(o)
 
@@ -319,7 +408,7 @@ def to_hashable(obj):
     if isinstance(obj, (list, tuple)):
         return tuple(map(to_hashable, obj))
 
-    #if isinstance(obj, (Streaming, NDFrame)):
+    # if isinstance(obj, (Streaming, NDFrame)):
     #    return type(obj), id(obj)
 
     raise ValueError(
@@ -468,7 +557,7 @@ def disk_cache_key(mod, target, ignore_kwargs, args, kwargs):
 
     cache_key_prefix = ''
     for a in args:
-        if isinstance(a, str) and len(a) < 20: # TODO increase 20 to 30
+        if isinstance(a, str) and len(a) < 20:  # TODO increase 20 to 30
             cache_key_prefix += a + '_'
         else:
             break
@@ -498,7 +587,7 @@ def fallback_cache(exception=None, ignore_kwargs=None):
         # noinspection PyBroadException
         @wraps(target)
         def _fallback_cache_wrapper(*args, **kwargs):
-            cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs=kwargs)
+            cache_key_str = 'fb_' + disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs=kwargs)
 
             try:
                 ret = target(*args, **kwargs)
@@ -527,7 +616,7 @@ class CacheStorageRedis(CacheStorage):
     def __init__(self, serializer):
         self.serializer = serializer
         # from lib.data.redis import r_tsc
-        self.redis = None # r_tsc
+        self.redis = None  # r_tsc
         self._lock = RLock()
 
     def get(self, key):
@@ -628,7 +717,7 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
 _disk_cache_disabled = False
 
 
-def _disk_cache_get_file_names(args, kwargs,pwd, deps, ignore_missing_inp_paths):
+def _disk_cache_get_file_names(args, kwargs, pwd: str, deps, ignore_missing_inp_paths: bool):
     if not deps:
         return []
 
@@ -655,6 +744,17 @@ def _disk_cache_get_file_names(args, kwargs,pwd, deps, ignore_missing_inp_paths)
         file_names.append(arg_val)
     return file_names
 
+
+def _async_run(task):
+    try:
+        return asyncio.get_running_loop().run_until_complete(task)
+    except RuntimeError as e1:
+        try:
+            return asyncio.run(task)
+        except RuntimeError as e2:
+            raise e2 from e1
+
+
 def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
                ignore_missing_inp_paths=False,
                hash_func_code=False):
@@ -671,13 +771,13 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
 
         source_code = inspect.getsource(target) if hash_func_code else None
 
-
         def _cache_key(*args, **kwargs):
             mtimes = {}
             if file_dependencies:
                 mtimes = {
                     '__mtime:' + fn: (os.path.getmtime(fn))
-                    for fn in _disk_cache_get_file_names(args, kwargs, pwd, file_dependencies, ignore_missing_inp_paths) if
+                    for fn in _disk_cache_get_file_names(args, kwargs, pwd, file_dependencies, ignore_missing_inp_paths)
+                    if
                     not ignore_missing_inp_paths or fn is not None}
             if salt is not None:
                 mtimes['__salt__'] = salt
@@ -696,8 +796,10 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
             disk_cache_store.delete(cache_key_str)
 
         is_coro = asyncio.iscoroutinefunction(target)
+
         async def call_target(*args, **kwargs):
-            return await target(*args, **kwargs) if is_coro else target(*args, **kwargs)
+            assert is_coro
+            return await target(*args, **kwargs)
 
         # noinspection PyBroadException
         @wraps(target)
@@ -715,12 +817,12 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
             if out_files:
                 # TODO store times in cache and
                 assert file_dependencies
-                out_fns = _disk_cache_get_file_names(args, kwargs, out_files)
+                out_fns = _disk_cache_get_file_names(args, kwargs, pwd, out_files, True)
                 out_mtimes = {fn: os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns}
                 out_sizes = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
 
                 # warnings.warn('out_files not checking for external change %s' % (out_fns))
-                in_fns = _disk_cache_get_file_names(args, kwargs, file_dependencies)
+                in_fns = _disk_cache_get_file_names(args, kwargs, pwd, file_dependencies, ignore_missing_inp_paths)
                 in_mtime = max(os.path.getmtime(fn) for fn in in_fns)
                 if in_mtime > min(out_mtimes.values()):
                     inv = True
@@ -756,11 +858,15 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                         if now() <= exp and meta_valid(meta):
                             async def _async_ret():
                                 return ret
+
                             return _async_ret() if is_coro else ret
                 except Exception as _e:
                     logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
 
-            ret = call_target(*args, **kwargs)
+            if is_coro:
+                ret = call_target(*args, **kwargs)
+            else:
+                ret = target(*args, **kwargs)
 
             meta = {}
 
@@ -776,7 +882,12 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                 meta['out_files_sizes'] = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
 
             try:
-                store_val = asyncio.run(ret) if is_coro else ret
+                store_val = _async_run(ret) if is_coro else ret
+
+                async def _coro():
+                    return store_val
+
+                ret = _coro() if is_coro else ret
                 disk_cache_store.write(cache_key_str, (store_val, now() + ttl, meta))
             except Exception as _e:
                 logger.warning('Disk cache: error storing: %s', _e)
@@ -784,10 +895,10 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
 
             return ret
 
-
         if is_coro:
             async def asnyc_wrapper(*args, **kwargs):
                 return await _disk_cache_wrapper(*args, **kwargs)
+
             _ret_wrapper = asnyc_wrapper
         else:
             _ret_wrapper = _disk_cache_wrapper
@@ -797,7 +908,6 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
         _ret_wrapper.store = disk_cache_store
 
         return _disk_cache_wrapper
-
 
     return decorate
 
@@ -834,7 +944,7 @@ def acquire_file_lock(fn, kill_holder, max_time=10):
 
     fh = open(fn, 'a+')
 
-    @backoff.on_exception(backoff.expo, OSError, max_time=max_time, logger=None) #
+    @backoff.on_exception(backoff.expo, OSError, max_time=max_time, logger=None)  #
     def _lockf_backoff(_fh):
 
         fcntl.lockf(_fh, fcntl.LOCK_EX | fcntl.LOCK_NB)

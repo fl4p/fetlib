@@ -13,6 +13,7 @@ def write_csv(df: 'pd.DataFrame', path: str, sort_by=['P_tot', 'Vds_max', 'mfr',
         if col.startswith('P_') or col.startswith('FoM'):
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, power_value_digits) if isinstance(v, float) else v)
 
+    os.makedirs(os.path.dirname(path), exist_ok=True)
     return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
 
 
@@ -114,19 +115,20 @@ def round_to_n_dec(x, n):
     if not x or isinstance(x, str) or not math.isfinite(x):
         return str(x)
 
-    if x < 1e-20:
+    ax = abs(x)
+    if ax < 1e-20:
         return '0'
-    elif x < 999e-12:
+    elif ax < 999e-12:
         return num2str(x * 1e12, n) + 'p'
-    elif x < 999e-9:
+    elif ax < 999e-9:
         return num2str(x * 1e9, n) + 'n'
-    elif x < 999e-6:
+    elif ax < 999e-6:
         return num2str(x * 1e6, n) + 'µ'
-    elif x < 999e-3:
+    elif ax < 999e-3:
         return num2str(x * 1e3, n) + 'm'
-    elif x > 0.999e6:
+    elif ax > 0.999e6:
         return num2str(x * 1e-6, n) + 'M'
-    elif x > 0.999e3:
+    elif ax > 0.999e3:
         return num2str(x * 1e-3, n) + 'k'
     # elif x > 9
     else:
