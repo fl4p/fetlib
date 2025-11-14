@@ -1,0 +1,31 @@
+topology: buck
+
+substrates: [ GaN, Si ]
+vdsRange: [ 80, 200 ]
+
+manufacturers:
+  exclude: ['']
+
+ControlFet:
+  maxParallel: 2
+  stagedSwitching: true #   switcherConductor: true
+  gateDrive:
+    voltage: 11
+    rgTotal: 4.7
+    vplFallback: 4.5
+    deadTime: 300e-9
+
+SyncFet:
+  maxParallel: 2
+  reverseRecoveryFactor: 1
+
+inductor:
+  rippleFactor: 0.3
+
+loadPoints:
+  - pointWeight: 1
+    vIn: 72
+    vOut: 27
+    pIn: 800
+    f: 40e3
+    tDead: 300e-9

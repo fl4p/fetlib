@@ -1,0 +1,34 @@
+# Gate Driver: UCC
+# => Rg_min = 2.75 Ω @ 11V
+#
+
+topology: buck
+
+substrates: [ Si ]
+packages: ['TO-220']
+vdsRange: [ 100, 200 ]
+
+gateDrive:
+  voltage: 11
+  rgTotal: 6
+  rgTotalOff: 3
+  vplFallback: 4.5
+  deadTime: 100e-9
+
+controlFet:
+  maxParallel: 2
+  stagedSwitching: false
+
+syncFet:
+  maxParallel: 1
+  reverseRecoveryFactor: 1
+
+inductor:
+  rippleFactor: 0.33
+
+loadPoints:
+  - pointWeight: 1
+    vIn: 72
+    vOut: 27
+    pIn: 900
+    f: 40e3
