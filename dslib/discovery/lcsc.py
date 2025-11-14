@@ -16,6 +16,22 @@ from dslib.fetch import fetch_datasheet
 
 _session: aiohttp.ClientSession = None
 
+brands = {
+    "Littelfuse": 110,
+    "Littelfuse/IXYS": 817,
+    "XNRUSEMI": 17409,
+    "CRMICRO": 12027,
+    "NCE": 1104,
+    "Siliup": 15945,
+    # "AGMSEMI": 15179, # weird
+    # "UMW": 11853, # fake MPNs?
+    "HXY": 13437,
+    "GOFORD": 11545,  # currently parse problems. gone?
+    "Suzhou Good-Ark Elec": 979,
+    "MCC": 889,
+    "huayi": 11756,
+}
+
 
 async def _get_session():
     global _session
@@ -111,12 +127,13 @@ def read_lcsc_search_results(html_glob_path):
                 fetch_datasheet(ds_url, datasheet_path, mfr=mfr, mpn=mpn)
 
 
-async def discover_mosfets_brand(brand_id: int):
-    data = await fetch_list_all(brand_id)
+@disk_cache(ttl='7d')
+async def discover_mosfets_brand(brand_id: Union[int, str]):
+    data = await fetch_list_all(brands[brand_id] if isinstance(brand_id, str) else brand_id)
     if len(data) == 0:
         raise Exception('no data for brand ' + str(brand_id))
 
-    print('lcsc fetched %d rows in total' % len(data))
+    print('lcsc brand', brand_id, 'fetched %d rows in total' % len(data))
 
     parts = []
     for r in data:
@@ -161,30 +178,21 @@ async def discover_mosfets_brand(brand_id: int):
     return parts
 
 
-@disk_cache(ttl='7d', salt='v04')
+# @disk_cache(ttl='7d', salt='v06')
 def discover_china_mosfets_cached():
     if asyncio.get_event_loop():
-        return asyncio.get_event_loop().run_until_complete(discover_china_mosfets())
+        # return asyncio.run(discover_china_mosfets())
+        return asyncio.run(discover_china_mosfets())
+        # return asyncio.get_event_loop().run_until_complete(discover_china_mosfets())
     else:
         return asyncio.run(discover_china_mosfets())
 
 
+# @disk_cache(ttl='7d')
 async def discover_china_mosfets():
-    brands = {
-        "Littelfuse": 110,
-        "Littelfuse/IXYS": 817,
-        "XNRUSEMI": 17409,
-        "CRMICRO": 12027,
-        "NCE": 1104,
-        "Siliup": 15945,
-        # "AGMSEMI": 15179, # weird
-        # "UMW": 11853, # fake MPNs?
-        "HXY": 13437,
-    }
-
     parts = []
     for brand, brand_id in brands.items():
-        parts += await discover_mosfets_brand(brand_id)
+        parts += await discover_mosfets_brand(brand)
     return parts
 
 
