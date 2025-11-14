@@ -67,8 +67,21 @@ async def discover_mosfets(no_obsolete=False):
         parts += await dslib.discovery.nxp.nexperia_mosfets()
         parts += await dslib.discovery.epc.epc_gan()
 
-        from dslib.discovery.lcsc import discover_china_mosfets_cached
-        parts += discover_china_mosfets_cached()
+        # TODO
+        # EPC china partner https://www.upi-semi.com/upisemi/products/mosfet/middle-voltage-power-mosfet-40v200v/
+        # qorvo SiC
+        # rohm
+        # MCC
+        # comchip
+        # diodes
+        # goford
+        # good-ark
+        # torex semiconductor
+        # panjit
+        #
+
+        from dslib.discovery.lcsc import discover_china_mosfets
+        parts +=await discover_china_mosfets()
     except:
         await close_browser()
         raise
