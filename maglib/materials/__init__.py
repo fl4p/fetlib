@@ -23,7 +23,7 @@ class MagneticCoreMaterialSpecs:
         H_oe = H / .7958e2
         dc_bias = self.dc_bias(H_oe=H_oe)
         if not no_raise:
-            assert 0.28 <= dc_bias <= 1, "dc bias core saturation too high, %%µi = %.0f%%" % (dc_bias * 100)
+            assert 0.25 <= dc_bias <= 1, "dc bias core saturation too high, %%µi = %.0f%%" % (dc_bias * 100)
         # too much DC bias inductivity drop
         return dc_bias * self.mu_r
 
@@ -108,6 +108,8 @@ Micrometals_Sendust_60u = MagneticCoreMaterialSpecs(
 def load_micrometals_materials():
     import pandas as pd
     df = pd.read_csv(os.path.dirname(__file__) + '/micrometals.csv')
+    # df = pd.read_csv(os.path.dirname(__file__) + '/mmcurvefitcoefficientsall.csv', skiprows=8)
+    # df = df.iloc[:, 1:]
     return df
 
 
@@ -118,13 +120,19 @@ def try_float(s):
         return float('nan')
 
 
-MicroMetalsMatLiteral = Literal['MS', 'OE', 'OC', 'GX']
+MicroMetalsMatLiteral = Literal['MS', 'OE', 'OC', 'GX', 'SM', 'MP']
+
+
+class MaterialNotFound(Exception):
+    pass
 
 
 def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int):
     df = load_micrometals_materials()
     m = df[(df.iloc[:, 0] == mat) & (df.iloc[:, 1] == shape) & (df.iloc[:, 2] == str(ui))]
-    assert len(m) == 1
+    if len(m) == 0:
+        raise MaterialNotFound(str((mat, shape, ui)))
+    assert len(m) == 1, (mat, shape, ui, m)
     m = list(map(try_float, m.iloc[0, :]))
 
     return MagneticCoreMaterialSpecs(

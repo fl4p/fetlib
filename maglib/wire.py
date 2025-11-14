@@ -7,6 +7,8 @@ from enum import Enum
 TODO
 Strands Formular: d_b = (d_a**2 * n_a/n_b)**.5 # d_b = diameter, n_b = num strands
 
+wire bundle https://www.nktechnologies.com/d/?h=581cbb8
+
 """
 
 

@@ -139,7 +139,8 @@ MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6, od
 # https://datasheets.micrometals.com/MS-130060-2-DataSheet.pdf
 Micrometals_MS_130_060 = MagneticCoreSpecs('MS-130060-2',
                                            materials.Micrometals_Sendust_60u,
-                                           **MicrometalsT130.values(),
+                                           shape=MicrometalsT130,
+                                           #**MicrometalsT130.values(),
                                            A_L=61e-9,  # nH/N2
                                            )
 
@@ -189,4 +190,4 @@ def MicrometalsToroid(mat: materials.MicroMetalsMatLiteral, ui, shape: Union[Tor
     if isinstance(shape, int):
         shape = MicrometalsToroidShapes[shape]
     mpn = mat + '-' + shape.name + '%03d' % ui
-    return MagneticCoreSpecs(mpn, materials.micrometals_material(mat, 'T', ui), **shape.values())
+    return MagneticCoreSpecs(mpn, materials.micrometals_material(mat, 'T', ui), shape=shape)
