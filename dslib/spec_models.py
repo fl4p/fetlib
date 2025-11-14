@@ -1,4 +1,5 @@
 import math
+import warnings
 from typing import Literal, List
 
 from dslib import round_to_n, round_to_n_dec, dotdict
@@ -9,6 +10,9 @@ from dslib.mosfet import GateDrive, MosfetSlot
 # the smaller this ratio, the greater Qg_th
 # .. and the smaller Qsw
 
+class DCMNotImplemented(Exception):
+    pass
+
 
 class DcDcLoadParams:
 
@@ -16,12 +20,12 @@ class DcDcLoadParams:
     def default():
         # return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
         # return DcDcSpecs(vi=75, vo=27 * 2, pin=900, f=40e3, ripple_factor=0.3, tDead=300e-9)
-        #return DcDcLoadParams(vi=130, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        # return DcDcLoadParams(vi=130, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
         # return DcDcLoadParams(vi=72, vo=27, pin=800, f=80e3, ripple_factor=0.3, tDead=300e-9)
         return DcDcLoadParams(vi=72, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
 
     def __init__(self, vi, vo, f, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
-                 L=None):
+                 L=None, coil:'CoilSpecs'=None):
         """
 
         :param vi: input voltage
@@ -35,6 +39,8 @@ class DcDcLoadParams:
         :param iripple: peak-2-peak coil ripple current il(ton) - il(0). CCM if dil<2*il
         :param ripple_factor: peak-2-peak see https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
         """
+        assert 1000 < f < 2e6, f
+
         self.Vi = vi
         self.Vo = vo
 
@@ -51,17 +57,25 @@ class DcDcLoadParams:
 
         if ripple_factor is not None:
             assert iripple is None
-            assert L is None
+            assert L is None and coil is None
             iripple = io * ripple_factor
 
-        if L is not None:
+        if L is not None or coil is not None:
+            if coil is not None:
+                assert L is None
+                L = coil.Ldc(io)
+            else:
+                assert coil is None
             assert ripple_factor is None
             assert iripple is None
-            assert 1e-6 < L < 999e-6
+            assert 1e-6 < L  # < 999e-6
+            if L > 999e-6:
+                warnings.warn(f'L is very high')
             # https://www.ti.com/lit/ds/symlink/lm5163.pdf#page=18 (18)
             # notice that the ripple current does not depend on io (dc bias current)
             iripple = vo / (f * L) * (1 - vo / vi)
-            assert iripple < 2 * io, "CCM mode only (DCM not implemented)"
+            if not (iripple < 2 * io):
+                raise DCMNotImplemented("CCM mode only (DCM not implemented)")
             assert 0.01 < iripple / io < 2, (iripple, io, round(iripple / io, 2))
         else:
             L = round_to_n(vo / (f * iripple) * (1 - vo / vi), 3)
@@ -148,7 +162,7 @@ class DcDcLoadParams:
             return True
         return not (vds < (self.Vi * 1.1)) and not (vds > max(50, self.Vi * 3))
 
-    def Id_in_range(self, id_max:float, parallel:int):
+    def Id_in_range(self, id_max: float, parallel: int):
         return not (id_max < self.Io_max * 1.2 / parallel)
 
     def select_mosfets(dcdc, parts: List['DiscoveredPart'], max_parallel=3):
@@ -157,7 +171,7 @@ class DcDcLoadParams:
         return [p for p in parts if (
                 dcdc.vds_in_range(p.specs.Vds_max)
                 and dcdc.Id_in_range(p.specs.ID_25, max_parallel) and not (
-                    p.specs.Rds_on_10v_max > rds_on_max))]
+                p.specs.Rds_on_10v_max > rds_on_max))]
 
     def C_out_min(self, vout_ripple):
         # https://www.ti.com/lit/ds/symlink/lm5163.pdf
@@ -195,6 +209,7 @@ class BuckConverter():
             dcdc,
             self.hs.mf,
             gd=gd,
+            isGaN=False,  # self.hs.mf.part.specs.isGaN,
             # fallback_V_pl=5.4,
             # Lcsi=4e-9, ls_Qoss=400e-9,  # TODO csd19503 # TODO Qload_HS = Qoss_LS + Qrr_LS ?
             # MosfetSpecs(Rds_on=1e-3, Qg=1e-9, tRise=.5e-9, tFall=.5e-9, Qrr=1e-9)
@@ -215,8 +230,8 @@ class BuckConverter():
                             gd
                             )
 
-        from dclib.powerloss import dcdc_buck_cout
-        p_cap = dcdc_buck_cout(dcdc, Z_cin=self.cin_imp, Z_cout=self.cout_imp)
+        from dclib.powerloss import dcdc_buck_caps
+        p_cap = dcdc_buck_caps(dcdc, Z_cin=self.cin_imp, Z_cout=self.cout_imp)
 
         p_misc = dict()
         for k, v in self.output_parasitics.items():
