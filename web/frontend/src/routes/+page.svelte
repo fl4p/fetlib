@@ -22,6 +22,7 @@
 	let similarLoading = $state(false);
 	let similarError = $state<string | null>(null);
 	let colors = $state<ColorMap>({});
+	let sidebarOpen = $state(false);
 
 	function loadStoredRanges(): Record<string, [number, number]> | null {
 		try {
@@ -225,8 +226,30 @@
 			totalCount={sourceParts.length}
 			onchange={setFilters}
 			{onSliderPending}
+			open={sidebarOpen}
+			onclose={() => (sidebarOpen = false)}
 		/>
+		{#if sidebarOpen}
+			<button
+				type="button"
+				class="backdrop"
+				aria-label="close filters"
+				onclick={() => (sidebarOpen = false)}
+			></button>
+		{/if}
 		<div class="main-col">
+			<button
+				type="button"
+				class="hamburger"
+				aria-label="open filters"
+				onclick={() => (sidebarOpen = true)}
+			>
+				<span class="bars">≡</span>
+				<span class="label">Filters</span>
+				<span class="count-pill"
+					>{sorted.length.toLocaleString()} / {sourceParts.length.toLocaleString()}</span
+				>
+			</button>
 			{#if similarMode}
 				<div class="similar-banner">
 					<span>
@@ -276,6 +299,50 @@
 		display: flex;
 		height: 100vh;
 		overflow: hidden;
+	}
+	.hamburger {
+		display: none;
+	}
+	.backdrop {
+		display: none;
+	}
+	@media (max-width: 768px) {
+		.hamburger {
+			display: flex;
+			align-items: center;
+			gap: 10px;
+			padding: 10px 14px;
+			background: #fff;
+			border: none;
+			border-bottom: 1px solid #e5e7eb;
+			font-size: 15px;
+			font-family: inherit;
+			cursor: pointer;
+			text-align: left;
+		}
+		.hamburger .bars {
+			font-size: 22px;
+			line-height: 1;
+		}
+		.hamburger .count-pill {
+			margin-left: auto;
+			font-size: 12px;
+			color: #6b7280;
+			background: #f3f4f6;
+			padding: 2px 8px;
+			border-radius: 10px;
+		}
+		.backdrop {
+			display: block;
+			position: fixed;
+			inset: 0;
+			background: rgba(0, 0, 0, 0.4);
+			border: none;
+			padding: 0;
+			margin: 0;
+			z-index: 15;
+			cursor: pointer;
+		}
 	}
 	.main-col {
 		flex: 1;

@@ -239,6 +239,27 @@
 	.tag-btn:hover {
 		box-shadow: 0 0 0 2px #c7d2fe;
 	}
+	@media (max-width: 768px) {
+		table {
+			font-size: 13px;
+		}
+		td {
+			padding: 6px 10px;
+		}
+		thead th button {
+			padding: 8px 10px;
+		}
+		.sim-btn {
+			font-size: 14px;
+			padding: 2px 8px;
+			margin-left: 6px;
+		}
+		.tag-btn {
+			width: 16px;
+			height: 16px;
+			margin-left: 6px;
+		}
+	}
 	.trunc {
 		padding: 8px 12px;
 		font-size: 12px;

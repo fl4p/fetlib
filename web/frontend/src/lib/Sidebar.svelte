@@ -11,6 +11,8 @@
 		totalCount: number;
 		onchange: (state: FilterState) => void;
 		onSliderPending?: (key: string, pending: boolean) => void;
+		open?: boolean;
+		onclose?: () => void;
 	}
 
 	let {
@@ -19,7 +21,9 @@
 		filteredCount,
 		totalCount,
 		onchange,
-		onSliderPending
+		onSliderPending,
+		open = true,
+		onclose
 	}: Props = $props();
 
 	const labels: Record<(typeof SLIDER_KEYS)[number], string> = {
@@ -89,11 +93,14 @@
 	}
 </script>
 
-<aside>
+<aside class:open>
 	<header>
 		<div class="count">
 			<strong>{filteredCount.toLocaleString()}</strong> / {totalCount.toLocaleString()} parts
 		</div>
+		{#if onclose}
+			<button type="button" class="close-btn" aria-label="close filters" onclick={onclose}>×</button>
+		{/if}
 	</header>
 
 	<section>
@@ -199,9 +206,47 @@
 		padding-bottom: 0.5rem;
 		margin-bottom: 0.5rem;
 		border-bottom: 1px solid #e5e7eb;
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
 	}
 	.count {
 		font-size: 14px;
+	}
+	.close-btn {
+		display: none;
+		font-size: 22px;
+		line-height: 1;
+		padding: 2px 8px;
+		background: transparent;
+		border: 1px solid #d1d5db;
+		border-radius: 4px;
+		cursor: pointer;
+		color: #4b5563;
+	}
+	@media (max-width: 768px) {
+		aside {
+			position: fixed;
+			top: 0;
+			left: 0;
+			height: 100vh;
+			width: 85%;
+			max-width: 320px;
+			z-index: 20;
+			transform: translateX(-100%);
+			transition: transform 200ms ease-out;
+			box-shadow: 4px 0 12px rgba(0, 0, 0, 0.15);
+			padding-top: 0.75rem;
+		}
+		aside.open {
+			transform: translateX(0);
+		}
+		.close-btn {
+			display: inline-block;
+		}
+		.search {
+			font-size: 16px; /* prevent iOS zoom on focus */
+		}
 	}
 	section {
 		margin-top: 1rem;
