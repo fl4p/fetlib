@@ -73,6 +73,28 @@ def _substrate(substrate: Optional[str]) -> str:
     return "Si"
 
 
+_HOUSING_RULES = (
+    (re.compile(r"I?TO-?220.*"), "TO-220"),
+    (re.compile(r"TO-?247[ -]4\s*[a-zA-Z].+"), "TO-247-4"),
+    (re.compile(r"I?TO-?247.*"), "TO-247"),
+    (re.compile(r"(TO-?252.*|DPAK\+?)"), "TO-252"),
+    (re.compile(r"(TO-?263|D2PAK).*"), "TO-263"),
+    (re.compile(
+        r"(8-PowerTDFN|PowerPAK®? SO-8|P?DFN-?8L?\(5x6\)|P?DFN5x6(-8L)?|Single SSO8|SO-8FL / DFN-5|DFNW5|SuperSO8|8-PowerVDFN|PowerFLAT 5x6|DFN5060).*"),
+     "SO8(5x6)", re.IGNORECASE),  # 8-DFN (5x6), 	8-PowerSMD
+    (re.compile(r"(Q-DPAK).*"), "Q-DPAK"),  # 8-DFN (5x6), 	8-PowerSMD
+)
+
+
+def _normalize_housing(p: Optional[str]) -> Optional[str]:
+    if not isinstance(p, str) or not p:
+        return None
+    for pat, label in _HOUSING_RULES:
+        if pat.fullmatch(p):
+            return label
+    return p
+
+
 def _serialize(part) -> dict:
     specs = part.specs
     disc = part.discovered
@@ -99,7 +121,7 @@ def _serialize(part) -> dict:
         "mfr": part.mfr,
         "mpn": part.mpn,
         "substrate": _substrate(substrate),
-        "housing": package if isinstance(package, str) and package else None,
+        "housing": _normalize_housing(package),
         "Vds_max": _clean(_safe_attr(specs, "Vds")),
         "Rds_on_max": _clean(_safe_attr(specs, "Rds_on")),
         "Id": id_val,
