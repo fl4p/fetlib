@@ -68,7 +68,7 @@ async def fetch_list_page(brand_id: int, page: int):
             "sec-fetch-site": "same-site",
         },
         "referrer": "https://www.lcsc.com/",
-        "body": "{\"keyword\":\"\",\"catalogIdList\":[874],\"brandIdList\":[\"" + str(
+        "body": "{\"keyword\":\"\",\"catalogIdList\":[1436],\"brandIdList\":[\"" + str(
             brand_id) + "\"],\"encapValueList\":[],\"isStock\":false,\"isOtherSuppliers\":false,\"isAsianBrand\":false,\"isDeals\":false,\"isEnvironment\":false,\"paramNameValueMap\":{},\"currentPage\":" + str(
             page) + ",\"pageSize\":100}",
         "method": "POST",
@@ -139,12 +139,16 @@ async def discover_mosfets_brand(brand_id: Union[int, str]):
     parts = []
     for r in data:
         # spn = r['productCode']
+        p_channel = 'p-channel' in (r.get('productNameEn') or '').lower()
         pm = {p['paramNameEn']: p['paramValueEnForSearch'] for p in r["paramVOList"] or []}
         vds_max = pm.get("Drain to Source Voltage") or math.nan
         rds_max = pm.get("RDS(on)") or math.nan
         id = pm.get("Current - Continuous Drain(Id)") or math.nan
         if vds_max >= 1000 and rds_max < 0.6 and id < 2:
             rds_max *= 1000
+
+        if vds_max > 0 and p_channel:
+            vds_max *= -1
 
         try:
             specs = MosfetBasicSpecs(
