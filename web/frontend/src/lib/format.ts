@@ -1,33 +1,34 @@
-function sig(v: number, n = 3): string {
-	if (v === 0) return '0';
-	const abs = Math.abs(v);
-	const decimals = Math.max(0, n - Math.floor(Math.log10(abs)) - 1);
-	return v.toFixed(Math.min(decimals, 6));
+import { format } from 'd3-format';
+
+const d3sig = format('.3~r');
+
+function num(v: number): string {
+	return d3sig(v).replace('−', '-').replace(/\.$/, '');
 }
 
 export function fmtVoltage(v: number | null): string {
 	if (v == null) return '';
-	return sig(v) + ' V';
+	return num(v) + ' V';
 }
 
 export function fmtMilliOhm(v: number | null): string {
 	if (v == null) return '';
-	return sig(v * 1e3) + ' mΩ';
+	return num(v * 1e3) + ' mΩ';
 }
 
 export function fmtAmp(v: number | null): string {
 	if (v == null) return '';
-	return sig(v) + ' A';
+	return num(v) + ' A';
 }
 
 export function fmtNanoC(v: number | null): string {
 	if (v == null) return '';
-	return sig(v * 1e9) + ' nC';
+	return num(v * 1e9) + ' nC';
 }
 
 export function fmtRatio(v: number | null): string {
 	if (v == null) return '';
-	return v.toFixed(2);
+	return num(v);
 }
 
 export function fmtDate(s: string | null): string {
