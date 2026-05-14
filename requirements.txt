@@ -50,3 +50,7 @@ joblib~=1.4.2
 pdf2image
 
 matplotlib
+
+
+# digikey-api:
+certauth
