@@ -1,28 +1,56 @@
 <script lang="ts">
 	import type { Part, SortDir, SortKey } from './types';
 	import { fmtAmp, fmtDate, fmtMilliOhm, fmtNanoC, fmtRatio, fmtVoltage } from './format';
+	import { TAG_COLORS, partKey, type ColorMap } from './colors';
 
 	interface Props {
 		rows: Part[];
 		sortKey: SortKey;
 		sortDir: SortDir;
 		onsort: (key: SortKey) => void;
+		pending?: boolean;
+		showScore?: boolean;
+		onfindSimilar?: (p: Part) => void;
+		colors?: ColorMap;
+		oncolorClick?: (p: Part) => void;
 	}
 
-	let { rows, sortKey, sortDir, onsort }: Props = $props();
+	let {
+		rows,
+		sortKey,
+		sortDir,
+		onsort,
+		pending = false,
+		showScore = false,
+		onfindSimilar,
+		colors = {},
+		oncolorClick
+	}: Props = $props();
+
+	function datasheetHref(p: Part): string {
+		return `/api/datasheet?mfr=${encodeURIComponent(p.mfr)}&mpn=${encodeURIComponent(p.mpn)}`;
+	}
 
 	interface Col {
 		key: SortKey;
 		label: string;
 		fmt: (p: Part) => string;
 		num?: boolean;
+		mpnLink?: boolean;
 	}
 
-	const columns: Col[] = [
+	const scoreCol: Col = {
+		key: 'score' as SortKey,
+		label: 'Score',
+		fmt: (p) => (p.score == null ? '' : p.score.toFixed(2)),
+		num: true
+	};
+
+	const baseColumns: Col[] = [
 		{ key: 'mfr', label: 'Mfr', fmt: (p) => p.mfr },
-		{ key: 'mpn', label: 'MPN', fmt: (p) => p.mpn },
-		{ key: 'substrate', label: 'Substrate', fmt: (p) => p.substrate },
-		{ key: 'housing', label: 'Housing', fmt: (p) => p.housing ?? '' },
+		{ key: 'mpn', label: 'MPN', fmt: (p) => p.mpn, mpnLink: true },
+		{ key: 'substrate', label: 'Tech', fmt: (p) => p.substrate },
+		{ key: 'housing', label: 'House', fmt: (p) => p.housing ?? '' },
 		{ key: 'Vds_max', label: 'V_DS', fmt: (p) => fmtVoltage(p.Vds_max), num: true },
 		{ key: 'Rds_on_max', label: 'R_DSon', fmt: (p) => fmtMilliOhm(p.Rds_on_max), num: true },
 		{ key: 'Id', label: 'I_D', fmt: (p) => fmtAmp(p.Id), num: true },
@@ -35,6 +63,8 @@
 		{ key: 'QgdQgs_ratio', label: 'Q_gd/Q_gs', fmt: (p) => fmtRatio(p.QgdQgs_ratio), num: true },
 		{ key: 'date', label: 'Date', fmt: (p) => fmtDate(p.date) }
 	];
+
+	const columns = $derived<Col[]>(showScore ? [scoreCol, ...baseColumns] : baseColumns);
 
 	function arrow(key: SortKey): string {
 		if (key !== sortKey) return '';
@@ -59,11 +89,38 @@
 				{/each}
 			</tr>
 		</thead>
-		<tbody>
+		<tbody class:pending>
 			{#each visible as p (p.mfr + '|' + p.mpn)}
 				<tr>
 					{#each columns as col}
-						<td class:num={col.num}>{col.fmt(p)}</td>
+						<td class:num={col.num}>
+							{#if col.mpnLink}
+								<a href={datasheetHref(p)} target="_blank" rel="noopener">{col.fmt(p)}</a>
+								{#if oncolorClick}
+									{@const idx = colors[partKey(p)] ?? 0}
+									{@const fill = TAG_COLORS[idx]}
+									<button
+										type="button"
+										class="tag-btn"
+										class:tagged={fill !== null}
+										style:background={fill ?? 'transparent'}
+										title={fill ? 'Cycle / clear tag' : 'Tag this part'}
+										aria-label="cycle tag color"
+										onclick={() => oncolorClick?.(p)}
+									></button>
+								{/if}
+								{#if onfindSimilar}
+									<button
+										type="button"
+										class="sim-btn"
+										title="Find similar parts"
+										onclick={() => onfindSimilar?.(p)}
+									>≈</button>
+								{/if}
+							{:else}
+								{col.fmt(p)}
+							{/if}
+						</td>
 					{/each}
 				</tr>
 			{/each}
@@ -130,6 +187,57 @@
 	}
 	tbody tr:hover {
 		background: #f9fafb;
+	}
+	tbody.pending {
+		opacity: 0.5;
+		transition: opacity 80ms ease-in;
+	}
+	tbody {
+		transition: opacity 120ms ease-out;
+	}
+	td a {
+		color: #1d4ed8;
+		text-decoration: none;
+	}
+	td a:hover {
+		text-decoration: underline;
+	}
+	.sim-btn {
+		margin-left: 4px;
+		padding: 0 5px;
+		font-size: 12px;
+		line-height: 1;
+		color: #6b7280;
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 3px;
+		cursor: pointer;
+		font-family: inherit;
+	}
+	tbody tr:hover .sim-btn {
+		color: #1d4ed8;
+		border-color: #c7d2fe;
+	}
+	.sim-btn:hover {
+		background: #eef2ff;
+	}
+	.tag-btn {
+		display: inline-block;
+		width: 11px;
+		height: 11px;
+		margin-left: 4px;
+		padding: 0;
+		border-radius: 50%;
+		border: 1px solid #d1d5db;
+		background: transparent;
+		cursor: pointer;
+		vertical-align: middle;
+	}
+	.tag-btn.tagged {
+		border-color: rgba(0, 0, 0, 0.15);
+	}
+	.tag-btn:hover {
+		box-shadow: 0 0 0 2px #c7d2fe;
 	}
 	.trunc {
 		padding: 8px 12px;

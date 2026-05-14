@@ -7,21 +7,56 @@
 		max: number;
 		values: [number, number];
 		step?: number;
+		log?: boolean;
 		formatter?: (v: number) => string;
 		onchange?: (values: [number, number]) => void;
+		onpending?: (pending: boolean) => void;
 		debounceMs?: number;
 	}
 
-	let { min, max, values, step, formatter, onchange, debounceMs = 200 }: Props = $props();
+	let {
+		min,
+		max,
+		values,
+		step,
+		log = false,
+		formatter,
+		onchange,
+		onpending,
+		debounceMs = 200
+	}: Props = $props();
 
-	const range = $derived(Math.max(max - min, 1e-12));
-	const resolvedStep = $derived(step ?? Math.max(range / 200, 1e-9));
+	const useLog = $derived(log && min > 0 && max > 0);
+	const sliderMin = $derived(useLog ? Math.log10(min) : min);
+	const sliderMax = $derived(useLog ? Math.log10(max) : max);
+	const sliderValues = $derived<[number, number]>(
+		useLog
+			? [Math.log10(Math.max(values[0], min)), Math.log10(Math.max(values[1], min))]
+			: [values[0], values[1]]
+	);
+
+	function fromSliderSpace(v: number): number {
+		return useLog ? Math.pow(10, v) : v;
+	}
+
+	const range = $derived(Math.max(sliderMax - sliderMin, 1e-12));
+	const resolvedStep = $derived(step ?? Math.max(range / 200, useLog ? 1e-4 : 1e-9));
+
+	const displayFormatter = $derived((v: number) => {
+		const real = fromSliderSpace(v);
+		return formatter ? formatter(real) : real.toString();
+	});
 
 	let pending: [number, number] | null = null;
 	let timer: ReturnType<typeof setTimeout> | null = null;
+	let isPending = false;
 
 	function schedule(v: [number, number]) {
 		pending = v;
+		if (!isPending) {
+			isPending = true;
+			onpending?.(true);
+		}
 		if (timer) clearTimeout(timer);
 		timer = setTimeout(flush, debounceMs);
 	}
@@ -35,6 +70,10 @@
 			onchange?.(pending);
 			pending = null;
 		}
+		if (isPending) {
+			isPending = false;
+			onpending?.(false);
+		}
 	}
 
 	onDestroy(() => {
@@ -44,15 +83,17 @@
 
 <div class="rs-wrap">
 	<RangeSliderPips
-		{min}
-		{max}
+		min={sliderMin}
+		max={sliderMax}
 		step={resolvedStep}
-		values={[values[0], values[1]]}
+		precision={15}
+		values={sliderValues}
 		range
 		float
 		pips={false}
-		formatter={formatter ?? ((v: number) => v.toString())}
-		on:change={(e) => schedule([e.detail.values[0], e.detail.values[1]])}
+		formatter={displayFormatter}
+		on:change={(e) =>
+			schedule([fromSliderSpace(e.detail.values[0]), fromSliderSpace(e.detail.values[1])])}
 		on:stop={() => flush()}
 	/>
 </div>

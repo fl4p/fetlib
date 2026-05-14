@@ -14,6 +14,12 @@ export interface Part {
 	Vgs_th: number | null;
 	QgdQgs_ratio: number | null;
 	date: string | null;
+	score?: number | null;
+}
+
+export interface SimilarResult {
+	score: number;
+	part: Part;
 }
 
 export interface Bucket {
@@ -24,6 +30,7 @@ export interface Bucket {
 export interface Range {
 	min: number;
 	max: number;
+	slider_max?: number | null;
 }
 
 export interface Meta {
@@ -53,4 +60,5 @@ export interface FilterState {
 	ranges: Record<string, [number, number]>;
 	manufacturers: Set<string>;
 	housings: Set<string>;
+	search: string;
 }

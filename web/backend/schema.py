@@ -23,6 +23,7 @@ class Part(BaseModel):
 class Range(BaseModel):
     min: float
     max: float
+    slider_max: Optional[float] = None
 
 
 class Bucket(BaseModel):

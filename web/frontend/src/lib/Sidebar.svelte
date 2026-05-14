@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { FilterState, Meta } from './types';
-	import { SLIDER_KEYS } from './filters';
+	import { SLIDER_KEYS, sliderBounds } from './filters';
 	import RangeSlider from './RangeSlider.svelte';
 	import { fmtAmp, fmtMilliOhm, fmtNanoC, fmtRatio, fmtVoltage } from './format';
 
@@ -10,9 +10,17 @@
 		filteredCount: number;
 		totalCount: number;
 		onchange: (state: FilterState) => void;
+		onSliderPending?: (key: string, pending: boolean) => void;
 	}
 
-	let { meta, state, filteredCount, totalCount, onchange }: Props = $props();
+	let {
+		meta,
+		state,
+		filteredCount,
+		totalCount,
+		onchange,
+		onSliderPending
+	}: Props = $props();
 
 	const labels: Record<(typeof SLIDER_KEYS)[number], string> = {
 		Vds_max: 'V_DS max',
@@ -89,21 +97,34 @@
 	</header>
 
 	<section>
+		<input
+			type="search"
+			class="search"
+			placeholder="search Mfr / MPN / housing / values · * wildcard"
+			value={state.search}
+			oninput={(e) => onchange({ ...state, search: (e.currentTarget as HTMLInputElement).value })}
+		/>
+	</section>
+
+	<section>
 		<div class="section-head">
 			<h3>Numeric filters</h3>
 			<button type="button" onclick={resetRanges}>reset</button>
 		</div>
 		{#each SLIDER_KEYS as key}
 			{@const r = meta.ranges[key]}
-			{#if r && r.max > r.min}
+			{@const b = r ? sliderBounds(r) : null}
+			{#if r && b && b.max > b.min}
 				<div class="slider-row">
 					<div class="slider-label">{labels[key]}</div>
 					<RangeSlider
-						min={r.min}
-						max={r.max}
+						min={b.min}
+						max={b.max}
 						values={state.ranges[key] as [number, number]}
 						formatter={formatters[key]}
+						log
 						onchange={(v) => updateRange(key, v)}
+						onpending={(p) => onSliderPending?.(key, p)}
 					/>
 				</div>
 			{/if}
@@ -213,6 +234,21 @@
 	.section-head button:hover,
 	.actions button:hover {
 		background: #f3f4f6;
+	}
+	.search {
+		width: 100%;
+		box-sizing: border-box;
+		padding: 6px 8px;
+		font-size: 13px;
+		border: 1px solid #d1d5db;
+		border-radius: 4px;
+		background: #fff;
+		font-family: inherit;
+	}
+	.search:focus {
+		outline: none;
+		border-color: #2563eb;
+		box-shadow: 0 0 0 2px #dbeafe;
 	}
 	.slider-row {
 		margin-bottom: 0.5rem;

@@ -46,6 +46,24 @@ SLIDER_COLUMNS = (
     "QgdQgs_ratio",
 )
 
+# (weight_under, weight_over) where "under" means candidate < query in log space.
+# Asymmetric for ratings where a candidate underspec'd vs the query is a bad
+# replacement; symmetric for everything else.
+SIMILARITY_WEIGHTS = {
+    "Vds_max":      (3.0, 0.5),   # candidate < query → underrated, bad
+    "Id":           (2.0, 0.3),   # candidate < query → underrated, bad
+    "Rds_on_max":   (0.3, 2.0),   # candidate > query → lossier, bad
+    "Qg":           (1.0, 1.0),
+    "Qsw":          (1.0, 1.0),
+    "Qrr":          (1.0, 1.0),
+    "Vgs_th":       (0.5, 0.5),
+    "Vsd":          (0.3, 0.3),
+    "V_pl":         (0.3, 0.3),
+    "QgdQgs_ratio": (0.5, 0.5),
+}
+# Candidates lacking either of these are excluded — the score isn't meaningful.
+SIMILARITY_REQUIRED = ("Vds_max", "Rds_on_max")
+
 
 def _clean(v: Any) -> Optional[float]:
     if v is None:
@@ -113,6 +131,10 @@ def _serialize(part) -> dict:
     if id_val is None:
         id_val = _clean(id_fallback)
 
+    vsd_val = _clean(_safe_attr(specs, "Vsd"))
+    if vsd_val is not None:
+        vsd_val = abs(vsd_val)
+
     date_str = None
     if release is not None:
         try:
@@ -131,7 +153,7 @@ def _serialize(part) -> dict:
         "Qsw": _clean(_safe_attr(specs, "Qsw")),
         "Qg": _clean(_safe_attr(specs, "Qg")),
         "Qrr": _clean(_safe_attr(specs, "Qrr")),
-        "Vsd": _clean(_safe_attr(specs, "Vsd")),
+        "Vsd": vsd_val,
         "V_pl": _clean(_safe_attr(specs, "V_pl")),
         "Vgs_th": _clean(vgs_th),
         "QgdQgs_ratio": _clean(_safe_attr(specs, "QgdQgsRatio")),
@@ -170,7 +192,11 @@ def _build_meta(rows: List[dict]) -> Meta:
     for col in NUMERIC_COLUMNS:
         vals = [r[col] for r in rows if r.get(col) is not None]
         if vals:
-            ranges[col] = Range(min=min(vals), max=max(vals))
+            svals = sorted(vals)
+            lo, hi = svals[0], svals[-1]
+            p99 = svals[min(len(svals) - 1, int(len(svals) * 0.99))]
+            slider_max = p99 if col in SLIDER_COLUMNS and p99 < hi else None
+            ranges[col] = Range(min=lo, max=hi, slider_max=slider_max)
         else:
             ranges[col] = Range(min=0.0, max=0.0)
 
@@ -183,10 +209,48 @@ def _build_meta(rows: List[dict]) -> Meta:
     )
 
 
+def _similarity_stats(rows: List[dict]) -> dict:
+    """Per-feature (log_mean, log_std) over positive non-null values."""
+    stats = {}
+    for feat in SIMILARITY_WEIGHTS:
+        logs = [math.log(r[feat]) for r in rows if r.get(feat) is not None and r[feat] > 0]
+        if len(logs) < 2:
+            stats[feat] = (0.0, 1.0)
+            continue
+        mu = sum(logs) / len(logs)
+        var = sum((x - mu) ** 2 for x in logs) / (len(logs) - 1)
+        sigma = math.sqrt(var) if var > 0 else 1.0
+        stats[feat] = (mu, sigma)
+    return stats
+
+
+def _similarity_score(query: dict, candidate: dict, stats: dict) -> Optional[float]:
+    for feat in SIMILARITY_REQUIRED:
+        qv = query.get(feat)
+        cv = candidate.get(feat)
+        if qv is None or cv is None or qv <= 0 or cv <= 0:
+            return None
+    total = 0.0
+    for feat, (w_under, w_over) in SIMILARITY_WEIGHTS.items():
+        qv = query.get(feat)
+        cv = candidate.get(feat)
+        if qv is None or cv is None or qv <= 0 or cv <= 0:
+            continue
+        _, sigma = stats[feat]
+        if sigma <= 0:
+            continue
+        diff = (math.log(cv) - math.log(qv)) / sigma
+        w = w_under if diff < 0 else w_over
+        total += w * diff * diff
+    return total
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.parts = _load_parts()
     app.state.meta = _build_meta(app.state.parts)
+    app.state.similarity_stats = _similarity_stats(app.state.parts)
+    app.state.part_index = {(p["mfr"], p["mpn"]): p for p in app.state.parts}
     log.info("Loaded %d parts", len(app.state.parts))
     yield
 
@@ -217,3 +281,23 @@ def datasheet(mfr: str, mpn: str):
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="datasheet not found")
     return FileResponse(path, media_type="application/pdf", filename=f"{mpn}.pdf", content_disposition_type='inline')
+
+
+@app.get("/api/similar")
+def similar(mfr: str, mpn: str, limit: int = 20):
+    query = app.state.part_index.get((mfr, mpn))
+    if query is None:
+        raise HTTPException(status_code=404, detail="part not found")
+
+    stats = app.state.similarity_stats
+    scored: List[tuple] = []
+    for cand in app.state.parts:
+        if cand["mfr"] == mfr and cand["mpn"] == mpn:
+            continue
+        s = _similarity_score(query, cand, stats)
+        if s is None:
+            continue
+        scored.append((s, cand))
+
+    scored.sort(key=lambda t: t[0])
+    return [{"score": round(s, 4), "part": p} for s, p in scored[: max(1, limit)]]
