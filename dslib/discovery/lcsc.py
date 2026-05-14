@@ -29,7 +29,7 @@ brands = {
     "GOFORD": 11545,  # currently parse problems. gone?
     "Suzhou Good-Ark Elec": 979,
     "MCC": 889,
-    #"huayi": 11756,
+    # "huayi": 11756,
 }
 
 
@@ -57,6 +57,7 @@ async def fetch_list_page(brand_id: int, page: int):
         "headers": {
             "accept": "application/json, text/plain, */*",
             "accept-language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7,fr;q=0.6",
+            "cache-control": "no-cache",
             "content-type": "application/json;charset=UTF-8",
             "priority": "u=1, i",
             "sec-ch-ua": "\"Not;A=Brand\";v=\"99\", \"Google Chrome\";v=\"139\", \"Chromium\";v=\"139\"",

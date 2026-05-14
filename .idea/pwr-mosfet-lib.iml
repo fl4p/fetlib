@@ -4,6 +4,7 @@
     <content url="file://$MODULE_DIR$">
       <sourceFolder url="file://$MODULE_DIR$/test/unit" isTestSource="true" />
       <excludeFolder url="file://$MODULE_DIR$/dslib/chromium-user-data-dir" />
+      <excludeFolder url="file://$MODULE_DIR$/web/backend/.venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.10 (fetlib)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -77,3 +77,15 @@ test/test.md
 dslib/dk-cache/token_storage.json
 
 .idea/webServers.xml
+
+digikey/
+
+# web app
+web/frontend/node_modules/
+web/frontend/.svelte-kit/
+web/frontend/build/
+web/frontend/.env
+web/backend/.venv/
+web/backend/__pycache__/
+
+web/frontend/package-lock.json
