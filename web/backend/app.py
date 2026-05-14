@@ -1,18 +1,21 @@
 import logging
 import math
 import os
+import re
 import sys
 from collections import Counter
 from contextlib import asynccontextmanager
 from typing import Any, List, Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 REPO_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from dslib import get_datasheets_path  # noqa: E402
 from dslib.store import parts_db  # noqa: E402
 
 from .schema import Bucket, Meta, Part, Range  # noqa: E402
@@ -206,3 +209,11 @@ def list_parts():
 @app.get("/api/parts/meta", response_model=Meta)
 def parts_meta():
     return app.state.meta
+
+
+@app.get("/api/datasheet")
+def datasheet(mfr: str, mpn: str):
+    path = get_datasheets_path(mfr, mpn)
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="datasheet not found")
+    return FileResponse(path, media_type="application/pdf", filename=f"{mpn}.pdf", content_disposition_type='inline')
