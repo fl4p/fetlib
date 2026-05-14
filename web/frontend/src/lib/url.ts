@@ -6,6 +6,11 @@ function near(a: number, b: number): boolean {
 	return Math.abs(a - b) < EPS * (1 + Math.abs(b));
 }
 
+function round5(v: number): string {
+	if (!Number.isFinite(v)) return v.toString();
+	return Number(v.toPrecision(5)).toString();
+}
+
 export interface ParsedUrlState {
 	search: string;
 	ranges: Record<string, [number, number]>;
@@ -35,8 +40,8 @@ export function serializeState(
 		const b = sliderBounds(r);
 		const cur = state.ranges[k];
 		if (!cur) continue;
-		if (!near(cur[0], b.min)) p.set(`r.${k}.lo`, cur[0].toString());
-		if (!near(cur[1], b.max)) p.set(`r.${k}.hi`, cur[1].toString());
+		if (!near(cur[0], b.min)) p.set(`r.${k}.lo`, round5(cur[0]));
+		if (!near(cur[1], b.max)) p.set(`r.${k}.hi`, round5(cur[1]));
 	}
 
 	const allMfr = new Set(meta.manufacturers.map((b) => b.value ?? ''));

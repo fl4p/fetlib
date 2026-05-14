@@ -100,16 +100,27 @@
 
 <style>
 	.rs-wrap {
-		padding: 0.6rem 0.5rem 0.2rem;
+		padding: 0.6rem 0.2rem 0.4rem;
 	}
 	.rs-wrap :global(.rangeSlider) {
-		--range-handle-inactive: #6b7280;
-		--range-handle: #2563eb;
-		--range-handle-focus: #1d4ed8;
-		--range-range: #93c5fd;
-		--range-float-text: #ffffff;
-		--range-float: #1d4ed8;
-		font-size: 12px;
-		height: 8px;
+		--range-slider: var(--bg-hover);
+		--range-handle-inactive: var(--text);
+		--range-handle: var(--text-accent);
+		--range-handle-focus: var(--text-accent-strong);
+		--range-range: var(--text-accent);
+		--range-float-text: var(--text-on-dark);
+		--range-float: var(--text);
+		font-family: var(--mono);
+		font-size: 11px;
+		height: 4px;
+		border-radius: 0;
+	}
+	.rs-wrap :global(.rangeSlider .rangeHandle .rangeNub) {
+		border-radius: 0;
+	}
+	.rs-wrap :global(.rangeFloat) {
+		border-radius: 0 !important;
+		letter-spacing: 0.02em;
+		font-weight: 500 !important;
 	}
 </style>

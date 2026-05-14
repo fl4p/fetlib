@@ -137,22 +137,28 @@
 	.table-wrap {
 		flex: 1;
 		overflow: auto;
-		background: #fff;
+		background: var(--bg-paper);
+		color: var(--text);
 	}
 	table {
 		border-collapse: collapse;
 		width: 100%;
-		font-size: 12px;
+		font-family: var(--mono);
+		font-size: 11.5px;
 		font-variant-numeric: tabular-nums;
 	}
 	thead th {
 		position: sticky;
 		top: 0;
-		background: #f3f4f6;
-		border-bottom: 1px solid #d1d5db;
+		background: var(--bg-th);
+		color: var(--text-on-dark);
+		border-bottom: 2px solid var(--bg-th);
 		text-align: left;
+		font-family: var(--mono);
 		font-weight: 600;
-		color: #1f2937;
+		font-size: 10px;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
 		z-index: 1;
 		padding: 0;
 		white-space: nowrap;
@@ -160,9 +166,11 @@
 	thead th button {
 		background: none;
 		border: none;
-		padding: 6px 8px;
+		padding: 9px 10px;
 		font: inherit;
 		font-weight: inherit;
+		letter-spacing: inherit;
+		text-transform: inherit;
 		cursor: pointer;
 		color: inherit;
 		width: 100%;
@@ -172,21 +180,30 @@
 		text-align: right;
 	}
 	thead th.sorted {
-		background: #dbeafe;
+		background: var(--bg-th-sorted);
+	}
+	:global(:root.dark) thead th {
+		color: var(--text-on-dark);
+	}
+	:global(:root.dark) thead th.sorted {
+		background: rgba(255, 178, 71, 0.85);
 	}
 	thead th button:hover {
-		background: #e5e7eb;
+		background: rgba(255, 255, 255, 0.1);
 	}
 	td {
-		padding: 3px 8px;
-		border-bottom: 1px solid #f1f5f9;
+		padding: 4px 10px;
+		border-bottom: 1px solid var(--border-row);
 		white-space: nowrap;
 	}
 	td.num {
 		text-align: right;
 	}
+	tbody tr:nth-child(even) {
+		background: var(--bg-row-hover);
+	}
 	tbody tr:hover {
-		background: #f9fafb;
+		background: var(--bg-hover);
 	}
 	tbody.pending {
 		opacity: 0.5;
@@ -196,75 +213,78 @@
 		transition: opacity 120ms ease-out;
 	}
 	td a {
-		color: #1d4ed8;
+		color: var(--text-accent);
 		text-decoration: none;
+		font-weight: 500;
 	}
 	td a:hover {
 		text-decoration: underline;
+		text-underline-offset: 2px;
 	}
 	.sim-btn {
-		margin-left: 4px;
-		padding: 0 5px;
-		font-size: 12px;
+		margin-left: 6px;
+		padding: 1px 5px;
+		font-family: var(--serif);
+		font-size: 14px;
 		line-height: 1;
-		color: #6b7280;
+		color: var(--text-muted);
 		background: transparent;
 		border: 1px solid transparent;
-		border-radius: 3px;
+		border-radius: 0;
 		cursor: pointer;
-		font-family: inherit;
 	}
 	tbody tr:hover .sim-btn {
-		color: #1d4ed8;
-		border-color: #c7d2fe;
+		color: var(--text);
 	}
 	.sim-btn:hover {
-		background: #eef2ff;
+		border-color: var(--border-thin);
 	}
 	.tag-btn {
 		display: inline-block;
 		width: 11px;
 		height: 11px;
-		margin-left: 4px;
+		margin-left: 5px;
 		padding: 0;
 		border-radius: 50%;
-		border: 1px solid #d1d5db;
+		border: 1px solid var(--border);
 		background: transparent;
 		cursor: pointer;
 		vertical-align: middle;
 	}
 	.tag-btn.tagged {
-		border-color: rgba(0, 0, 0, 0.15);
+		border-color: rgba(0, 0, 0, 0.35);
 	}
 	.tag-btn:hover {
-		box-shadow: 0 0 0 2px #c7d2fe;
+		box-shadow: 0 0 0 2px var(--border-thin);
 	}
 	@media (max-width: 768px) {
 		table {
-			font-size: 13px;
+			font-size: 12px;
 		}
 		td {
-			padding: 6px 10px;
+			padding: 7px 10px;
 		}
 		thead th button {
-			padding: 8px 10px;
+			padding: 10px 10px;
 		}
 		.sim-btn {
-			font-size: 14px;
+			font-size: 16px;
 			padding: 2px 8px;
-			margin-left: 6px;
+			margin-left: 8px;
 		}
 		.tag-btn {
-			width: 16px;
-			height: 16px;
-			margin-left: 6px;
+			width: 14px;
+			height: 14px;
+			margin-left: 8px;
 		}
 	}
 	.trunc {
-		padding: 8px 12px;
-		font-size: 12px;
-		color: #6b7280;
-		background: #fffbeb;
-		border-top: 1px solid #fde68a;
+		padding: 10px 14px;
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.05em;
+		color: var(--text);
+		background: var(--bg-trunc);
+		border-top: 1px solid var(--border-trunc);
 	}
 </style>
