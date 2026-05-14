@@ -1,6 +1,5 @@
 import math
 
-import openpyxl.styles
 import pandas as pd
 
 from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
@@ -30,7 +29,7 @@ async def ti_mosfets():
             mfr='ti',
             mpn=link_reg.match(row['Product or Part number']).groupdict().get('text'),
             # mpn2=row['Product'],
-            ds_url=link_reg.match(row['PDF data sheet']).groupdict().get('url'),
+            ds_url=link_reg.match(row['PDF datasheet']).groupdict().get('url'),
             specs=MosfetBasicSpecs(
                 Vds_max=row['VDS (V)'],
                 Rds_on_10v_max=row['Rds(on) at VGS=10 V (max) (mΩ)'] * 1e-3,

@@ -24,8 +24,8 @@ import pathlib
 from pathlib import Path
 
 import digikey
-from digikey.v3.productinformation import KeywordSearchRequest
-from digikey.v3.batchproductdetails import BatchProductDetailsRequest
+from digikey.v4.productinformation import KeywordRequest, ProductDetails, ProductVariation
+from digikey.v4.batchproductdetails import BatchProductDetailsRequest
 
 
 os.environ['DIGIKEY_CLIENT_ID'] = "tbGNCaPtiWbd5WoL24vrEAUuW9SdJrLE"
@@ -43,8 +43,13 @@ part = digikey.product_details(dkpn)
 digikey.digi_reel_pricing()
 
 # Search for parts
-search_request = KeywordSearchRequest(keywords='SQM70060EL_GE3', record_count=10)
+search_request = KeywordRequest(keywords='SQM70060EL_GE3', limit=10)
 result = digikey.keyword_search(body=search_request)
+
+def get_cheapeast_pricing(part:ProductDetails):
+    pv:ProductVariation
+    for pv in part.product.product_variations:
+        pv.standard_pricing[0]
 
 #digikey.
 

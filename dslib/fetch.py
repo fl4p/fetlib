@@ -164,7 +164,8 @@ https://stackoverflow.com/questions/50804931/how-to-download-a-pdf-that-opens-in
 _chromium_lock = asyncio.Lock()
 
 
-async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', eval=None, close=False):
+async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', eval=None, close=False,
+                                 nav_timeout=30000):
     from pyppeteer.errors import PageError
 
     with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
@@ -200,7 +201,7 @@ async def download_with_chromium(url, filename, click: Union[str, List[str]] = '
             })
 
             try:
-                resp = await page.goto(url)
+                resp = await page.goto(url, timeout=nav_timeout)
                 if resp.status in {404}:
                     print(url, 'NOT FOUND')
                     return

@@ -29,7 +29,7 @@ brands = {
     "GOFORD": 11545,  # currently parse problems. gone?
     "Suzhou Good-Ark Elec": 979,
     "MCC": 889,
-    "huayi": 11756,
+    #"huayi": 11756,
 }
 
 

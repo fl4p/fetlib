@@ -52,6 +52,7 @@ async def infineon_mosfets():
                 Vds_max=vds,
                 Rds_on_10v_max=parse_field(str(row['RDS (on) (@10V) max']), float),
                 ID_25=parse_field(str(row['ID  (@25°C) max']).strip('A '), float), # ID  (@25°C) max
+                # ^ if this column is missing, open the infineon product finder page in another browser and manually download
                 Vgs_th_min=parse_field(str(row['VGS(th) min']).strip('V '), float),
                 Vgs_th_typ=parse_field(row['VGS(th)'].strip('V '), float),
                 Vgs_th_max=parse_field(str(row['VGS(th) max']).strip('V '), float),

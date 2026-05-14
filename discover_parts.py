@@ -17,14 +17,13 @@ import dslib.discovery.toshiba
 import dslib.discovery.tw
 import dslib.discovery.vishay
 from dslib import mfr_tag
-from dslib.discovery import  DiscoveredPart, benchmark_mpns
+from dslib.discovery import DiscoveredPart, benchmark_mpns
 from dslib.fetch import fetch_datasheet, close_browser
 
 
 def unique_parts(parts: List[DiscoveredPart]):
-
     def normal_mpn(mpn, mfr):
-        if  mfr_tag(mfr) == 'infineon':
+        if mfr_tag(mfr) == 'infineon':
             if mpn.endswith('AKMA1') or mpn.endswith('AKSA1') or mpn.endswith('XKSA1') or mpn.endswith('XKMA1'):
                 mpn = mpn[:-5]
 

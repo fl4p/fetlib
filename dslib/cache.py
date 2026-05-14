@@ -745,6 +745,9 @@ def _disk_cache_get_file_names(args, kwargs, pwd: str, deps, ignore_missing_inp_
     return file_names
 
 
+import nest_asyncio
+nest_asyncio.apply()
+
 def _async_run(task):
     try:
         return asyncio.get_running_loop().run_until_complete(task)
@@ -752,6 +755,7 @@ def _async_run(task):
         try:
             return asyncio.run(task)
         except RuntimeError as e2:
+            print('asyncio.run error:', e2, 'after run_until_complete:', e1, asyncio.get_running_loop(), task )
             raise e2 from e1
 
 
