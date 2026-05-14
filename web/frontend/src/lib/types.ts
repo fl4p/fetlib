@@ -1,7 +1,7 @@
 export interface Part {
 	mfr: string;
 	mpn: string;
-	technology: string;
+	substrate: string;
 	housing: string | null;
 	Vds_max: number | null;
 	Rds_on_max: number | null;
@@ -30,7 +30,7 @@ export interface Meta {
 	total: number;
 	manufacturers: Bucket[];
 	housings: Bucket[];
-	technologies: Bucket[];
+	substrates: Bucket[];
 	ranges: Record<string, Range>;
 }
 

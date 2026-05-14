@@ -65,12 +65,12 @@ def _safe_attr(obj: Any, name: str) -> Any:
         return None
 
 
-def _technology(substrate: Optional[str]) -> str:
+def _substrate(substrate: Optional[str]) -> str:
     if substrate == "GaN":
         return "GaN"
     if substrate == "SiC":
         return "SiC"
-    return "MOSFET"
+    return "Si"
 
 
 def _serialize(part) -> dict:
@@ -98,7 +98,7 @@ def _serialize(part) -> dict:
     return {
         "mfr": part.mfr,
         "mpn": part.mpn,
-        "technology": _technology(substrate),
+        "substrate": _substrate(substrate),
         "housing": package if isinstance(package, str) and package else None,
         "Vds_max": _clean(_safe_attr(specs, "Vds")),
         "Rds_on_max": _clean(_safe_attr(specs, "Rds_on")),
@@ -135,7 +135,7 @@ def _load_parts() -> List[dict]:
 def _build_meta(rows: List[dict]) -> Meta:
     mfr_counts = Counter(r["mfr"] for r in rows)
     housing_counts = Counter(r["housing"] for r in rows)
-    tech_counts = Counter(r["technology"] for r in rows)
+    substrate_counts = Counter(r["substrate"] for r in rows)
 
     def buckets(counter: Counter) -> list:
         items = sorted(counter.items(), key=lambda x: (-x[1], (x[0] or "")))
@@ -153,7 +153,7 @@ def _build_meta(rows: List[dict]) -> Meta:
         total=len(rows),
         manufacturers=buckets(mfr_counts),
         housings=buckets(housing_counts),
-        technologies=buckets(tech_counts),
+        substrates=buckets(substrate_counts),
         ranges=ranges,
     )
 

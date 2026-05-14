@@ -21,7 +21,7 @@
 	const columns: Col[] = [
 		{ key: 'mfr', label: 'Mfr', fmt: (p) => p.mfr },
 		{ key: 'mpn', label: 'MPN', fmt: (p) => p.mpn },
-		{ key: 'technology', label: 'Tech', fmt: (p) => p.technology },
+		{ key: 'substrate', label: 'Substrate', fmt: (p) => p.substrate },
 		{ key: 'housing', label: 'Housing', fmt: (p) => p.housing ?? '' },
 		{ key: 'Vds_max', label: 'V_DS', fmt: (p) => fmtVoltage(p.Vds_max), num: true },
 		{ key: 'Rds_on_max', label: 'R_DSon', fmt: (p) => fmtMilliOhm(p.Rds_on_max), num: true },

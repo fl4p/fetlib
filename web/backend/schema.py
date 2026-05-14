@@ -5,7 +5,7 @@ from pydantic import BaseModel
 class Part(BaseModel):
     mfr: str
     mpn: str
-    technology: str
+    substrate: str
     housing: Optional[str] = None
     Vds_max: Optional[float] = None
     Rds_on_max: Optional[float] = None
@@ -34,5 +34,5 @@ class Meta(BaseModel):
     total: int
     manufacturers: List[Bucket]
     housings: List[Bucket]
-    technologies: List[Bucket]
+    substrates: List[Bucket]
     ranges: Dict[str, Range]
