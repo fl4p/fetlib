@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { onDestroy } from 'svelte';
 	import RangeSliderPips from 'svelte-range-slider-pips';
 
 	interface Props {
@@ -8,12 +9,37 @@
 		step?: number;
 		formatter?: (v: number) => string;
 		onchange?: (values: [number, number]) => void;
+		debounceMs?: number;
 	}
 
-	let { min, max, values, step, formatter, onchange }: Props = $props();
+	let { min, max, values, step, formatter, onchange, debounceMs = 200 }: Props = $props();
 
 	const range = $derived(Math.max(max - min, 1e-12));
 	const resolvedStep = $derived(step ?? Math.max(range / 200, 1e-9));
+
+	let pending: [number, number] | null = null;
+	let timer: ReturnType<typeof setTimeout> | null = null;
+
+	function schedule(v: [number, number]) {
+		pending = v;
+		if (timer) clearTimeout(timer);
+		timer = setTimeout(flush, debounceMs);
+	}
+
+	function flush() {
+		if (timer) {
+			clearTimeout(timer);
+			timer = null;
+		}
+		if (pending !== null) {
+			onchange?.(pending);
+			pending = null;
+		}
+	}
+
+	onDestroy(() => {
+		if (timer) clearTimeout(timer);
+	});
 </script>
 
 <div class="rs-wrap">
@@ -26,7 +52,8 @@
 		float
 		pips={false}
 		formatter={formatter ?? ((v: number) => v.toString())}
-		on:change={(e) => onchange?.([e.detail.values[0], e.detail.values[1]])}
+		on:change={(e) => schedule([e.detail.values[0], e.detail.values[1]])}
+		on:stop={() => flush()}
 	/>
 </div>
 
