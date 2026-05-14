@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Part, SortDir, SortKey } from './types';
-	import { fmtAmp, fmtDate, fmtMilliOhm, fmtNanoC, fmtRatio, fmtVoltage } from './format';
+	import { COLUMNS, isVisible, type ColumnDef, type ColumnVisibility } from './columns';
 	import { TAG_COLORS, partKey, type ColorMap } from './colors';
 
 	interface Props {
@@ -13,6 +13,7 @@
 		onfindSimilar?: (p: Part) => void;
 		colors?: ColorMap;
 		oncolorClick?: (p: Part) => void;
+		visibleColumns?: ColumnVisibility;
 	}
 
 	let {
@@ -24,49 +25,28 @@
 		showScore = false,
 		onfindSimilar,
 		colors = {},
-		oncolorClick
+		oncolorClick,
+		visibleColumns = {}
 	}: Props = $props();
 
 	function datasheetHref(p: Part): string {
 		return `/api/datasheet?mfr=${encodeURIComponent(p.mfr)}&mpn=${encodeURIComponent(p.mpn)}`;
 	}
 
-	interface Col {
-		key: SortKey;
-		label: string;
-		fmt: (p: Part) => string;
-		num?: boolean;
-		mpnLink?: boolean;
-	}
-
-	const scoreCol: Col = {
-		key: 'score' as SortKey,
+	const scoreCol: ColumnDef = {
+		key: 'score',
 		label: 'Score',
 		fmt: (p) => (p.score == null ? '' : p.score.toFixed(2)),
 		num: true
 	};
 
-	const baseColumns: Col[] = [
-		{ key: 'mfr', label: 'Mfr', fmt: (p) => p.mfr },
-		{ key: 'mpn', label: 'MPN', fmt: (p) => p.mpn, mpnLink: true },
-		{ key: 'substrate', label: 'Tech', fmt: (p) => p.substrate },
-		{ key: 'housing', label: 'House', fmt: (p) => p.housing ?? '' },
-		{ key: 'Vds_max', label: 'V_DS', fmt: (p) => fmtVoltage(p.Vds_max), num: true },
-		{ key: 'Rds_on_max', label: 'R_DSon', fmt: (p) => fmtMilliOhm(p.Rds_on_max), num: true },
-		{ key: 'Id', label: 'I_D', fmt: (p) => fmtAmp(p.Id), num: true },
-		{ key: 'Qsw', label: 'Q_sw', fmt: (p) => fmtNanoC(p.Qsw), num: true },
-		{ key: 'Qg', label: 'Q_g', fmt: (p) => fmtNanoC(p.Qg), num: true },
-		{ key: 'Qrr', label: 'Q_rr', fmt: (p) => fmtNanoC(p.Qrr), num: true },
-		{ key: 'Vsd', label: 'V_SD', fmt: (p) => fmtVoltage(p.Vsd), num: true },
-		{ key: 'V_pl', label: 'V_pl', fmt: (p) => fmtVoltage(p.V_pl), num: true },
-		{ key: 'Vgs_th', label: 'V_GS(th)', fmt: (p) => fmtVoltage(p.Vgs_th), num: true },
-		{ key: 'QgdQgs_ratio', label: 'Q_gd/Q_gs', fmt: (p) => fmtRatio(p.QgdQgs_ratio), num: true },
-		{ key: 'date', label: 'Date', fmt: (p) => fmtDate(p.date) }
-	];
+	const columns = $derived<ColumnDef[]>(
+		(showScore ? [scoreCol, ...COLUMNS] : COLUMNS).filter(
+			(c) => c.key === 'score' || isVisible(visibleColumns, c.key)
+		)
+	);
 
-	const columns = $derived<Col[]>(showScore ? [scoreCol, ...baseColumns] : baseColumns);
-
-	function arrow(key: SortKey): string {
+	function arrow(key: string): string {
 		if (key !== sortKey) return '';
 		return sortDir === 'asc' ? ' ▲' : ' ▼';
 	}
@@ -82,7 +62,7 @@
 			<tr>
 				{#each columns as col}
 					<th class:num={col.num} class:sorted={sortKey === col.key}>
-						<button type="button" onclick={() => onsort(col.key)}>
+						<button type="button" onclick={() => onsort(col.key as SortKey)}>
 							{col.label}{arrow(col.key)}
 						</button>
 					</th>

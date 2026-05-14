@@ -5,6 +5,13 @@
 	import { fetchMeta, fetchParts, fetchSimilar } from '$lib/api';
 	import { SLIDER_KEYS, applyFilters, initialFilters, sliderBounds, sortParts } from '$lib/filters';
 	import { type ColorMap, cycle, loadColors, saveColors } from '$lib/colors';
+	import {
+		COLUMNS,
+		type ColumnVisibility,
+		isVisible,
+		loadVisibility,
+		saveVisibility
+	} from '$lib/columns';
 	import { type Theme, applyTheme, detectInitialTheme } from '$lib/theme';
 	import type { FilterState, Meta, Part, SortDir, SortKey } from '$lib/types';
 	import { applyParsedToFilters, parseState, serializeState } from '$lib/url';
@@ -25,6 +32,10 @@
 	let colors = $state<ColorMap>({});
 	let sidebarOpen = $state(false);
 	let theme = $state<Theme>('light');
+	let columnVisibility = $state<ColumnVisibility>({});
+	let columnsMenuOpen = $state(false);
+	let columnsBtnEl: HTMLButtonElement | undefined = $state();
+	let columnsMenuEl: HTMLDivElement | undefined = $state();
 
 	function loadStoredRanges(): Record<string, [number, number]> | null {
 		try {
@@ -76,6 +87,8 @@
 			theme = detectInitialTheme();
 			applyTheme(theme);
 			colors = loadColors();
+			columnVisibility = loadVisibility();
+			window.addEventListener('mousedown', handleColumnsMenuOutsideClick);
 			const [p, m] = await Promise.all([fetchParts(), fetchMeta()]);
 			parts = p;
 			meta = m;
@@ -208,6 +221,33 @@
 		applyTheme(theme);
 	}
 
+	function toggleColumn(key: string) {
+		const cur = isVisible(columnVisibility, key);
+		columnVisibility = { ...columnVisibility, [key]: !cur };
+		saveVisibility(columnVisibility);
+	}
+
+	function showAllColumns() {
+		columnVisibility = {};
+		saveVisibility(columnVisibility);
+	}
+
+	function hideAllColumns() {
+		const next: ColumnVisibility = {};
+		for (const c of COLUMNS) next[c.key] = false;
+		columnVisibility = next;
+		saveVisibility(columnVisibility);
+	}
+
+	function handleColumnsMenuOutsideClick(e: MouseEvent) {
+		if (!columnsMenuOpen) return;
+		const t = e.target as Node | null;
+		if (!t) return;
+		if (columnsMenuEl?.contains(t)) return;
+		if (columnsBtnEl?.contains(t)) return;
+		columnsMenuOpen = false;
+	}
+
 	function clearSimilar() {
 		similarMode = null;
 		similarError = null;
@@ -257,6 +297,44 @@
 					<span class="num muted">{sourceParts.length.toLocaleString()}</span>
 				</span>
 			{/if}
+			<div class="cols-wrap">
+				<button
+					type="button"
+					class="hdr-btn"
+					bind:this={columnsBtnEl}
+					aria-haspopup="true"
+					aria-expanded={columnsMenuOpen}
+					title="Edit columns"
+					onclick={() => (columnsMenuOpen = !columnsMenuOpen)}
+				>
+					cols
+				</button>
+				{#if columnsMenuOpen}
+					<div class="cols-menu" bind:this={columnsMenuEl} role="menu">
+						<div class="cols-menu-head">
+							<span>visible columns</span>
+							<span class="cols-menu-actions">
+								<button type="button" onclick={showAllColumns}>all</button>
+								<button type="button" onclick={hideAllColumns}>none</button>
+							</span>
+						</div>
+						<ul>
+							{#each COLUMNS as col}
+								<li>
+									<label>
+										<input
+											type="checkbox"
+											checked={isVisible(columnVisibility, col.key)}
+											onchange={() => toggleColumn(col.key)}
+										/>
+										<span>{col.label}</span>
+									</label>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
+			</div>
 			<button
 				type="button"
 				class="theme-toggle"
@@ -327,6 +405,7 @@
 					onfindSimilar={onFindSimilar}
 					{colors}
 					oncolorClick={onColorClick}
+					visibleColumns={columnVisibility}
 				/>
 			</div>
 		{/if}
@@ -513,6 +592,95 @@
 	.theme-toggle:hover {
 		background: var(--text);
 		color: var(--text-on-dark);
+	}
+	.cols-wrap {
+		position: relative;
+	}
+	.hdr-btn {
+		height: 32px;
+		padding: 0 10px;
+		border-radius: 0;
+		border: 1px solid var(--border);
+		background: var(--bg);
+		color: var(--text);
+		font-family: var(--mono);
+		font-size: 11px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		cursor: pointer;
+	}
+	.hdr-btn:hover {
+		background: var(--text);
+		color: var(--text-on-dark);
+	}
+	.cols-menu {
+		position: absolute;
+		top: calc(100% + 6px);
+		right: 0;
+		background: var(--bg-paper);
+		border: 1px solid var(--border);
+		min-width: 200px;
+		z-index: 40;
+		box-shadow: 4px 4px 0 var(--border-thin);
+		padding: 0;
+	}
+	.cols-menu-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		padding: 8px 12px 6px;
+		border-bottom: 1px solid var(--border);
+		font-family: var(--mono);
+		font-size: 10px;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.15em;
+		color: var(--text-strong);
+	}
+	.cols-menu-actions {
+		display: flex;
+		gap: 4px;
+	}
+	.cols-menu-actions button {
+		font-family: var(--mono);
+		font-size: 9.5px;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		background: transparent;
+		border: 1px solid var(--border-thin);
+		border-radius: 0;
+		padding: 1px 6px;
+		cursor: pointer;
+		color: var(--text-muted);
+	}
+	.cols-menu-actions button:hover {
+		background: var(--text);
+		color: var(--text-on-dark);
+		border-color: var(--text);
+	}
+	.cols-menu ul {
+		list-style: none;
+		padding: 4px 0;
+		margin: 0;
+		max-height: 60vh;
+		overflow-y: auto;
+	}
+	.cols-menu li label {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 4px 12px;
+		cursor: pointer;
+		font-family: var(--serif);
+		font-size: 13px;
+		color: var(--text);
+	}
+	.cols-menu li label:hover {
+		background: var(--bg-hover);
+	}
+	.cols-menu input[type='checkbox'] {
+		accent-color: var(--border-accent);
+		margin: 0;
 	}
 	.hamburger {
 		display: none;
