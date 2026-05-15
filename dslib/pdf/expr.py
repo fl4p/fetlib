@@ -726,7 +726,7 @@ def get_field_detect_regex(mfr):
         # IGSS Gate-Body Leakage Current
 
         Vgs_th=(rec(
-            r'(Gate[\s-]+Threshold[\s-]+Voltage|V[ _]?\s*gs\(th\)($|[^/])|V[ _]?\s*th($|[^/]))',
+            r'(Gate(-source)?[\s-]+Threshold[\s-]+Voltage|V[ _]?\s*gs\(th\)($|[^/])|V[ _]?\s*th($|[^/]))',
             re.IGNORECASE), (
                     'temperature', 'coefficient'  # coefficient
                 )),
