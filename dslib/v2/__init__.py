@@ -22,6 +22,7 @@ import os
 import warnings
 from typing import Optional
 
+from dslib.cache import disk_cache
 from dslib.field import DatasheetFields, Field
 from dslib.v2.chars import extract_pages_with_rows, page_likely_needs_ocr
 from dslib.v2.tables import (ExtractedRow, find_headers, parse_rows_for_page)
@@ -94,6 +95,7 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
         return None
 
 
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=True)
 def parse_datasheet(pdf_path: str,
                     mfr: Optional[str] = None,
                     mpn: Optional[str] = None,

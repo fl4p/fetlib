@@ -304,6 +304,9 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
+    d = parse_datasheet('datasheets/littelfuse/IXFH120N25T.pdf')
+    assert d.Qrr == 1.18e3 # µC!
+
     d = parse_datasheet('datasheets/ao/AOB66515L.pdf')
     assert d.Qrr == 1.18e3  # µC!
 

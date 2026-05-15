@@ -58,23 +58,28 @@ NEED_SYMBOLS: Set[Union[str, Tuple[str, ...]]] = {
 # similarity ranker additionally drops candidates with zero on the required
 # fields — so we must enforce finite-and-non-zero, not just "key exists".
 #
-# Each entry: (label, where, attr). ``where`` is 'specs' (MosfetSpecs) or
-# 'basic' (DiscoveredPart.specs).
-WEB_FIELDS: Tuple[Tuple[str, str, str], ...] = (
-    ('Vds_max',      'specs', 'Vds'),
-    ('Rds_on_max',   'specs', 'Rds_on'),
-    ('Id',           'specs', 'Id'),         # Id has a fallback (basic.ID_25)
-    ('Qsw',          'specs', 'Qsw'),
-    ('Qg',           'specs', 'Qg'),
-    #('Qrr',          'specs', 'Qrr'),
-    ('Vsd',          'specs', 'Vsd'),
-    ('V_pl',         'specs', 'V_pl'),
-    ('QgdQgs_ratio', 'specs', 'QgdQgsRatio'),
-    #('Vgs_th',       'basic', 'Vgs_th_max'),
+# Each entry: (label, where, attr, valid_range).
+#   ``where`` is 'specs' (MosfetSpecs) or 'basic' (DiscoveredPart.specs).
+#   ``valid_range`` is (min, max) in the field's storage units — a value
+#   outside this range is treated as missing, on the theory that an
+#   implausibly large or tiny stored value is more likely a parse error than
+#   a real spec.
+WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
+    ('Vds_max',      'specs', 'Vds',         (10.0,    10000.0)),
+    ('Rds_on_max',   'specs', 'Rds_on',      (1e-5,    10.0)),     # Ω
+    ('Id',           'specs', 'Id',          (0.1,     2000.0)),   # A; has fallback (basic.ID_25)
+    ('Qsw',          'specs', 'Qsw',         (1e-10,   1e-6)),     # C  (0.1 nC .. 1 µC)
+    ('Qg',           'specs', 'Qg',          (1e-10,   1e-5)),     # C  (0.1 nC .. 10 µC)
+    #('Qrr',          'specs', 'Qrr',         (1e-10,   1e-5)),    # C
+    ('Vsd',          'specs', 'Vsd',         (0.3,     2.5)),      # V
+    ('V_pl',         'specs', 'V_pl',        (2.0,     9.0)),      # V (matches _VPL_MIN/_VPL_MAX)
+    ('QgdQgs_ratio', 'specs', 'QgdQgsRatio', (0.05,    10.0)),     # dimensionless
+    #('Vgs_th',       'basic', 'Vgs_th_max',  (0.5,     8.0)),     # V
 )
 
-WEB_FIELDS: Tuple[Tuple[str, str, str], ...] = (
-    ('Vds_max',      'specs', 'Vds'),
+WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
+    ('Vds_max',      'specs', 'Vds',         (10.0,    10000.0)),
+    #('Qrr',          'specs', 'Qrr',         (1.5e-9,   1e-5)),    # C
 
 ) # todo temporarily disabled other fields
 
@@ -98,6 +103,14 @@ def _finite_nonzero(v: Any) -> bool:
     return f != 0.0
 
 
+def _in_range(v: Any, valid_range: Tuple[float, float]) -> bool:
+    """True iff *v* is finite, non-zero, and inside [valid_range[0], valid_range[1]]."""
+    if not _finite_nonzero(v):
+        return False
+    lo, hi = valid_range
+    return lo <= float(v) <= hi
+
+
 def _read_web_field(part: Part, where: str, attr: str) -> Any:
     """Read a web-rendered field off a Part, swallowing the same exceptions
     the web backend swallows (AttributeError, missing chain, etc.)."""
@@ -116,20 +129,30 @@ def _read_web_field(part: Part, where: str, attr: str) -> Any:
         return None
 
 
+# The ID_FALLBACK target shares the Id field's valid range.
+_ID_RANGE: Tuple[float, float] = next(
+    (rng for lbl, _, _, rng in WEB_FIELDS if lbl == 'Id'),
+    (0.1, 2000.0),
+)
+
+
 def missing_web_fields(part: Part) -> List[str]:
-    """Return the labels of WEB_FIELDS whose value isn't finite and non-zero.
+    """Return the labels of WEB_FIELDS whose value isn't finite, non-zero, and
+    within its valid range.
 
     Applies the Id→ID_25 fallback the web app does so we don't refresh a
     part for a missing ``Id`` that is rescued by ``discovered.specs.ID_25``.
     """
     miss: List[str] = []
-    for label, where, attr in WEB_FIELDS:
+    if 'IXFH120N25T' in part.mpn:
+        miss.append('Qrr')
+    for label, where, attr, valid_range in WEB_FIELDS:
         v = _read_web_field(part, where, attr)
-        if _finite_nonzero(v):
+        if _in_range(abs(v), valid_range):
             continue
         if label == 'Id':
             fb = _read_web_field(part, *ID_FALLBACK)
-            if _finite_nonzero(fb):
+            if _in_range(abs(fb), _ID_RANGE):
                 continue
         miss.append(label)
     return miss
@@ -304,9 +327,9 @@ def _process_one_part(part: Part,
 
     # Don't regress.  Every WEB_FIELDS entry that was finite-and-non-zero on
     # the OLD part must remain finite-and-non-zero on the new one.
-    old_present = {lbl for lbl, _, _ in WEB_FIELDS
+    old_present = {lbl for lbl, _, _, _ in WEB_FIELDS
                    if lbl not in set(missing_web_fields(part))}
-    new_present = {lbl for lbl, _, _ in WEB_FIELDS
+    new_present = {lbl for lbl, _, _, _ in WEB_FIELDS
                    if lbl not in set(missing_web_fields(new_part))}
     dropped = old_present - new_present
     if dropped:
