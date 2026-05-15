@@ -1,7 +1,6 @@
 import logging
 import math
 import os
-import re
 import sys
 from collections import Counter
 from contextlib import asynccontextmanager
@@ -18,6 +17,7 @@ if REPO_ROOT not in sys.path:
 from dslib import get_datasheets_path  # noqa: E402
 from dslib.store import parts_db  # noqa: E402
 
+from .housing import normalize as _normalize_housing  # noqa: E402
 from .schema import Bucket, Meta, Part, Range  # noqa: E402
 
 log = logging.getLogger("mosfet-web")
@@ -102,26 +102,6 @@ def _substrate(substrate: Optional[str]) -> str:
     return "Si"
 
 
-_HOUSING_RULES = (
-    (re.compile(r"I?TO-?220.*"), "TO-220"),
-    (re.compile(r"TO-?247[ -]4\s*[a-zA-Z].+"), "TO-247-4"),
-    (re.compile(r"I?TO-?247.*"), "TO-247"),
-    (re.compile(r"(TO-?252.*|DPAK\+?)"), "TO-252"),
-    (re.compile(r"(TO-?263|D2PAK).*"), "TO-263"),
-    (re.compile(
-        r"(8-PowerTDFN|PowerPAK®? SO-8|P?DFN-?8L?\(5x6\)|P?DFN5x6(-8L)?|Single SSO8|SO-8FL / DFN-5|DFNW5|SuperSO8|8-PowerVDFN|PowerFLAT 5x6|DFN5060).*", re.IGNORECASE),
-     "SO8(5x6)"),  # 8-DFN (5x6), 	8-PowerSMD
-    (re.compile(r"(Q-DPAK).*"), "Q-DPAK"),  # 8-DFN (5x6), 	8-PowerSMD
-)
-
-
-def _normalize_housing(p: Optional[str]) -> Optional[str]:
-    if not isinstance(p, str) or not p:
-        return None
-    for pat, label in _HOUSING_RULES:
-        if pat.fullmatch(p):
-            return label
-    return p
 
 
 def _serialize(part) -> dict:
