@@ -15,6 +15,7 @@ The program:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
@@ -25,6 +26,45 @@ import numpy as np
 
 X_AXIS_KEYWORDS = ('q', 'qg', 'qgate', 'charge', 'gate charge', 'nc')
 Y_AXIS_KEYWORDS = ('vgs', 'v gs', 'gate-source', 'gate to source', 'gate-to-source')
+
+# Caption regex used to locate gate-charge chart titles like
+#   "14 Typ. gate charge"          (Infineon recent)
+#   "Diagram 14: Typ. gate charge" (Infineon older)
+#   "Fig.7 Gate-Charge Characteristics"
+#   "Typical Gate Charge Waveform"
+# Anchored on the phrase "gate charge" (with optional hyphen / underscore /
+# whitespace).  We deliberately accept anything else around it so unusual
+# layouts still match — the *positional* check that an image sits below the
+# caption keeps false positives away.
+CAPTION_RE = re.compile(r'(?i)\bgate[\s\-_]*charge\b')
+# Phrases that indicate this is NOT the parametric V_GS(Q_g) chart we want:
+# "gate charge waveforms" is the Q_GS/Q_GD/Q_SW definition schematic,
+# spec-table rows mention "total"/"Q_gs"/"Q_gd"/"Q_sw".
+CAPTION_REJECT_RE = re.compile(
+    r'(?i)('
+    r'\bwaveforms?\b'
+    r'|\btotal\b'
+    r'|\bq[\s_]*gs\b|\bq[\s_]*gd\b|\bq[\s_]*sw\b'
+    r'|see\s+figure'
+    r'|\b(at|to)\s+threshold\b'
+    r'|sync(\.|hronous)?\s*fet'
+    # Spec-table headers and feature-list bullets that mention "gate charge"
+    # but aren't chart titles.
+    r'|\bcharacteristics\)?\s*[\'"”]?\s*$'
+    r'|\bexcellent\b'
+    r'|\bx\s+R\s*(ds|os)'
+    r')'
+)
+# A real chart caption typically starts with one of these prefixes, e.g.
+#   "14 Typ. gate charge"            (just a number)
+#   "Diagram 14: Typ. gate charge"
+#   "Fig. 7 Gate-Charge Characteristics"
+CAPTION_PREFIX_RE = re.compile(
+    r'(?i)^\s*(?:'
+    r'\d+[\s:.]'                            # bare numeric prefix "14 "
+    r'|(?:diagram|fig\.?|figure|chart)\b'   # "Diagram", "Fig.", optionally followed by a number
+    r')'
+)
 
 
 @dataclass
@@ -205,6 +245,418 @@ def find_gate_charge_charts(doc) -> List[ChartFrame]:
                     nearby_text=title,
                     page_index=page_idx,
                 ))
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Caption-based chart detection for rasterised charts (no text-layer tick labels)
+# ---------------------------------------------------------------------------
+
+
+def _ocr_page_captions(page, dpi: int = 220):
+    """OCR the entire page (used for fully-scanned PDFs that have no text
+    layer) and return [(text, bbox_pdf), ...] for every CAPTION-LIKE phrase
+    on the page.  A "phrase" is a sequence of words on the same OCR line that
+    is separated from neighbouring phrases by either a "Diagram"/"Fig"
+    keyword (indicating a new caption starts) or a large horizontal gap.
+    bbox is in PDF point coordinates.
+    """
+    try:
+        import pytesseract
+    except ImportError:
+        return []
+    from PIL import Image
+    scale = dpi / 72.0
+    pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale),
+                          colorspace=fitz.csGRAY, alpha=False)
+    img = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.height, pix.width)
+    pil = Image.fromarray(img)
+    # PSM 4 (column of text of variable sizes) handles multi-column chart
+    # captions better than PSM 6.  Try it first, then PSM 6 as a fallback.
+    data = None
+    for psm in (4, 6):
+        try:
+            data = pytesseract.image_to_data(
+                pil, output_type=pytesseract.Output.DICT, config=f'--psm {psm}')
+        except pytesseract.TesseractError:
+            continue
+        # Did we find any candidate caption?  If not, try the next PSM.
+        joined = ' '.join(t for t in data['text'] if t)
+        if CAPTION_RE.search(joined):
+            break
+    if data is None:
+        return []
+    # Collect words grouped by line.
+    lines = {}
+    for i, t in enumerate(data['text']):
+        if not t or not t.strip():
+            continue
+        try:
+            conf = float(data['conf'][i])
+        except (ValueError, TypeError):
+            conf = -1.0
+        if conf < 30:
+            continue
+        key = (data['block_num'][i], data['par_num'][i], data['line_num'][i])
+        x = int(data['left'][i]); y = int(data['top'][i])
+        w = int(data['width'][i]); h = int(data['height'][i])
+        lines.setdefault(key, []).append({'text': t, 'x0': x, 'y0': y,
+                                          'x1': x + w, 'y1': y + h})
+
+    out = []
+    new_caption_re = re.compile(r'(?i)^(diagram|fig\.?|figure|chart|table)$')
+    for words in lines.values():
+        if not words:
+            continue
+        words.sort(key=lambda w: w['x0'])
+        # Compute typical character width to detect "large" gaps.
+        avg_h = float(np.mean([w['y1'] - w['y0'] for w in words]))
+        # Split the line into phrases.
+        phrases = [[words[0]]]
+        for prev, cur in zip(words, words[1:]):
+            gap = cur['x0'] - prev['x1']
+            start_new = False
+            if gap > avg_h * 3:  # ~3 character-heights of whitespace
+                start_new = True
+            if new_caption_re.match(cur['text'].rstrip(':.,')):
+                start_new = True
+            if start_new:
+                phrases.append([cur])
+            else:
+                phrases[-1].append(cur)
+        # Emit phrases.
+        for phrase in phrases:
+            text = ' '.join(w['text'] for w in phrase)
+            x0 = min(w['x0'] for w in phrase)
+            y0 = min(w['y0'] for w in phrase)
+            x1 = max(w['x1'] for w in phrase)
+            y1 = max(w['y1'] for w in phrase)
+            bb_pdf = (x0 / scale, y0 / scale, x1 / scale, y1 / scale)
+            out.append((text, bb_pdf))
+    return out
+
+
+def _find_caption_image_pairs(page):
+    """Return [(caption_text, caption_bbox, image_bbox), ...] for any caption
+    on the page that matches CAPTION_RE (and isn't excluded by REJECT_RE).
+
+    * If the page has a text layer, we use the PDF spans.  An embedded image
+      directly below the caption gives the chart bbox.
+    * If the page has no text (fully scanned), we OCR the page to find the
+      caption, then use a quadrant heuristic — the chart sits below the
+      caption in the same horizontal half of the page, ending at the next
+      caption or the bottom margin.
+
+    The returned image_bbox is a `fitz.Rect` in PDF point coordinates.
+    """
+    spans = _get_spans(page)
+
+    # Collect (a) captions that name a gate-charge chart and (b) any other
+    # figure caption on the page — we use (b) only as upper bounds when we
+    # need to compute a quadrant fallback bbox.
+    captions = []
+    other_captions = []
+    if spans:
+        for text, bbox in spans:
+            if CAPTION_RE.search(text) and not CAPTION_REJECT_RE.search(text):
+                captions.append((text, bbox))
+            elif CAPTION_PREFIX_RE.search(text):
+                other_captions.append((text, bbox))
+    if not captions:
+        # Fall back to OCR (slow).  For OCR we additionally REQUIRE the
+        # caption to look like a figure caption ("14 ...", "Diagram 14: ...",
+        # "Fig. 7 ..."), because OCR will otherwise drown us in spec-table
+        # rows that mention "gate charge".
+        ocr_caps = _ocr_page_captions(page)
+        for text, bbox in ocr_caps:
+            if not CAPTION_PREFIX_RE.search(text):
+                continue
+            if CAPTION_RE.search(text) and not CAPTION_REJECT_RE.search(text):
+                captions.append((text, bbox))
+            else:
+                other_captions.append((text, bbox))
+    if not captions:
+        return []
+
+    # Collect embedded image bboxes (for the BSB-style case).
+    images = page.get_images(full=True)
+    image_bboxes = []
+    for img in images:
+        try:
+            bb = page.get_image_bbox(img)
+        except Exception:  # noqa: BLE001
+            continue
+        if bb.is_empty:
+            continue
+        image_bboxes.append(bb)
+
+    page_rect = page.rect
+    pairs = []
+    for text, bbox in captions:
+        cap_x_lo, cap_y_lo, cap_x_hi, cap_y_hi = bbox
+        cap_cx = (cap_x_lo + cap_x_hi) / 2
+
+        # 1) Prefer an embedded image directly below.
+        best = None
+        for ibox in image_bboxes:
+            if ibox.y0 < cap_y_hi - 2:
+                continue
+            if not (ibox.x0 - 60 <= cap_cx <= ibox.x1 + 60):
+                continue
+            gap = ibox.y0 - cap_y_hi
+            if gap > 200:
+                continue
+            if best is None or gap < best[0]:
+                best = (gap, ibox)
+        if best:
+            pairs.append((text, bbox, best[1]))
+            continue
+
+        # 2) Fall back to a quadrant of the page: same horizontal half,
+        #    extending from just below the caption down to the next caption
+        #    in the same column (or the bottom margin).
+        page_w = page_rect.width
+        if cap_cx < page_w / 2:
+            x0, x1 = 0.0, page_w / 2 + 10
+        else:
+            x0, x1 = page_w / 2 - 10, page_w
+        y0 = cap_y_hi + 2
+        y1 = page_rect.height - 30  # leave the footer out
+        # Refine upper bound using ANY other figure caption below in the same
+        # column (e.g. "Diagram 15: ..." or "Fig. 8 ..." after our chart).
+        for o_text, o_bbox in list(captions) + list(other_captions):
+            if o_text == text:
+                continue
+            o_cx = (o_bbox[0] + o_bbox[2]) / 2
+            same_column = (cap_cx < page_w / 2) == (o_cx < page_w / 2)
+            if not same_column:
+                continue
+            if o_bbox[1] > cap_y_hi and o_bbox[1] < y1:
+                y1 = o_bbox[1] - 2
+        chart_box = fitz.Rect(x0, y0, x1, y1)
+        if chart_box.width > 30 and chart_box.height > 40:
+            pairs.append((text, bbox, chart_box))
+
+    return pairs
+
+
+def _ocr_pass(gray_img: np.ndarray, psm: int, x_off: int = 0, y_off: int = 0,
+              whitelist: Optional[str] = None):
+    """Run a single tesseract pass on *gray_img* and yield (value, cx, cy, bbox)
+    tuples in the original (un-cropped) coordinate space, shifted by
+    (x_off, y_off)."""
+    try:
+        import pytesseract
+    except ImportError:
+        return
+    from PIL import Image
+    pil = Image.fromarray(gray_img)
+    cfg = f'--psm {psm}'
+    if whitelist:
+        cfg += f' -c tessedit_char_whitelist={whitelist}'
+    try:
+        data = pytesseract.image_to_data(
+            pil, output_type=pytesseract.Output.DICT, config=cfg)
+    except pytesseract.TesseractError:
+        return
+    for i, raw in enumerate(data['text']):
+        if not raw or not raw.strip():
+            continue
+        try:
+            conf = float(data['conf'][i])
+        except (ValueError, TypeError):
+            conf = -1.0
+        if conf < 30:
+            continue
+        v = _parse_number(raw)
+        if v is None:
+            continue
+        x = int(data['left'][i]) + x_off
+        y = int(data['top'][i]) + y_off
+        w = int(data['width'][i]); h = int(data['height'][i])
+        bb = (x, y, x + w, y + h)
+        yield (v, x + w / 2, y + h / 2, bb)
+
+
+def _ocr_numeric_labels(gray_img: np.ndarray):
+    """OCR the chart image to recover tick labels.
+
+    A single full-image PSM 6 pass typically catches the X-axis ticks (rendered
+    as a row) but misses single-digit Y-axis ticks scattered down the left
+    side.  We add a second pass over a left strip to harvest those.  Results
+    are de-duplicated by (value, cx, cy) proximity.
+    """
+    H, W = gray_img.shape
+    digits = '0123456789.'
+
+    # 1) Full image with PSM 6 — gets the X axis row and axis-aligned labels.
+    full = list(_ocr_pass(gray_img, psm=6))
+
+    # 2) Left strip with PSM 6 (digits only) — gets the Y axis column.
+    left_w = min(W, max(80, int(0.20 * W)))
+    left_strip = gray_img[:, :left_w]
+    left = list(_ocr_pass(left_strip, psm=6, whitelist=digits))
+
+    # 3) Bottom strip with PSM 6 (digits only) — robustness for the X axis.
+    bot_h = min(H, max(60, int(0.15 * H)))
+    bot_strip = gray_img[H - bot_h:, :]
+    bottom = list(_ocr_pass(bot_strip, psm=6, y_off=H - bot_h, whitelist=digits))
+
+    # Merge and de-duplicate (treat two detections within a few pixels as the
+    # same tick label).
+    merged = []
+    for tok in full + left + bottom:
+        v, cx, cy, _ = tok
+        if any(abs(cx - m[1]) < 8 and abs(cy - m[2]) < 8 and m[0] == v for m in merged):
+            continue
+        merged.append(tok)
+    return merged
+
+
+def _collinear_subsets(items, pos_idx, eps_value_frac=0.05, min_len=4):
+    """Find subsets of *items* that lie (approximately) on a straight line in
+    (position, value) space.  Unlike _maximal_arithmetic_progressions this
+    does NOT require consecutive items to share a common difference — it
+    tolerates skipped/missing ticks (handy after OCR drops some labels).
+
+    Returns a list of subsets, each as a list of items.
+    """
+    items = sorted(items, key=lambda x: x[pos_idx])
+    n = len(items)
+    if n < min_len:
+        return []
+    found_sets = []
+    # For each pair (i, j) define a candidate line value = a*pos + b.
+    for i in range(n):
+        for j in range(i + 1, n):
+            dv = items[j][0] - items[i][0]
+            dp = items[j][pos_idx] - items[i][pos_idx]
+            if abs(dv) < 1e-9 or abs(dp) < 1e-9:
+                continue
+            a = dv / dp
+            b = items[i][0] - a * items[i][pos_idx]
+            # Collect all items consistent with this line.
+            chosen = []
+            v_range = max(abs(items[i][0]), abs(items[j][0]), 1.0)
+            tol = eps_value_frac * v_range + 0.5
+            for it in items:
+                predicted = a * it[pos_idx] + b
+                if abs(it[0] - predicted) <= tol:
+                    chosen.append(it)
+            # Drop duplicate-value duplicates at the same position (OCR noise):
+            # keep the entry closest to predicted.
+            dedup = {}
+            for it in chosen:
+                key = round(it[pos_idx])
+                predicted = a * it[pos_idx] + b
+                err = abs(it[0] - predicted)
+                if key not in dedup or err < dedup[key][1]:
+                    dedup[key] = (it, err)
+            chosen = sorted((v[0] for v in dedup.values()), key=lambda x: x[pos_idx])
+            if len(chosen) >= min_len:
+                found_sets.append(chosen)
+    # Deduplicate: keep only maximal sets.
+    maximal = []
+    sets = [set(id(x) for x in s) for s in found_sets]
+    for i, s in enumerate(found_sets):
+        if any(j != i and sets[i] < sets[j] for j in range(len(found_sets))):
+            continue
+        maximal.append(s)
+    return maximal
+
+
+def _build_axes_from_nums(nums):
+    """Run AP detection on a list of (value, cx, cy, bbox) tuples and return
+    (h_axes, v_axes) as AxisAP objects.  OCR'd inputs use a more tolerant
+    co-linear fitter (allows missing/skipped ticks)."""
+    h_axes: List[AxisAP] = []
+    for grp in _cluster_1d(nums, 2, 12.0):  # cluster by cy (OCR jitter is wider)
+        # Try strict AP first; fall back to colinear-subset fitting.
+        seqs = _maximal_arithmetic_progressions(grp, pos_idx=1)
+        if not seqs:
+            seqs = _collinear_subsets(grp, pos_idx=1)
+        for ap in seqs:
+            h_axes.append(AxisAP([it[0] for it in ap],
+                                 [it[1] for it in ap],
+                                 [it[2] for it in ap]))
+    v_axes: List[AxisAP] = []
+    for grp in _cluster_1d(nums, 1, 12.0):  # cluster by cx
+        seqs = _maximal_arithmetic_progressions(grp, pos_idx=2)
+        if not seqs:
+            seqs = _collinear_subsets(grp, pos_idx=2)
+        for ap in seqs:
+            v_axes.append(AxisAP([it[0] for it in ap],
+                                 [it[1] for it in ap],
+                                 [it[2] for it in ap]))
+    return h_axes, v_axes
+
+
+def find_gate_charge_charts_by_caption(doc) -> List[ChartFrame]:
+    """For each page, look for a caption matching CAPTION_RE that sits above
+    an embedded image (typical for rasterised Infineon datasheets like
+    BSB056N10NN3GXUMA2).  OCR the image to recover tick labels and build an
+    AP-based axis pair just like the text-layer detector would have.
+    """
+    results: List[ChartFrame] = []
+    for page_idx, page in enumerate(doc):
+        pairs = _find_caption_image_pairs(page)
+        for caption_text, caption_bbox, image_bbox in pairs:
+            # Render the image region at high DPI for OCR.
+            ocr_dpi = 300
+            scale = ocr_dpi / 72.0
+            pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale),
+                                  clip=image_bbox, colorspace=fitz.csGRAY,
+                                  alpha=False)
+            img_px = np.frombuffer(pix.samples, dtype=np.uint8).reshape(
+                pix.height, pix.width)
+            nums_px = _ocr_numeric_labels(img_px)
+            if len(nums_px) < 6:
+                continue
+            # Translate OCR pixel coordinates back into PDF point coordinates
+            # so the same downstream pipeline (extract_curves etc.) works.
+            def px_to_pdf_x(px_x):
+                return image_bbox.x0 + px_x / scale
+            def px_to_pdf_y(px_y):
+                return image_bbox.y0 + px_y / scale
+            nums_pdf = []
+            for v, cx_px, cy_px, bb_px in nums_px:
+                cx_pdf = px_to_pdf_x(cx_px)
+                cy_pdf = px_to_pdf_y(cy_px)
+                bb_pdf = (px_to_pdf_x(bb_px[0]), px_to_pdf_y(bb_px[1]),
+                          px_to_pdf_x(bb_px[2]), px_to_pdf_y(bb_px[3]))
+                nums_pdf.append((v, cx_pdf, cy_pdf, bb_pdf))
+
+            h_axes, v_axes = _build_axes_from_nums(nums_pdf)
+            # Match like the text-layer detector: pick the axis pair whose
+            # plausibility matches a gate-charge chart.
+            for h in h_axes:
+                hvs = h.values
+                if min(hvs) < 0 or max(hvs) <= 0:
+                    continue
+                if max(hvs) < 1 or max(hvs) > 2000:
+                    continue
+                for v in v_axes:
+                    vvs = v.values
+                    if min(vvs) < -1 or max(vvs) < 4 or max(vvs) > 25:
+                        continue
+                    hxs = h.cx
+                    vys = v.cy
+                    vx = float(np.mean(v.cx))
+                    hy = float(np.mean(h.cy))
+                    if not (min(hxs) - 35 <= vx <= max(hxs) + 15):
+                        continue
+                    if not (min(vys) - 10 <= hy <= max(vys) + 60):
+                        continue
+                    results.append(ChartFrame(
+                        x_axis=h, y_axis=v,
+                        x_label_text='(ocr)', y_label_text='(ocr)',
+                        nearby_text=caption_text,
+                        page_index=page_idx,
+                    ))
+                    break
+                else:
+                    continue
+                break  # only the first matching pair per caption
     return results
 
 
@@ -477,6 +929,11 @@ def find_plateau_vpl(inner_mask: np.ndarray, transform: np.ndarray, debug=None) 
 def vpl_from_pdf(pdf_path: str, dpi: int = 300, debug: bool = False):
     doc = fitz.open(pdf_path)
     charts = find_gate_charge_charts(doc)
+    if not charts:
+        # Fallback for rasterised charts: find the figure caption ("14 Typ.
+        # gate charge", "Fig. 7 Gate-Charge Characteristics", ...), locate
+        # the embedded image below it, and OCR its tick labels.
+        charts = find_gate_charge_charts_by_caption(doc)
     results = []
     for chart in charts:
         page = doc[chart.page_index]
