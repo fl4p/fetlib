@@ -253,6 +253,49 @@
 		similarError = null;
 		if (sortKey === ('score' as SortKey)) sortKey = 'Vds_max';
 	}
+
+	function csvCell(v: unknown): string {
+		if (v == null) return '';
+		const s = typeof v === 'number' ? (Number.isFinite(v) ? String(v) : '') : String(v);
+		return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+	}
+
+	function exportCsv() {
+		const cols = COLUMNS.filter((c) => isVisible(columnVisibility, c.key));
+		const includeScore = !!similarMode;
+		const header: string[] = [];
+		if (includeScore) header.push('score');
+		for (const c of cols) header.push(c.key);
+
+		const lines: string[] = [header.join(',')];
+		for (const p of sorted) {
+			const row: string[] = [];
+			if (includeScore) row.push(csvCell(p.score ?? null));
+			for (const c of cols) row.push(csvCell((p as unknown as Record<string, unknown>)[c.key]));
+			lines.push(row.join(','));
+		}
+
+		const blob = new Blob(['﻿' + lines.join('\r\n') + '\r\n'], {
+			type: 'text/csv;charset=utf-8'
+		});
+		const url = URL.createObjectURL(blob);
+		const now = new Date();
+		const stamp =
+			now.getFullYear().toString() +
+			String(now.getMonth() + 1).padStart(2, '0') +
+			String(now.getDate()).padStart(2, '0') +
+			'-' +
+			String(now.getHours()).padStart(2, '0') +
+			String(now.getMinutes()).padStart(2, '0');
+		const tag = similarMode ? `similar-${similarMode.mpn}-` : '';
+		const a = document.createElement('a');
+		a.href = url;
+		a.download = `mosfet-${tag}${stamp}.csv`;
+		document.body.appendChild(a);
+		a.click();
+		document.body.removeChild(a);
+		setTimeout(() => URL.revokeObjectURL(url), 1000);
+	}
 </script>
 
 <svelte:head>
@@ -297,6 +340,15 @@
 					<span class="num muted">{sourceParts.length.toLocaleString()}</span>
 				</span>
 			{/if}
+			<button
+				type="button"
+				class="hdr-btn"
+				title="Export current view as CSV"
+				disabled={!meta || !filters || sorted.length === 0}
+				onclick={exportCsv}
+			>
+				csv
+			</button>
 			<div class="cols-wrap">
 				<button
 					type="button"
@@ -612,6 +664,14 @@
 	.hdr-btn:hover {
 		background: var(--text);
 		color: var(--text-on-dark);
+	}
+	.hdr-btn:disabled {
+		opacity: 0.4;
+		cursor: not-allowed;
+	}
+	.hdr-btn:disabled:hover {
+		background: var(--bg);
+		color: var(--text);
 	}
 	.cols-menu {
 		position: absolute;
