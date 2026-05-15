@@ -245,12 +245,19 @@ def _group_chars_into_words(chars: List[LTChar],
 
 
 def _cluster_lines(line_chars: List[LTChar],
-                   y_tol_ratio: float = 0.4) -> List[List[LTChar]]:
-    """Cluster characters into horizontal lines by y-coordinate.
+                   min_overlap_ratio: float = 0.4) -> List[List[LTChar]]:
+    """Cluster characters into horizontal lines.
 
-    ``y_tol_ratio`` is relative to median char height. Characters whose
-    vertical centers lie within ``y_tol_ratio * median_height`` of each
-    other are assigned to the same line.
+    A new character joins an existing cluster when its vertical range
+    overlaps the cluster's vertical range by ``min_overlap_ratio`` of the
+    shorter of the two heights. This handles subscripts and superscripts:
+    a small "gd" subscript sitting under a Q has only ~75% overlap with
+    Q's full bbox but >40% relative to its own (smaller) height, so they
+    still cluster together.
+
+    The cluster's reference y-range is the *running min/max* of every
+    char added, so subscript-heavy rows don't gradually drift away from
+    the main baseline like a running-mean approach would.
     """
     if not line_chars:
         return []
@@ -259,31 +266,30 @@ def _cluster_lines(line_chars: List[LTChar],
     heights = [h for h in heights if h > 0]
     if not heights:
         return [line_chars]
-    heights.sort()
-    median_h = heights[len(heights) // 2]
-    y_tol = max(1.0, y_tol_ratio * median_h)
 
-    # sort top -> bottom (higher y first; pdf coord: y2 is top)
-    line_chars = sorted(line_chars, key=lambda c: -((c.bbox[1] + c.bbox[3]) * 0.5))
+    line_chars = sorted(line_chars, key=lambda c: -c.bbox[3])
 
     clusters: List[List[LTChar]] = []
-    cur_cy: Optional[float] = None
-    cur: List[LTChar] = []
+    cluster_y: List[Tuple[float, float, float]] = []  # (y1, y2, anchor_h)
+
+    def overlap(a1: float, a2: float, b1: float, b2: float) -> float:
+        return max(0.0, min(a2, b2) - max(a1, b1))
 
     for ch in line_chars:
-        cy = (ch.bbox[1] + ch.bbox[3]) * 0.5
-        if cur_cy is None or abs(cy - cur_cy) <= y_tol:
-            cur.append(ch)
-            # running average so a cluster can drift slightly
-            n = len(cur)
-            cur_cy = ((cur_cy or cy) * (n - 1) + cy) / n if cur_cy is not None else cy
-        else:
-            clusters.append(cur)
-            cur = [ch]
-            cur_cy = cy
-
-    if cur:
-        clusters.append(cur)
+        y1, y2 = ch.bbox[1], ch.bbox[3]
+        h = max(y2 - y1, 0.1)
+        assigned = False
+        for i, (cy1, cy2, ch_anchor_h) in enumerate(cluster_y):
+            ov = overlap(y1, y2, cy1, cy2)
+            ref = min(h, ch_anchor_h)
+            if ref > 0 and ov / ref >= min_overlap_ratio:
+                clusters[i].append(ch)
+                cluster_y[i] = (min(cy1, y1), max(cy2, y2), ch_anchor_h)
+                assigned = True
+                break
+        if not assigned:
+            clusters.append([ch])
+            cluster_y.append((y1, y2, h))
 
     return clusters
 
