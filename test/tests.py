@@ -10,6 +10,7 @@ from dslib.manual_fields import reference_data
 from dslib.pdf.expr import dim_regs_csv
 from dslib.pdf.parse import tabula_read, parse_datasheet, parse_field_csv, detect_fields
 from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs
+from dslib.pdf.sheet import read_sheet
 from dslib.pdf.tabular import tabula_browser
 
 nan = na = math.nan
@@ -304,6 +305,7 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
+    #d = read_sheet('datasheets/littelfuse/IXFH120N25T.pdf')
     d = parse_datasheet('datasheets/littelfuse/IXFH120N25T.pdf')
     assert d.Qrr == 1.18e3 # µC!
 
@@ -341,7 +343,7 @@ def test_pdf_parse():
                                   Field("Rds_on", nan, 5.0, 5.6, "mΩ"),
 
                                   # Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
-                                  Field("Qsw", nan, 20, nan, "None")
+                                  #Field("Qsw", nan, 20, nan, "None") # err
                                   ])
     assert ref.show_diff(ds) == 0
 

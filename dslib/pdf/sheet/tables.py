@@ -15,6 +15,9 @@ class DetectedRowField():
         self.row_index = row_index
         self.string_offset = string_offset
 
+    def __str__(self):
+        return f"{self.symbol}@{self.row_index}:{self.string_offset}"
+
     @property
     def is_head(self):
         return self.symbol.symbol == 'HEAD'

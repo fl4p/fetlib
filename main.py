@@ -280,6 +280,8 @@ def run(args: RunArgs, cargs, name):
         # do all the magic: download datasheets, read them and compute power loss:
         dss = read_parts_datasheets(parts, dotdict(cargs.__dict__))
 
+        dslib.store.parts_db.add([Part(discovered=ds.part, specs=mf) for ds in dss if (mf := get_fet_specs(ds)) ])
+
         if not args.vdsRange:
             dss = [ds for ds in dss if dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds'))]
 
@@ -533,6 +535,7 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
     for ds in dss:
         ds.add_multiple(ds.part.specs.fields())
 
+
     return dss
 
 
@@ -587,7 +590,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
     else:
         print('skip csv write because only few parts')
 
-    dslib.store.parts_db.add_background(result_parts, overwrite=True)
+    #dslib.store.parts_db.add(result_parts, overwrite=True)
     dslib.store.datasheets_db.add(dss, overwrite=True)
 
     print('')

@@ -52,7 +52,7 @@ class WriteBuffer():
             while self._buffer:
                 items.append(self._buffer.popitem())
             if items:
-                self._write_func(dict(items))
+                self._write_func(items)
             else:
                 time.sleep(4)
                 waiting += 1

@@ -549,14 +549,14 @@ def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
     # An Accurate Approach for Calculating the Eff. of a Synch. Buck Converter Using the MOSFET Plateau Voltage
     # equation (6) appears to be wrong.
 
-    assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9
+    assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9, (hs.part, hs.Qsw)
     rg_total = np.nanmax([hs.Rg, gd.rg_total])
     rg_total_dis = np.nanmax([hs.Rg, gd.rg_total_dis])
 
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
     if isGaN:
-        assert hs.Qsw < 10e-9
+        assert  math.isnan(hs.Qsw) or hs.Qsw < 10e-9, hs.Qsw
         assert von < 6
 
     vpl = (gd.fallback_V_pl / 2 if isGaN else gd.fallback_V_pl) if math.isnan(hs.V_pl) else hs.V_pl
