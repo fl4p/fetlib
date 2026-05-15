@@ -4,6 +4,8 @@ import math
 import pytest
 import timeout_decorator
 
+from dslib.field import Field
+
 test_stream_todo = """
 
 Qgs
@@ -61,10 +63,7 @@ Effective Output Capacitance (Time Related)
 690
 ---
 Diode Characteristics
-"""
 
-##########################################
-test_stream = """
 
 trr
 Reverse recovery time
@@ -76,7 +75,7 @@ diode recovery times)
 -
 108
 ns
-> trr=(n,n,108)
+> trr=(n,n,108) # TODO TODO
 
 
 Static drain-source on- resistance
@@ -92,6 +91,30 @@ Min.
 Typ.
 Max.
 > Rds_on=(n,3.9,4.5)
+
+
+Total Gate Charge Sync. (Qg - Qgd)
+---
+275
+---
+nC
+> Qg_sync = (n,275,n)
+
+
+RG(int)
+Internal Gate Resistance
+---
+0.80
+---
+Ω
+td(on)
+> Rg=(n,.8,n)
+
+"""
+
+##########################################
+test_stream = """
+
 
 
 Qgs
@@ -194,25 +217,6 @@ ISD = 40 A, VGS = 0 V
 V
 > Vsd=(n,n,1.25)
 
-
-Total Gate Charge Sync. (Qg - Qgd)
----
-275
----
-nC
-> Qg_sync = (n,275,n)
-
-
-
-
-RG(int)
-Internal Gate Resistance
----
-0.80
----
-Ω
-td(on)
-> Rg=(n,.8,n)
 
 
 
@@ -444,10 +448,24 @@ def test_extract_text():
 
     # TODO assert 'IRF150DM115XTMA1.pdf.r400_ocrmypdf.pdf' == 1
 
+
+
+
     # tRise tFall
 
     def p(s):
         return extract_fields_from_text(s, 'any', verbose='debug')
+
+    assert Field('Rg', 1,2,3,'W').typ == 2000
+
+    assert p("""
+    Gate resistance
+    R G
+    -
+    1
+    -
+    W
+        """).Rg.typ == 1000
 
     p("""
 Coss
@@ -580,14 +598,6 @@ ns
     4.2
     """).Qgs.typ == 9.6
 
-    assert p("""
-    Gate resistance
-    R G
-    -
-    1
-    -
-    W
-        """).Rg.typ == 1
 
     assert p("""Gate Charge Total (10 V)
     120
@@ -600,7 +610,7 @@ ns
     ---
     2.1
     ---
-    Ω""").Rg.typ == 2.1
+    Ω""").Rg.typ == 2.1e3
 
     assert p("""QG(TH)
                     VGS = 10 V, VDS = 40 V; ID = 50 A
@@ -640,7 +650,7 @@ ns
     2.4
     ---
     
-    Notes:    """, 'any').Rg.typ == 2.4
+    Notes:    """, 'any').Rg.typ == 2.4e3
 
     d = extract_fields_from_text("""QG
     71
