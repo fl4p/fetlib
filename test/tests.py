@@ -304,33 +304,42 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
+    d = parse_datasheet('datasheets/ao/AOB66515L.pdf')
+    assert d.Qrr == 1.18e3  # µC!
+
+    d = parse_datasheet('datasheets/vishay/SiR5808DP.pdf')
+    assert d.Vgs_th == (2, na, 4)
+
+    d = parse_datasheet('datasheets/infineon/IPDQ60R065S7.pdf')
+    assert d.Vds.max_or_typ_or_min == 600
+
     ds = parse_datasheet('datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
     ref = DatasheetFields("infineon", "BSB056N10NN3GXUMA2",
-                    fields=[Field("Qoss", nan, 73.0, 97.0, "nC"),
-                            Field("Rg", nan, 0.5, nan, "Ω"),
-                            Field("gfs", 34.0, 69.0, nan, "S"),
-                            Field("Ciss", nan, 4100.0, 5500.0, "pF"),
-                            Field("Coss", nan, 750.0, 1000.0, "pF"),
-                            Field("Crss", nan, 27.0, nan, "pF"),
+                          fields=[Field("Qoss", nan, 73.0, 97.0, "nC"),
+                                  Field("Rg", nan, 0.5, nan, "Ω"),
+                                  Field("gfs", 34.0, 69.0, nan, "S"),
+                                  Field("Ciss", nan, 4100.0, 5500.0, "pF"),
+                                  Field("Coss", nan, 750.0, 1000.0, "pF"),
+                                  Field("Crss", nan, 27.0, nan, "pF"),
 
-                            #Field("tDon", nan, 15.0, nan, "ns"),
-                            #Field("tRise", nan, 9.0, nan, "None"),
-                            #Field("tFall", nan, 8.0, nan, "None"),
-                            #Field("tDoff", nan, 25.0, nan, "None"),
+                                  # Field("tDon", nan, 15.0, nan, "ns"),
+                                  # Field("tRise", nan, 9.0, nan, "None"),
+                                  # Field("tFall", nan, 8.0, nan, "None"),
+                                  # Field("tDoff", nan, 25.0, nan, "None"),
 
-                            Field("Qgs", nan, 17.0, nan, "nC"),
-                            Field("Qgd", nan, 9.7, nan, "nC"),
-                            Field("Qg", nan, 56.0, 74.0, "nC"),
+                                  Field("Qgs", nan, 17.0, nan, "nC"),
+                                  Field("Qgd", nan, 9.7, nan, "nC"),
+                                  Field("Qg", nan, 56.0, 74.0, "nC"),
 
-                            Field("Vpl", nan, 4.2, nan, "V"),
-                            Field("Vsd", nan, 0.9, 1.2, "V"),
-                            Field("Qrr", nan, 174.0, nan, "nC"),
-                            Field("trr", nan, 64.0, nan, "ns"),
-                            Field("Rds_on", nan, 5.0, 5.6, "mΩ"),
+                                  Field("Vpl", nan, 4.2, nan, "V"),
+                                  Field("Vsd", nan, 0.9, 1.2, "V"),
+                                  Field("Qrr", nan, 174.0, nan, "nC"),
+                                  Field("trr", nan, 64.0, nan, "ns"),
+                                  Field("Rds_on", nan, 5.0, 5.6, "mΩ"),
 
-                            # Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
-                            Field("Qsw", nan, 20, nan, "None")
-                            ])
+                                  # Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
+                                  Field("Qsw", nan, 20, nan, "None")
+                                  ])
     assert ref.show_diff(ds) == 0
 
     d = parse_datasheet('../datasheets/rohm/././RJ1P10BBHTL1.pdf')
@@ -495,7 +504,7 @@ def test_pdf_parse():
     assert abs((d.get_mosfet_specs().Qsw * 1e9) - (d.Qgd.typ + d.Qgs.typ - d.Qg_th.typ)) < 1e-6
 
     d = parse_datasheet('../datasheets/panjit/PSMP050N10NS2_T0_00601.pdf')
-    assert d['Vpl'].typ == 5
+    assert d.Vpl.typ == 5
     assert d['Qgs'].typ == 15
     assert d['Qrr'].typ == 85 and d['Qrr'].max == 170
 
@@ -682,10 +691,8 @@ def test_pdf_parse():
     assert d.Vth == (3, na, 5)
     # .pdf parsing Qsw in Qsw,Switch Charge (Qgs2 + Qgd),---,4.1,---,nC
 
-
     d = parse_datasheet(mfr='infineon', mpn='IPA050N10NM5S')
     assert d.Rds == (na, 4.7, 5)
-
 
     d = parse_datasheet(mfr='goford', mpn='GT100N12M')
     assert d.Rds == (na, 7.4, 10)
@@ -1042,10 +1049,14 @@ def test_tabular_browser():
     d = dslib.pdf.parse.extract_fields_from_dataframes(dfs, mfr='vishay')
     assert d.Qg
     ref = DatasheetFields("None", "None",
-                          fields=[Field("Coss", nan, 614.0, nan, "pF"), Field("Qgs", nan, 17.0, nan, "nC"),
-                                  Field("Qgd", nan, 10.0, nan, "nC"), Field("tRise", nan, 8.0, 16.0, "nC"),
-                                  Field("tFall", nan, 9.0, 18.0, "nC"), Field("Qrr", nan, 70.0, 140.0, "nC"),
-                                  Field("Qg", nan, 55.0, 83.0, "nC"), Field("Vsd", nan, 0.72, 1.1, "V")])
+                          fields=[Field("Coss", nan, 614.0, nan, "pF"),
+                                  Field("Qgs", nan, 17.0, nan, "nC"),
+                                  Field("Qgd", nan, 10.0, nan, "nC"),
+                                  Field("tRise", nan, 8.0, 16.0, "nC"),
+                                  Field("tFall", nan, 9.0, 18.0, "nC"),
+                                  Field("Qrr", nan, 70.0, 140.0, "nC"),
+                                  Field("Qg", nan, 55.0, 83.0, "nC"),
+                                  Field("Vsd", nan, 0.72, 1.1, "V")])
     assert ref.show_diff(d) == 0
 
     dfs = tabula_browser('../datasheets/littelfuse/IXTQ180N10T.pdf')
