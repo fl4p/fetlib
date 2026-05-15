@@ -83,7 +83,7 @@ def _cluster_1d(items, key_idx, tol):
     return groups
 
 
-def _maximal_arithmetic_progressions(items, pos_idx, eps_v=0.05, eps_x=0.10, min_len=4):
+def _maximal_arithmetic_progressions(items, pos_idx, eps_v=0.05, eps_x=0.20, min_len=4):
     """Find all maximal sequences in *items* that are arithmetic in both value
     (index 0) and position (index *pos_idx*).  Each item is (value, cx, cy, bbox).
     """
