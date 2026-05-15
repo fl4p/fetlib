@@ -25,6 +25,7 @@ import pymupdf
 
 
 _NUM_RE = re.compile(r'^-?[0-9]+(?:\.[0-9]+)?$')
+_FIG_PREFIX_RE = re.compile(r'(?i)^(Fig|Figure|Diagram)\.?[0-9]*$')
 
 
 @dataclass
@@ -530,29 +531,73 @@ def find_gate_charge_charts(page: pymupdf.Page) -> List[ChartLocation]:
 
 
 _CHART_TITLE_RE = re.compile(
-    # 1. bare "<n>? Typ. gate charge" — no trailing suffix required.
-    # "Typ." and the number prefix may be separated by punctuation /
-    # spaces ("14 : Typ . gate charge") — pdfminer/tesseract sometimes
-    # break tokens apart.
-    r"([0-9]*[\s.:]*typ\s*\.?\s*gate[\s-]+charge\b.*"
-    r"|[0-9]*[\s.:]*typycal\s+gate[\s-]+charge\b.*"
-    # 2. "[Typ.] gate charge curve/vs/waveforms"
-    r"|(typ\s*\.?\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*"
-    # 3. "Figure / Diagram N. Gate Charge ..." — separator after the
-    # number is optional, and may be a dash ("Fig.6 - Gate Charge")
-    # rather than the more common "." / ":".
-    r"|(Diagram|Fig.?(ure)?)\s*[0-9]+\s*[.:\-]?\s+Gate[\s-]+Charge.*)",
+    # A chart caption / header that introduces a gate-charge plot.
+    # Built from the title patterns observed across infineon, MCC,
+    # panjit, onsemi, vishay, littelfuse, TI and EPC datasheets.
+    #
+    # Anchored to the start of the line so unrelated body-text mentions
+    # of "gate charge" (table rows, FOM blurbs, axis labels like
+    # "Qg, Gate Charge (nC)") can't accidentally match. Either a
+    # non-empty *prefix* introduces the caption, or the whole line *is*
+    # the bare "Gate Charge" caption.
+    #
+    #   A) ``Figure 16.`` / ``Fig.6`` / ``Fig. 11.`` / ``Figure 4-4.``
+    #      / ``Diagram 14:`` — optionally followed by ``Typ.`` /
+    #      ``Typical`` before ``Gate Charge``.
+    #   B) ``14 Typ. gate charge`` — bare numbered header, ``Typ.`` is
+    #      required. Tolerates pdfminer-split punctuation
+    #      (``14 : Typ . gate charge``).
+    #   C) ``Typ. gate charge`` / ``Typical gate charge`` — header
+    #      without a number.
+    #   D) Bare ``Gate Charge`` standalone caption (Vishay convention)
+    #      — the line is just the words "Gate Charge" optionally
+    #      followed by "Characteristics" / "Curve" / "vs. …", with
+    #      nothing else preceding. Body-text mentions
+    #      ("Total Gate Charge at 10 V", "Threshold Gate Charge", …)
+    #      have other words *before* "Gate Charge" so this alternative
+    #      doesn't fire on them.
+    r"^\s*(?:"
+    # A
+    r"(?:Diagram|Figure|Fig\.?)\s*[0-9]+(?:-[0-9]+)?\s*[.:\-]?\s+"
+    r"(?:Typ(?:ical|ycal)?\s*\.?\s+)?"
+    r"Gate[\s-]+Charge.*"
+    r"|"
+    # B
+    r"[0-9]+\s*[.:]?\s+Typ(?:ical|ycal)?\s*\.?\s+"
+    r"Gate[\s-]+Charge.*"
+    r"|"
+    # C
+    r"Typ(?:ical|ycal)?\s*\.?\s+"
+    r"Gate[\s-]+Charge.*"
+    r"|"
+    # D
+    r"Gate[\s-]+Charge"
+    r"(?:\s+(?:Characteristics?|Curves?|vs\.?\b.*))?"
+    r"\s*$"
+    r"|"
+    # E) ``Gate charge characteristic[s]`` followed by anything
+    # (parenthetical conditions, comma-separated qualifiers).
+    # Infineon F3L3 / IGBT-module datasheets use this style; the
+    # caption-line variation isn't covered by D's ``$`` anchor.
+    r"Gate[\s-]+Charge\s+Characteristics?\b.*"
+    r")",
     re.IGNORECASE,
 )
+
+
+_CAPTION_BREAK_RE = re.compile(r'^(Fig|Figure|Diagram)\.?$', re.IGNORECASE)
 
 
 def _group_words_by_line(words: List[_Word], y_tol: float = 3.0,
                          x_gap_split: float = 50.0
                          ) -> List[List[_Word]]:
-    """Group words by baseline (cy within ``y_tol``), then split each line
-    on horizontal gaps larger than ``x_gap_split`` — two charts' captions
-    that share a baseline (Infineon table-style layouts) must end up as
-    *separate* title candidates, not a single merged line.
+    """Group words by baseline (cy within ``y_tol``), then split each line:
+
+      * on horizontal gaps larger than ``x_gap_split``
+      * also whenever a new ``"Fig" / "Figure" / "Diagram"`` token
+        appears mid-line — two side-by-side chart captions on the same
+        baseline ("Fig 5. ... Fig 6. ...") may have a column gap < 50 pt
+        which would otherwise leave them glued together.
     """
     if not words:
         return []
@@ -571,7 +616,11 @@ def _group_words_by_line(words: List[_Word], y_tol: float = 3.0,
             continue
         chunk: List[_Word] = [line[0]]
         for w in line[1:]:
-            if w.x0 - chunk[-1].x1 > x_gap_split:
+            gap = w.x0 - chunk[-1].x1
+            break_on_caption = (gap > 3.0
+                                and len(chunk) >= 2
+                                and _CAPTION_BREAK_RE.match(w.text or ''))
+            if gap > x_gap_split or break_on_caption:
                 out.append(chunk)
                 chunk = [w]
             else:
@@ -655,11 +704,268 @@ def _scan_numeric_tick_column(words: List[_Word],
                 continue
             if max(vals) > 25 or min(vals) < -5:
                 continue
+            # Reject narrow, non-zero-anchored ranges (e.g. V_GS(th) vs
+            # temperature charts whose y axis runs 1.2..3.2). A real
+            # gate-charge V_GS axis either starts very near 0 or spans
+            # at least ~5 V across the visible ticks.
+            v_min, v_max = min(vals), max(vals)
+            if v_min > 0.5 and (v_max - v_min) < 5.0:
+                continue
             if best_run is None or len(run) > len(best_run):
                 best_run = run
     if not best_run:
         return []
     return [(float(w.text), w.cy) for w in sorted(best_run, key=lambda w: w.cy)]
+
+
+def _find_curve_top_y(page: pymupdf.Page,
+                      plot_frame: pymupdf.Rect) -> Optional[float]:
+    """Return the topmost (smallest y, in PDF coords) point reached by
+    a non-frame stroke segment that's part of the largest connected
+    polyline inside ``plot_frame``.
+
+    Wireframe-style charts (ST datasheets) don't expose their Y-axis
+    range as text; the curve's apex is the most reliable anchor for
+    "this y = V_drive". Frame edges, gridlines, and tick stubs are
+    excluded; the remaining segments are grouped by shared endpoints
+    and only the largest chain (the actual data curve) contributes to
+    the apex, so isolated in-plot glyph strokes from labels like
+    ``"VGS = 10 V"`` don't drag the anchor up to the legend region.
+    """
+    drawings = page.get_drawings()
+    fx0, fy0, fx1, fy1 = plot_frame.x0, plot_frame.y0, plot_frame.x1, plot_frame.y1
+    width = fx1 - fx0
+    height = fy1 - fy0
+    if width <= 0 or height <= 0:
+        return None
+
+    segments: List[Tuple[float, float, float, float]] = []
+    for d in drawings:
+        items = d.get('items', [])
+        for it in items:
+            if it[0] != 'l':
+                continue
+            p0, p1 = it[1], it[2]
+            if not (fx0 - 1 <= p0.x <= fx1 + 1 and fy0 - 1 <= p0.y <= fy1 + 1):
+                continue
+            if not (fx0 - 1 <= p1.x <= fx1 + 1 and fy0 - 1 <= p1.y <= fy1 + 1):
+                continue
+            dx = p1.x - p0.x
+            dy = p1.y - p0.y
+            cy = 0.5 * (p0.y + p1.y)
+            cx = 0.5 * (p0.x + p1.x)
+            if abs(dy) < 0.5 and (abs(cy - fy0) < 1.5 or abs(cy - fy1) < 1.5):
+                continue
+            if abs(dx) < 0.5 and (abs(cx - fx0) < 1.5 or abs(cx - fx1) < 1.5):
+                continue
+            if abs(dy) < 1.0 and abs(dx) > 0.8 * width:
+                continue
+            if abs(dx) < 1.0 and abs(dy) > 0.8 * height:
+                continue
+            segments.append((p0.x, p0.y, p1.x, p1.y))
+
+    if not segments:
+        return None
+
+    # Build connected-component clusters keyed by quantised endpoints
+    # (within ~1.5 pt, generous enough for stroke-end rounding errors).
+    parent = list(range(len(segments)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    tol = 1.5
+    # bucket endpoints into a coarse 2-D grid for O(n) lookup
+    from collections import defaultdict
+    grid: dict = defaultdict(list)
+    cell = 3.0
+    for i, (x0, y0, x1, y1) in enumerate(segments):
+        for ex, ey in ((x0, y0), (x1, y1)):
+            grid[(int(ex / cell), int(ey / cell))].append((ex, ey, i))
+    for i, (x0, y0, x1, y1) in enumerate(segments):
+        for ex, ey in ((x0, y0), (x1, y1)):
+            gx, gy = int(ex / cell), int(ey / cell)
+            for dx_c in (-1, 0, 1):
+                for dy_c in (-1, 0, 1):
+                    for ox, oy, j in grid[(gx + dx_c, gy + dy_c)]:
+                        if j == i:
+                            continue
+                        if abs(ox - ex) < tol and abs(oy - ey) < tol:
+                            union(i, j)
+
+    # Find the largest cluster by *total stroke length* — a chunk of
+    # text glyphs ("V_GS = 10 V" labels) is many short segments that
+    # cluster together, while the curve is fewer but much longer
+    # segments. Picking by total length suppresses the text cluster.
+    cluster_length: dict = defaultdict(float)
+    cluster_members: dict = defaultdict(list)
+    for i, (x0, y0, x1, y1) in enumerate(segments):
+        root = find(i)
+        cluster_length[root] += ((x1 - x0) ** 2 + (y1 - y0) ** 2) ** 0.5
+        cluster_members[root].append(i)
+
+    biggest = max(cluster_length, key=cluster_length.get)
+    if cluster_length[biggest] < 20.0:
+        return None
+    members = cluster_members[biggest]
+    best_y = min(min(segments[i][1], segments[i][3]) for i in members)
+    return best_y
+
+
+def _find_chart_wireframe(page: pymupdf.Page,
+                          title_bbox: pymupdf.Rect,
+                          starts_with_fig: bool
+                          ) -> Optional[Tuple[pymupdf.Rect, pymupdf.Rect]]:
+    """Detect a wireframe-style chart (vector rectangle frame, no text
+    labels) adjacent to ``title_bbox``.
+
+    ST datasheets (e.g. STB55NF06LT4 page 7 "Figure 7. Gate charge vs
+    gate-source voltage") draw the chart as a vector outline rectangle
+    with the curve inside; axis tick labels are rendered as glyphs that
+    pdfminer/pymupdf can't extract as text. In that layout neither
+    ``page.get_image_info`` nor ``_scan_numeric_tick_column`` returns
+    anything, so the existing image/tick-column paths give up.
+
+    Returns ``(outer_box, inner_plot_frame)`` if a plausible wireframe
+    sits within ~40 pt of the caption on its prefix-implied side, or
+    ``None`` if no such rectangle is found. The outer box is typically
+    a "filled background" rect that encloses the plot frame, axis labels
+    and tick marks; the inner stroke rect is the actual plot region (the
+    one the curve coordinates are measured against).
+    """
+    drawings = page.get_drawings()
+
+    # Collect every rectangle-shaped drawing. A rectangle drawing has a
+    # single ``re`` or ``qu`` item, or its bbox is consistent with a
+    # closed rectangle outline (4 line items).
+    rects: List[pymupdf.Rect] = []
+    for d in drawings:
+        items = d.get('items', [])
+        if not items:
+            continue
+        is_rect = False
+        if len(items) == 1 and items[0][0] in ('re', 'qu'):
+            is_rect = True
+        # An outline can also be 4 connected line segments forming a
+        # closed rectangle — keep this case so manufacturers who draw
+        # the frame piecewise (e.g. four ``l`` strokes) are caught too.
+        if not is_rect and len(items) == 4 and all(it[0] == 'l' for it in items):
+            r = d.get('rect')
+            if r is not None and r.width > 50 and r.height > 50:
+                is_rect = True
+        if not is_rect:
+            continue
+        r = d.get('rect')
+        if r is None:
+            continue
+        # Reasonable chart-frame size: 80–500 pt wide & tall.
+        if not (80 < r.width < 500 and 80 < r.height < 500):
+            continue
+        rects.append(pymupdf.Rect(r))
+
+    # Some manufacturers (ST STL70N4LLF5) don't draw a full rectangle —
+    # the plot frame is implied by an L-shape made of two thin filled
+    # strips: a vertical y-axis line on the left and a horizontal x-axis
+    # line at the bottom that share a corner. Reconstruct a virtual
+    # rectangle from any such pair, but only when no explicit
+    # rectangle drawings of similar dimensions exist (otherwise the
+    # L-shape might combine a page-wide divider with a chart-column
+    # axis and synthesize a way-too-wide rect that engulfs the real
+    # plot frame).
+    if not rects:
+        thin = 1.5  # max thickness of an axis strip
+        verticals = []
+        horizontals = []
+        for d in drawings:
+            r = d.get('rect')
+            if r is None:
+                continue
+            if r.width < thin and r.height > 60:
+                verticals.append(r)
+            elif r.height < thin and r.width > 60:
+                horizontals.append(r)
+        for v in verticals:
+            for h in horizontals:
+                # bottom of vertical strip must meet left of horizontal
+                # strip (matching corner ≈ shared coordinate)
+                if abs(v.y1 - h.y1) > 3 or abs(v.x0 - h.x0) > 3:
+                    continue
+                synth = pymupdf.Rect(
+                    min(v.x0, h.x0),
+                    min(v.y0, h.y0),
+                    max(v.x1, h.x1),
+                    max(v.y1, h.y1),
+                )
+                # Reasonable single-chart proportions: roughly square,
+                # 80..500 pt on each side and aspect ratio within 2×.
+                if not (80 < synth.width < 500 and 80 < synth.height < 500):
+                    continue
+                aspect = synth.width / synth.height
+                if aspect > 2.0 or aspect < 0.5:
+                    continue
+                rects.append(synth)
+
+    if not rects:
+        return None
+
+    # Prefer the side implied by the caption prefix, but fall back to
+    # the other side when nothing fits.
+    title_cx = 0.5 * (title_bbox.x0 + title_bbox.x1)
+    sides = (starts_with_fig, not starts_with_fig)
+    best: Optional[Tuple[float, pymupdf.Rect]] = None
+    best_side: Optional[bool] = None
+    for try_caption in sides:
+        for r in rects:
+            if try_caption:
+                # caption convention — chart sits *above* the caption
+                if r.y1 > title_bbox.y0:
+                    continue
+                d = title_bbox.y0 - r.y1
+            else:
+                if r.y0 < title_bbox.y1:
+                    continue
+                d = r.y0 - title_bbox.y1
+            if d > 40:
+                continue
+            # title must sit roughly above/below this rect horizontally
+            if not (r.x0 - 8 <= title_cx <= r.x1 + 8):
+                continue
+            if best is None or d < best[0]:
+                best = (d, r)
+                best_side = try_caption
+        if best is not None:
+            break
+    if best is None:
+        return None
+    _d, outer = best
+
+    # Look for a smaller stroke rectangle nested *inside* the outer
+    # frame — that's the plot region the curve coordinates use. Inset
+    # by at least 2 pt on each side, otherwise we'd just pick the outer
+    # frame again.
+    inner: Optional[pymupdf.Rect] = None
+    for r in rects:
+        if r == outer:
+            continue
+        if r.x0 < outer.x0 - 1 or r.y0 < outer.y0 - 1 \
+                or r.x1 > outer.x1 + 1 or r.y1 > outer.y1 + 1:
+            continue
+        if (r.x0 - outer.x0) < 2 and (outer.x1 - r.x1) < 2 \
+                and (r.y0 - outer.y0) < 2 and (outer.y1 - r.y1) < 2:
+            continue
+        if inner is None or r.width * r.height > inner.width * inner.height:
+            inner = r
+    if inner is None:
+        inner = outer
+    return outer, inner
 
 
 def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
@@ -780,6 +1086,11 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
         # vertical range, so a flat reference chart can't outscore the
         # real V_GS curve.
         extra_charts: List[ChartLocation] = []
+        # Carry the ticks discovered while searching for a tick column
+        # *outside* the eventual chart bbox — the chart bbox uses a
+        # narrower x-range that may exclude the y-axis tick labels,
+        # so re-scanning inside it later would miss them.
+        primary_ticks: List[Tuple[float, float]] = []
         if page_rect is not None:
             ordered_sides = (starts_with_fig, not starts_with_fig)
             for try_caption in ordered_sides:
@@ -799,15 +1110,30 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
                 ys = [y for _, y in ticks]
                 col_x0 = max(page_rect.x0, title_bbox.x0 - 60)
                 col_x1 = min(page_rect.x1, title_bbox.x1 + 160)
+                # Extend the bbox by ~one tick-spacing past the topmost
+                # and bottommost tick labels. Some charts (e.g. vishay
+                # SUP-series gate-charge) draw the plot frame and curve
+                # well above the topmost tick label, so a tight crop
+                # around the tick column would exclude the curve segment
+                # carrying the Miller plateau.
+                sorted_ys = sorted(ys)
+                if len(sorted_ys) >= 2:
+                    diffs = [sorted_ys[i + 1] - sorted_ys[i]
+                             for i in range(len(sorted_ys) - 1)]
+                    tick_spacing = max(diffs)
+                else:
+                    tick_spacing = 6.0
+                pad = max(6.0, tick_spacing)
                 candidate_bbox = pymupdf.Rect(col_x0,
-                                              min(ys) - 6,
+                                              min(ys) - pad,
                                               col_x1,
-                                              max(ys) + 6)
+                                              max(ys) + pad)
                 if img_rect is not None and abs(img_rect.y0 - candidate_bbox.y0) < 10:
                     continue
                 if img_rect is None:
                     img_rect = candidate_bbox
                     is_caption = try_caption
+                    primary_ticks = ticks
                 else:
                     extra_charts.append(ChartLocation(
                         page_num=page.number,
@@ -819,15 +1145,46 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
                         x_axis_word_bbox=title_bbox,
                     ))
         if img_rect is None:
-            continue
+            # Last-resort: detect a wireframe rectangle adjacent to the
+            # caption. ST-style datasheets render chart axes as vector
+            # glyphs (not text), so neither image-based nor tick-column
+            # search yields anything; the only signal is the plot
+            # frame's outline.
+            wf = _find_chart_wireframe(page, title_bbox, starts_with_fig)
+            if wf is None:
+                continue
+            _outer, inner = wf
+            img_rect = inner
+            # The wireframe path doesn't reveal numeric ticks. Calibrate
+            # V_GS axis assuming the chart's plotted curve ends at
+            # V_drive = 10 V at its rightmost / topmost point — that's
+            # the standard data-sheet convention (Q_g curve plotted up
+            # to the rated drive voltage). Using the *curve's* top y as
+            # the 10 V anchor instead of the plot-frame top handles ST
+            # datasheets whose Y axis extends past V_drive (e.g.
+            # STL70N4LLF5 with a 0..14 V scale and a 10 V curve end).
+            curve_top_y = _find_curve_top_y(page, inner)
+            if curve_top_y is None or curve_top_y < inner.y0 + 1:
+                # No usable curve detected, or curve reaches the frame
+                # top — fall back to the simple synthesis.
+                primary_ticks = [(10.0, inner.y0), (0.0, inner.y1)]
+            else:
+                primary_ticks = [(10.0, curve_top_y), (0.0, inner.y1)]
 
         # Refine y_ticks by looking for an OCRed numeric tick column in
         # the chart's expected y-range. This is much more accurate than
         # the default "10V at top of image, 0V at bottom" synthesis,
-        # which assumes the image edges == the plot frame.
-        y_ticks = _scan_numeric_tick_column(words, img_rect)
-        if not y_ticks:
-            y_ticks = [(10.0, img_rect.y0), (0.0, img_rect.y1)]
+        # which assumes the image edges == the plot frame. When the
+        # chart's text-axis ticks were already discovered in the wider
+        # search box above (i.e. ``primary_ticks`` is populated), use
+        # those — re-scanning inside ``img_rect`` will miss them when the
+        # tick labels sit slightly outside the synthesized chart bbox.
+        if primary_ticks and len(primary_ticks) >= 2:
+            y_ticks = primary_ticks
+        else:
+            y_ticks = _scan_numeric_tick_column(words, img_rect)
+            if not y_ticks:
+                y_ticks = [(10.0, img_rect.y0), (0.0, img_rect.y1)]
 
         loc = ChartLocation(
             page_num=page.number,

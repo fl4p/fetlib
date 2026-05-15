@@ -95,7 +95,9 @@ def _segments_from_drawing(d: dict) -> List[Segment]:
     return segs
 
 
-def _segments_from_drawing_filtered(d: dict) -> List[Segment]:
+def _segments_from_drawing_filtered(d: dict,
+                                    fill_as_thick_stroke: bool = False
+                                    ) -> List[Segment]:
     """Like ``_segments_from_drawing`` but discards drawings that look
     like legend rectangles or other chart annotations.
 
@@ -103,6 +105,12 @@ def _segments_from_drawing_filtered(d: dict) -> List[Segment]:
     line segments forming a closed quadrilateral — contributes zero
     segments. The Miller plateau lives in a stroked path with at least one
     oblique stroke.
+
+    With ``fill_as_thick_stroke=True``, a 3-edge filled path (a thin
+    triangle / parallelogram drawn to render a thick stroke) is reduced
+    to a single dominant edge — useful for charts where the curve is
+    drawn as filled polygons rather than stroked lines (some Infineon
+    IRF datasheets).
     """
     items = d['items']
     # Single rect op is always an annotation, never the curve.
@@ -115,6 +123,34 @@ def _segments_from_drawing_filtered(d: dict) -> List[Segment]:
         v = [s for s in raw if abs(s.dx) < 1.5]
         if len(h) == 2 and len(v) == 2:
             return []
+    if fill_as_thick_stroke and d.get('type') == 'f':
+        # A 3-edge fill is the chart-internal "thick stroke" idiom:
+        # two parallel long edges + one short cap. Keep the average of
+        # the two long edges so the segment represents the line itself.
+        if len(raw) == 3:
+            sorted_by_len = sorted(raw, key=lambda s: -s.length)
+            long_a, long_b = sorted_by_len[0], sorted_by_len[1]
+            if long_a.length > 3 * sorted_by_len[2].length:
+                # average endpoints of the two long edges
+                def midpt(a, b):
+                    return ((a + b) * 0.5)
+                # match endpoints by proximity
+                ax0, ay0, ax1, ay1 = long_a.x0, long_a.y0, long_a.x1, long_a.y1
+                bx0, by0, bx1, by1 = long_b.x0, long_b.y0, long_b.x1, long_b.y1
+                # try the two pairings, pick the one with shorter cross-distances
+                d_aa = (ax0 - bx0) ** 2 + (ay0 - by0) ** 2 + (ax1 - bx1) ** 2 + (ay1 - by1) ** 2
+                d_ab = (ax0 - bx1) ** 2 + (ay0 - by1) ** 2 + (ax1 - bx0) ** 2 + (ay1 - by0) ** 2
+                if d_aa <= d_ab:
+                    p0 = (midpt(ax0, bx0), midpt(ay0, by0))
+                    p1 = (midpt(ax1, bx1), midpt(ay1, by1))
+                else:
+                    p0 = (midpt(ax0, bx1), midpt(ay0, by1))
+                    p1 = (midpt(ax1, bx0), midpt(ay1, by0))
+                return [Segment(p0[0], p0[1], p1[0], p1[1])]
+        # Other filled shapes (4-edge closed quads handled above,
+        # legend swatches stripped) — keep as raw segments so the
+        # chrome filter / scorer can reject them.
+        return raw
     return raw
 
 
@@ -159,6 +195,32 @@ def _is_chart_chrome(seg: Segment, chart: ChartLocation,
     # 4. vertical segment that spans most of the chart height — gridline
     if abs(seg.dx) < axis_tol and abs(seg.dy) > 0.8 * height:
         return True
+
+    # 5. wide-ish horizontal segment landing exactly on a y-axis tick is
+    # almost certainly a gridline rather than the Miller plateau —
+    # plateaus naturally sit *between* the integer-volt ticks. Only
+    # filter when the segment is at least ~40% of the bbox width so
+    # short plateau segments (typically 5-15% of plot width) aren't
+    # accidentally rejected just because they happen to align with a
+    # tick. The 40% threshold also catches half-gridlines drawn as two
+    # adjacent ~50% segments (onsemi convention).
+    if abs(seg.dy) < axis_tol and abs(seg.dx) > 0.4 * width \
+            and len(chart.y_ticks) >= 2:
+        tick_ys = sorted(t[1] for t in chart.y_ticks)
+        diffs = [tick_ys[i + 1] - tick_ys[i] for i in range(len(tick_ys) - 1)]
+        positive = [d for d in diffs if d > 0.5]
+        if positive:
+            tick_spacing = min(positive)
+            # Loose snap: only firing for wide horizontals, so be
+            # generous (a gridline can drift up to ~25% of the tick
+            # spacing because of pdfminer's path-stroke offset / fill
+            # half-width). Plateaus that *also* happen to be wide
+            # *and* fall right on a tick are extremely rare in
+            # practice.
+            snap_tol = max(2.0, 0.25 * tick_spacing)
+            for _, ty in chart.y_ticks:
+                if abs(seg.cy - ty) < snap_tol:
+                    return True
 
     # 5. short horizontal segment glued to the left/right axis — y-axis
     # tick mark (e.g. an 8-pt stub on the chart's left edge)
@@ -232,28 +294,40 @@ def _calibrate_y(chart: ChartLocation) -> Tuple[float, float]:
 # ---------- public API ----------
 
 
-def _has_oblique_neighbor(seg: Segment,
-                          all_segments: List[Segment],
-                          tol: float = 2.0) -> bool:
-    """True if at least one of ``seg``'s endpoints touches a non-h/v
-    segment in ``all_segments``.
+def _oblique_neighbor_count(seg: Segment,
+                            all_segments: List[Segment],
+                            tol: float = 2.0) -> int:
+    """Return how many of ``seg``'s endpoints touch a non-h/v segment.
 
-    The Miller plateau connects to a rising curve on both sides; legend
-    rectangle edges connect only to vertical edges. So presence of an
-    oblique neighbour is a strong vote for "real plateau".
+    The Miller plateau is connected to a rising tangent on *both* sides
+    (one going into the plateau, one coming out) — so the canonical
+    plateau scores 2. A horizontal gridline that happens to start /
+    end at a curve endpoint touches at most one oblique stroke (the
+    curve crosses the gridline at one point, not two).
     """
-    endpoints = [(seg.x0, seg.y0), (seg.x1, seg.y1)]
+    p0 = (seg.x0, seg.y0)
+    p1 = (seg.x1, seg.y1)
+    hit0 = hit1 = False
     for s in all_segments:
         if s is seg:
             continue
-        # consider only diagonals
         if abs(s.dx) < 1.0 or abs(s.dy) < 1.0:
             continue
-        for ex, ey in endpoints:
-            for sx, sy in ((s.x0, s.y0), (s.x1, s.y1)):
-                if abs(ex - sx) < tol and abs(ey - sy) < tol:
-                    return True
-    return False
+        for sx, sy in ((s.x0, s.y0), (s.x1, s.y1)):
+            if not hit0 and abs(p0[0] - sx) < tol and abs(p0[1] - sy) < tol:
+                hit0 = True
+            if not hit1 and abs(p1[0] - sx) < tol and abs(p1[1] - sy) < tol:
+                hit1 = True
+        if hit0 and hit1:
+            break
+    return int(hit0) + int(hit1)
+
+
+def _has_oblique_neighbor(seg: Segment,
+                          all_segments: List[Segment],
+                          tol: float = 2.0) -> bool:
+    """Backwards-compatible wrapper (>=1 oblique neighbour)."""
+    return _oblique_neighbor_count(seg, all_segments, tol) >= 1
 
 
 def find_plateau(page: pymupdf.Page,
@@ -274,16 +348,47 @@ def find_plateau(page: pymupdf.Page,
     drawings = _drawings_in_bbox(page, chart.bbox)
 
     all_segments: List[Segment] = []
-    candidates: List[Segment] = []
+    pre_candidates: List[Segment] = []
     for d in drawings:
+        d_segs = _segments_from_drawing_filtered(d, fill_as_thick_stroke=True)
         if d.get('type') == 'f':
-            continue
-        d_segs = _segments_from_drawing_filtered(d)
+            # Filled drawings split into two kinds:
+            #   1. legend boxes / annotations (closed quadrilateral
+            #      rectangles) — already returned as [] by
+            #      ``_segments_from_drawing_filtered``.
+            #   2. three-edge "thick stroke" approximations of a curve
+            #      segment — keep the dominant edge as a stroke.
+            if not d_segs:
+                continue
         for seg in d_segs:
             all_segments.append(seg)
             if _is_chart_chrome(seg, chart):
                 continue
-            candidates.append(seg)
+            pre_candidates.append(seg)
+
+    # Composite-gridline filter: when several horizontal segments at the
+    # same y together span most of the chart width, they're a gridline
+    # drawn in pieces (e.g. onsemi V_GS axis with the title text
+    # "V_GS = 10 V" cutting the line in half). Filter them out so the
+    # plateau scorer doesn't sum their scores into a stronger-than-
+    # plateau cluster.
+    bbox_width = chart.bbox.x1 - chart.bbox.x0
+    cy_groups: dict = {}
+    for seg in pre_candidates:
+        if abs(seg.dy) >= 1.5:
+            continue
+        key = round(seg.cy / 1.5) * 1.5
+        cy_groups.setdefault(key, []).append(seg)
+    composite_gridline_ids = set()
+    for _key, segs in cy_groups.items():
+        if len(segs) < 2:
+            continue
+        total_span = sum(abs(s.dx) for s in segs)
+        if total_span > 0.7 * bbox_width:
+            for s in segs:
+                composite_gridline_ids.add(id(s))
+    candidates = [s for s in pre_candidates
+                  if id(s) not in composite_gridline_ids]
 
     # Reject charts that don't show a rising curve at all. A real
     # gate-charge curve has rising tangents going into and out of the
@@ -300,10 +405,22 @@ def find_plateau(page: pymupdf.Page,
         s = _segment_curve_score(seg, chart)
         if s <= 0:
             continue
-        # boost segments connected to an oblique stroke — that's the rising
-        # tangent of the curve into / out of the plateau, and what
-        # distinguishes a real plateau from a legend rectangle edge
-        if _has_oblique_neighbor(seg, all_segments):
+        # Boost segments connected to oblique strokes — those are the
+        # rising tangents that bracket a real Miller plateau. A
+        # segment with oblique neighbours on **both** endpoints
+        # (rising-in + rising-out) is the canonical plateau shape; one
+        # endpoint is weaker evidence (could be the curve merely
+        # crossing a gridline once). The two-sided boost is large
+        # enough to beat full-width gridlines that share an endpoint
+        # with the curve.
+        n_ob = _oblique_neighbor_count(seg, all_segments)
+        if n_ob >= 2:
+            # Two oblique neighbours (rising tangent into AND out of
+            # the plateau) is the canonical Miller-plateau shape; boost
+            # generously so it beats full-width gridlines that happen
+            # to share a single endpoint with the curve.
+            s *= 20.0
+        elif n_ob >= 1:
             s *= 3.0
         scored.append((s, seg))
 
@@ -325,7 +442,33 @@ def find_plateau(page: pymupdf.Page,
             groups.append([(score, seg)])
 
     def group_strength(g):
-        return sum(s for s, _ in g)
+        # Dedupe *near-identical* segments within the group before summing.
+        # Filled-polygon "thick stroke" curves and full-width gridlines
+        # frequently produce stacks of segments with the same endpoints,
+        # and a sum-based strength would let those triplicates outscore a
+        # single-drawn plateau. A segment counts as a duplicate of an
+        # earlier one only when **both endpoints** sit within ~2px of the
+        # earlier segment's endpoints (matched either way) — that catches
+        # true duplicates from fill triplicates without collapsing three
+        # genuinely stacked curves at slightly different x/y (different
+        # VDD conditions on the same chart).
+        accepted: List[Segment] = []
+        total = 0.0
+        tol = 2.0
+        for s, seg in sorted(g, key=lambda t: -t[0]):
+            dup = False
+            for prev in accepted:
+                d_same = (abs(seg.x0 - prev.x0) + abs(seg.y0 - prev.y0)
+                          + abs(seg.x1 - prev.x1) + abs(seg.y1 - prev.y1))
+                d_swap = (abs(seg.x0 - prev.x1) + abs(seg.y0 - prev.y1)
+                          + abs(seg.x1 - prev.x0) + abs(seg.y1 - prev.y0))
+                if min(d_same, d_swap) < 4 * tol:
+                    dup = True
+                    break
+            if not dup:
+                accepted.append(seg)
+                total += s
+        return total
 
     groups.sort(key=group_strength, reverse=True)
     best = groups[0]
@@ -426,23 +569,53 @@ def find_in_pdf(pdf_path: str,
             continue
         std_charts = list(find_gate_charge_charts(page))
         title_charts = list(_find_infineon_raster_charts(page))
-        # Try the standard charts first. Only fall back to title-
+        # Try the standard charts first; only fall back to title-
         # anchored charts when none of the standard ones yielded a
-        # plateau — that avoids the wider title-anchored bbox stealing
-        # the win from a valid, tightly-bounded standard hit while
-        # still recovering charts the standard finder missed entirely
-        # (or returned a too-narrow bbox for, leaving the trace's
-        # vertical span too small to clear the
-        # ``find_plateau_raster`` sanity check).
+        # **vector** plateau hit. A standard chart that succeeds only
+        # via the raster fallback is much less reliable (raster can
+        # latch onto V=0 gridlines on flat-line plots), so we still try
+        # the title-anchored chart in parallel and let ``find_vpl``
+        # pick the higher-scoring candidate. This also recovers charts
+        # the standard finder missed entirely (or returned a too-narrow
+        # bbox for, leaving the trace's vertical span too small to
+        # clear the ``find_plateau_raster`` sanity check).
         page_results = []
-        any_hit = False
+        any_vector_hit = False
+        std_vector_hit_charts: List[ChartLocation] = []
+        std_plausible_charts: List[ChartLocation] = []
         for chart in std_charts:
             hit, source = _vector_or_raster(page, chart, enable_raster)
             page_results.append((chart, hit, source))
             if hit is not None:
-                any_hit = True
-        if not any_hit and title_charts:
+                if source == 'vector':
+                    std_vector_hit_charts.append(chart)
+                    any_vector_hit = True
+                # A raster hit landing inside the canonical Miller-
+                # plateau range (≈ 1.5..7 V) is much more trustworthy
+                # than the wider-bbox title-anchored finder's hit on
+                # the same chart, which tends to latch onto the
+                # curve's high-V endpoint when the bbox includes the
+                # x-axis title and gridlines outside the plot frame.
+                # Treat these as "plausible" and use them to suppress
+                # overlapping title-anchored alternates.
+                v = getattr(hit, 'v_pl', None)
+                if v is not None and 1.5 < v < 7.5:
+                    std_plausible_charts.append(chart)
+        if not any_vector_hit and title_charts:
             for chart in title_charts:
+                # Skip the title chart when it overlaps a std chart
+                # that already produced a trustworthy hit (vector, or
+                # raster in the typical Miller-plateau voltage range).
+                # An unreliable std-raster hit (e.g. V≈0 from a flat
+                # mis-anchored chart) doesn't suppress the title-
+                # anchored fallback — that's what saves SIJ482DP /
+                # SUP85N15-style cases where std mis-anchors.
+                if any(_chart_bboxes_overlap(chart.bbox, s.bbox)
+                       for s in std_vector_hit_charts):
+                    continue
+                if any(_chart_bboxes_overlap(chart.bbox, s.bbox)
+                       for s in std_plausible_charts):
+                    continue
                 hit, source = _vector_or_raster(page, chart, enable_raster)
                 page_results.append((chart, hit, source))
         out.extend(page_results)
