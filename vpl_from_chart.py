@@ -26,7 +26,27 @@ import fitz  # PyMuPDF
 import numpy as np
 
 X_AXIS_KEYWORDS = ('q', 'qg', 'qgate', 'charge', 'gate charge', 'nc')
-Y_AXIS_KEYWORDS = ('vgs', 'v gs', 'gate-source', 'gate to source', 'gate-to-source')
+# Y axis covers V_GS for MOSFETs and V_GE for IGBTs — the Miller-plateau
+# mechanism is the same.
+Y_AXIS_KEYWORDS = ('vgs', 'v gs', 'gate-source', 'gate to source', 'gate-to-source',
+                   'vge', 'v ge', 'gate-emitter', 'gate to emitter', 'gate-to-emitter')
+# Compiled word-bounded versions of the keyword lists — substring matching
+# like 'nc' in 'Resistance' was giving false positives, so each keyword has to
+# match as a whole word (or unit-style "(nC)" / "[nC]").
+_KW_RE_CACHE: dict = {}
+
+
+def _kw_regex(words):
+    """Compile a regex that matches any of *words* at a word boundary."""
+    key = tuple(words)
+    if key in _KW_RE_CACHE:
+        return _KW_RE_CACHE[key]
+    pat = re.compile(
+        r'(?<![a-z0-9_])(?:' + '|'.join(re.escape(w) for w in words) + r')(?![a-z0-9_])',
+        re.I,
+    )
+    _KW_RE_CACHE[key] = pat
+    return pat
 
 # Caption regex used to locate gate-charge chart titles like
 #   "14 Typ. gate charge"          (Infineon recent)
@@ -226,7 +246,11 @@ def _text_in_box(spans, x0, y0, x1, y1) -> str:
 
 
 def _has_any(text_lower: str, keywords) -> bool:
-    return any(k in text_lower for k in keywords)
+    # Use word-bounded regex matching instead of plain substring; short
+    # keywords like 'q' or 'nc' would otherwise match inside unrelated words
+    # like 'Resistance', 'frequency', etc., and pull in non-gate-charge
+    # charts (transfer characteristics, Rds_on vs Id, ...).
+    return bool(_kw_regex(keywords).search(text_lower))
 
 
 def find_gate_charge_charts(doc) -> List[ChartFrame]:
@@ -249,13 +273,11 @@ def find_gate_charge_charts(doc) -> List[ChartFrame]:
                 vys = v.cy
                 vx = float(np.mean(v.cx))
                 vvs = v.values
-                # V_GS axis covers roughly 0..±(5..25) V — accept either an
-                # all-positive (N-channel) or all-negative (P-channel) axis;
-                # reject ranges that cross zero (those are some other chart).
+                # V_GS axis: roughly 0..(+5..+25)V for N-channel,
+                # 0..(-5..-25)V for P-channel.  IGBT V_GE ranges are typically
+                # symmetric around zero (e.g. -15..+15V) — accept those too.
                 vabs_max = max(abs(min(vvs)), abs(max(vvs)))
                 if vabs_max < 4 or vabs_max > 25:
-                    continue
-                if min(vvs) < -1 and max(vvs) > 1:  # spans zero significantly
                     continue
                 # Geometric corner: vertical axis sits to the left of x-axis labels,
                 # horizontal axis sits below vertical axis labels.
@@ -940,7 +962,11 @@ def find_plateau_vpl(inner_mask: np.ndarray, transform: np.ndarray, debug=None) 
         return None
 
     # Group neighbouring rows (within a few pixels) and pick the group with the
-    # longest run.  Within a group the central row (max length) is the plateau.
+    # most TOTAL ink.  The actual plateau spans several rows because the curve
+    # has finite line thickness and (for parametric V_DS curves) is rendered as
+    # a stack of overlapping lines; a stray dimension arrow or text underline
+    # near the plateau has the same max-run but only one row of ink, so summing
+    # the per-row run lengths reliably distinguishes them.
     candidates.sort(key=lambda c: c[1])  # by row
     groups = [[candidates[0]]]
     band_tol = max(2, int(round(scale * 0.8)))
@@ -949,7 +975,11 @@ def find_plateau_vpl(inner_mask: np.ndarray, transform: np.ndarray, debug=None) 
             groups[-1].append(c)
         else:
             groups.append([c])
-    best_group = max(groups, key=lambda g: max(c[0] for c in g))
+    # Score each group: total ink (sum of per-row lengths); fall back to max
+    # length on ties.
+    def group_score(g):
+        return (sum(c[0] for c in g), max(c[0] for c in g))
+    best_group = max(groups, key=group_score)
     best = max(best_group, key=lambda c: c[0])
     _, y_plateau, x_lo, x_hi = best
 
