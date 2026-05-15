@@ -382,10 +382,16 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     # Vpl
     if not math.isfinite(ds.get_max_or_min_or_typ('Vpl')):
-        from vpl_from_chart import vpl_from_pdf, _pick_best
-        vpl = _pick_best(vpl_from_pdf(pdf_path))
-        if vpl:
-            ds.add(Field('Vpl', min=math.nan, typ=round(vpl['vpl'], 1), max=math.nan, unit='V', source='vplFromPdf'))
+
+        from viz import find_vpl
+        vpl = find_vpl(pdf_path)
+
+        #from vpl_from_chart import vpl_from_pdf, _pick_best
+        #vpl = _pick_best(vpl_from_pdf(pdf_path))
+        #if vpl:
+         #   vpl = vpl['vpl']
+        if vpl and math.isfinite(vpl):
+            ds.add(Field('Vpl', min=math.nan, typ=round(vpl, 1), max=math.nan, unit='V', source='vplFromPdf'))
 
     if need_symbols:
         subsctract_needed_symbols(need_symbols, ds.keys())
@@ -629,7 +635,7 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
             return f
         except Exception as e:
             if has_digits(str(s)):
-                msg = (field_sym, 'error parsing field row', s, e)
+                msg = (field_sym, 'error parsing field row', s, type(e), e)
                 if msg not in err:
                     err.append(msg)
             continue
