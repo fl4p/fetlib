@@ -285,6 +285,15 @@ def find_plateau(page: pymupdf.Page,
                 continue
             candidates.append(seg)
 
+    # Reject charts that don't show a rising curve at all. A real
+    # gate-charge curve has rising tangents going into and out of the
+    # plateau — oblique strokes. A chart that only contains horizontal
+    # segments (e.g. a V_th-vs-temperature chart with a near-constant
+    # line) has zero oblique segments, so the title-anchored finder
+    # shouldn't mistake its flat curve for a Miller plateau.
+    if not any(abs(s.dx) > 1 and abs(s.dy) > 1 for s in candidates):
+        return None
+
     # score each candidate for plateau-likelihood
     scored: List[Tuple[float, Segment]] = []
     for seg in candidates:
@@ -415,16 +424,28 @@ def find_in_pdf(pdf_path: str,
         text = page.get_text()
         if 'gate charge' not in text.lower() and 'qg' not in text.lower():
             continue
-        charts = list(find_gate_charge_charts(page))
-        # always also consider title-anchored charts — on OCRed pages the
-        # standard tick-based finder often locks onto noisy fragments
-        # and the title path produces a cleaner bbox.
-        for c in _find_infineon_raster_charts(page):
-            if not any(_chart_bboxes_overlap(c.bbox, x.bbox) for x in charts):
-                charts.append(c)
-        for chart in charts:
+        std_charts = list(find_gate_charge_charts(page))
+        title_charts = list(_find_infineon_raster_charts(page))
+        # Try the standard charts first. Only fall back to title-
+        # anchored charts when none of the standard ones yielded a
+        # plateau — that avoids the wider title-anchored bbox stealing
+        # the win from a valid, tightly-bounded standard hit while
+        # still recovering charts the standard finder missed entirely
+        # (or returned a too-narrow bbox for, leaving the trace's
+        # vertical span too small to clear the
+        # ``find_plateau_raster`` sanity check).
+        page_results = []
+        any_hit = False
+        for chart in std_charts:
             hit, source = _vector_or_raster(page, chart, enable_raster)
-            out.append((chart, hit, source))
+            page_results.append((chart, hit, source))
+            if hit is not None:
+                any_hit = True
+        if not any_hit and title_charts:
+            for chart in title_charts:
+                hit, source = _vector_or_raster(page, chart, enable_raster)
+                page_results.append((chart, hit, source))
+        out.extend(page_results)
 
     if out or not enable_ocr or _ocr_attempted:
         return out

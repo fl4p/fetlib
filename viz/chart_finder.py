@@ -299,6 +299,34 @@ def _values_linear_in_position(words, key_pos, rel_tol: float = 0.2) -> bool:
     return True
 
 
+def _longest_linear_subrun(words, key_pos, rel_tol: float = 0.2,
+                           min_len: int = 3) -> list:
+    """Among value-monotonic, slope-consistent contiguous sub-runs of
+    ``words``, return the longest. Lets a single equispaced position run
+    be split on value discontinuities — e.g. a tick column shared by two
+    stacked charts where positions are evenly spaced across both but
+    *values* aren't.
+    """
+    if len(words) < min_len:
+        return list(words) if _values_linear_in_position(words, key_pos, rel_tol) else []
+
+    try:
+        vals = [float(w.text) for w in words]
+    except ValueError:
+        return []
+    poss = [key_pos(w) for w in words]
+
+    best: list = []
+    n = len(words)
+    for i in range(n - min_len + 1):
+        for j in range(i + min_len, n + 1):
+            sub = words[i:j]
+            if _values_linear_in_position(sub, key_pos, rel_tol):
+                if len(sub) > len(best):
+                    best = list(sub)
+    return best
+
+
 def _calibrate_axes(words: List[_Word],
                     yword: _Word,
                     xword_left: _Word,
@@ -344,10 +372,12 @@ def _calibrate_axes(words: List[_Word],
             continue
         sorted_cl = sorted(cl, key=lambda w: w.cy)
         for run in _all_equispaced_runs(sorted_cl):
-            try:
-                if not _values_linear_in_position(run, key_pos=lambda w: w.cy):
-                    continue
-            except ValueError:
+            # An equispaced position run shared by two stacked charts can
+            # contain a value discontinuity (e.g. 1.05→0.90 followed by
+            # 10→0). Take the longest value-linear sub-run to recover
+            # the actual chart's ticks.
+            run = _longest_linear_subrun(run, key_pos=lambda w: w.cy)
+            if len(run) < 3:
                 continue
             ys = [w.cy for w in run]
             y_lo, y_hi = min(ys), max(ys)
@@ -382,10 +412,8 @@ def _calibrate_axes(words: List[_Word],
         sorted_cl = sorted(cl, key=lambda w: w.cx)
         for run in _all_equispaced_runs(sorted_cl,
                                         pos=lambda w: w.cx):
-            try:
-                if not _values_linear_in_position(run, key_pos=lambda w: w.cx):
-                    continue
-            except ValueError:
+            run = _longest_linear_subrun(run, key_pos=lambda w: w.cx)
+            if len(run) < 3:
                 continue
             # distance from the run's leftmost tick to the y-axis column.
             # Small distance = this chart's x-axis. Large positive distance
@@ -502,12 +530,17 @@ def find_gate_charge_charts(page: pymupdf.Page) -> List[ChartLocation]:
 
 
 _CHART_TITLE_RE = re.compile(
-    # 1. bare "<n>? Typ. gate charge" — no trailing suffix required
-    r"([0-9]*\s*typ(\.|ycal)\s+gate[\s-]+charge\b.*"
+    # 1. bare "<n>? Typ. gate charge" — no trailing suffix required.
+    # "Typ." and the number prefix may be separated by punctuation /
+    # spaces ("14 : Typ . gate charge") — pdfminer/tesseract sometimes
+    # break tokens apart.
+    r"([0-9]*[\s.:]*typ\s*\.?\s*gate[\s-]+charge\b.*"
+    r"|[0-9]*[\s.:]*typycal\s+gate[\s-]+charge\b.*"
     # 2. "[Typ.] gate charge curve/vs/waveforms"
-    r"|(typ(\.|ycal)\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*"
-    # 3. "Figure / Diagram N. Gate Charge ..."
-    r"|(Diagram|Fig.?(ure)?)\s*[0-9]+\s*[.:]\s*Gate[\s-]+Charge.*)",
+    r"|(typ\s*\.?\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*"
+    # 3. "Figure / Diagram N. Gate Charge ..." (separator is optional —
+    # some manufacturers write "Fig.6 Gate Charge" without "." or ":")
+    r"|(Diagram|Fig.?(ure)?)\s*[0-9]+\s*[.:]?\s+Gate[\s-]+Charge.*)",
     re.IGNORECASE,
 )
 
@@ -548,6 +581,11 @@ def _group_words_by_line(words: List[_Word], y_tol: float = 3.0,
 
 
 _FOOTNOTE_START_RE = re.compile(r'^(\*+\)|[0-9]+\)|See\b|see\b|cf\.)')
+# Captions that mention "gate charge" but refer to a *circuit* / timing
+# waveform diagram, not the V_GS-vs-Q_G curve.
+_NON_CURVE_TITLE_RE = re.compile(
+    r'(?i)(test\s+circuit|circuit\s*&\s*waveform|circuit\s+and\s+waveform)'
+)
 
 
 def _find_chart_title_lines(words: List[_Word]
@@ -557,6 +595,8 @@ def _find_chart_title_lines(words: List[_Word]
     Filters out:
       * lines starting with footnote markers (``"*) See …"`` etc.) that
         happen to contain ``"gate charge waveforms"`` as a reference
+      * captions for circuit / timing diagrams ("Gate Charge Test
+        Circuit & Waveform") — those don't carry a Miller plateau
       * when more than one match remains, drops "waveform" lines so the
         switching-diagram caption can't outrank the canonical V_GS-vs-Q_G
         chart title sharing the same page.
@@ -566,8 +606,9 @@ def _find_chart_title_lines(words: List[_Word]
         text = ' '.join(w.text for w in line).strip()
         if not text:
             continue
-        # skip footnotes / references that mention "gate charge"
         if _FOOTNOTE_START_RE.match(text):
+            continue
+        if _NON_CURVE_TITLE_RE.search(text):
             continue
         if _CHART_TITLE_RE.search(text):
             out.append(line)
@@ -577,6 +618,47 @@ def _find_chart_title_lines(words: List[_Word]
         if non_wave:
             return non_wave
     return out
+
+
+def _scan_numeric_tick_column(words: List[_Word],
+                              chart_bbox: pymupdf.Rect
+                              ) -> List[Tuple[float, float]]:
+    """Find a vertical column of numeric tick labels inside ``chart_bbox``.
+
+    Used by the title-anchored chart finder when the standard yword
+    cannot be located (typical of OCRed PDFs whose vertical "V_GS" axis
+    label garbles during recognition). Returns the captured ticks in
+    ``[(value, cy)]`` form, or ``[]`` if no plausible run is found.
+    """
+    nums = [w for w in words
+            if _NUM_RE.match(w.text)
+            and chart_bbox.x0 <= w.cx <= chart_bbox.x1
+            and chart_bbox.y0 <= w.cy <= chart_bbox.y1]
+
+    x_clusters = _cluster(nums, lambda w: w.cx, 6.0)
+    best_run: Optional[List[_Word]] = None
+    for cl in x_clusters:
+        if len(cl) < 3:
+            continue
+        sorted_cl = sorted(cl, key=lambda w: w.cy)
+        for run in _all_equispaced_runs(sorted_cl):
+            run = _longest_linear_subrun(run, key_pos=lambda w: w.cy)
+            if len(run) < 3:
+                continue
+            # Reject Q_G-like x-axis runs (large values, positive going
+            # rightward) by requiring the tick values to span a small
+            # absolute range — V_GS ticks are 0..20.
+            try:
+                vals = [float(w.text) for w in run]
+            except ValueError:
+                continue
+            if max(vals) > 25 or min(vals) < -5:
+                continue
+            if best_run is None or len(run) > len(best_run):
+                best_run = run
+    if not best_run:
+        return []
+    return [(float(w.text), w.cy) for w in sorted(best_run, key=lambda w: w.cy)]
 
 
 def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
@@ -602,8 +684,6 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
         return []
 
     images = page.get_image_info(hashes=False)
-    if not images:
-        return []
 
     out: List[ChartLocation] = []
     for grp in title_lines:
@@ -613,52 +693,140 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
 
         # The chart bitmap can be either below the title (header style:
         # "Typ. gate charge") or above it (caption style: "Figure 16.
-        # Gate Charge ..."). Pick the closest image that is also
-        # horizontally aligned with the title.
+        # Gate Charge ..."). Pick the closest image / tick column that
+        # is also horizontally aligned with the title — try both sides
+        # and let the data decide. Some manufacturers (MCC) use the
+        # ``Fig.N`` prefix as a header even though it conventionally is
+        # a caption.
         title_text = ' '.join(w.text for w in grp)
-        is_caption = bool(re.match(r'(?i)\s*Fig', title_text))
+        # default ordering: try caption side first if "Fig"/"Figure"
+        # prefix is present, otherwise try header side first
+        starts_with_fig = bool(re.match(r'(?i)\s*Fig', title_text))
 
         title_cx = 0.5 * (title_bbox.x0 + title_bbox.x1)
 
+        # find the page rect (for the full-page-image fallback below)
+        try:
+            page_rect = page.rect
+        except Exception:
+            page_rect = None
+
         img_rect: Optional[pymupdf.Rect] = None
+        is_caption = starts_with_fig
         best_d = float('inf')
-        for img in images:
+        full_page_image: Optional[pymupdf.Rect] = None
+        for img in (images or []):
             b = img.get('bbox')
             if not b:
                 continue
             r = pymupdf.Rect(b)
+            # Track full-page images (typical of OCRed PDFs): the chart
+            # bbox here can't come from the image rect; we'll fall back
+            # to a synthetic region near the title.
+            if page_rect is not None:
+                pw = page_rect.width
+                ph = page_rect.height
+                if (r.width >= 0.9 * pw and r.height >= 0.9 * ph):
+                    full_page_image = r
+                    continue
+            # Try both sides. ``side==-1`` is "image above title"
+            # (caption style), ``side==+1`` is "image below title"
+            # (header style). Within the same side preference, take the
+            # closer image. We try the title's prefix-implied side first
+            # so the right interpretation wins on the typical case.
+            for try_caption in (starts_with_fig, not starts_with_fig):
+                if try_caption:
+                    if r.y1 > title_bbox.y0:
+                        continue
+                    d = title_bbox.y0 - r.y1
+                else:
+                    if r.y0 < title_bbox.y1:
+                        continue
+                    d = r.y0 - title_bbox.y1
+                if d > 40:
+                    continue
+                if not (r.x0 - 5 <= title_cx <= r.x1 + 5):
+                    continue
+                if d < best_d:
+                    best_d = d
+                    img_rect = r
+                    is_caption = try_caption
+                break
+        if img_rect is None and full_page_image is not None and page_rect is not None:
+            # OCRed PDF — the whole page is one image. Synthesize a chart
+            # bbox tightly anchored to the title's x extent: the chart's
+            # left frame sits a few points before the title's leftmost
+            # character, and the plot extends to the right past the
+            # title's rightmost character.
+            col_x0 = max(page_rect.x0, title_bbox.x0 - 8)
+            col_x1 = min(page_rect.x1, title_bbox.x1 + 110)
+            chart_h = 260.0
             if is_caption:
-                # caption sits below the chart → image is above
-                if r.y1 > title_bbox.y0:
-                    continue
-                d = title_bbox.y0 - r.y1
+                cy0 = max(page_rect.y0, title_bbox.y0 - chart_h - 4)
+                cy1 = title_bbox.y0 - 2
             else:
-                # title sits above the chart → image is below
-                if r.y0 < title_bbox.y1:
+                cy0 = title_bbox.y1 + 2
+                cy1 = min(page_rect.y1, title_bbox.y1 + chart_h + 4)
+            img_rect = pymupdf.Rect(col_x0, cy0, col_x1, cy1)
+        # Probe both sides of the title. The prefix-implied side is
+        # tried first (caption above for "Fig.N", header below for
+        # "Typ. gate charge"); when the first side has no usable tick
+        # column, the other side is used. Both sides may also produce
+        # candidates — those are emitted as alternates and the
+        # downstream plateau scorer picks the one that actually shows
+        # a rising curve. ``find_plateau`` and ``find_plateau_raster``
+        # both reject charts whose curve doesn't sweep most of the
+        # vertical range, so a flat reference chart can't outscore the
+        # real V_GS curve.
+        extra_charts: List[ChartLocation] = []
+        if page_rect is not None:
+            ordered_sides = (starts_with_fig, not starts_with_fig)
+            for try_caption in ordered_sides:
+                if try_caption:
+                    search_y0 = max(page_rect.y0, title_bbox.y0 - 260)
+                    search_y1 = title_bbox.y0 - 2
+                else:
+                    search_y0 = title_bbox.y1 + 2
+                    search_y1 = min(page_rect.y1, title_bbox.y1 + 260)
+                search_x0 = max(page_rect.x0, title_bbox.x0 - 80)
+                search_x1 = min(page_rect.x1, title_bbox.x1 + 200)
+                search_box = pymupdf.Rect(search_x0, search_y0,
+                                          search_x1, search_y1)
+                ticks = _scan_numeric_tick_column(words, search_box)
+                if len(ticks) < 2:
                     continue
-                d = r.y0 - title_bbox.y1
-            if d > 40:
-                continue
-            # Require the title's centre to fall inside the image's x
-            # range (with a small slack). That rules out the
-            # neighbouring-column image in two-column layouts where the
-            # gap between columns is < 30 pt.
-            if not (r.x0 - 5 <= title_cx <= r.x1 + 5):
-                continue
-            if d < best_d:
-                best_d = d
-                img_rect = r
+                ys = [y for _, y in ticks]
+                col_x0 = max(page_rect.x0, title_bbox.x0 - 60)
+                col_x1 = min(page_rect.x1, title_bbox.x1 + 160)
+                candidate_bbox = pymupdf.Rect(col_x0,
+                                              min(ys) - 6,
+                                              col_x1,
+                                              max(ys) + 6)
+                if img_rect is not None and abs(img_rect.y0 - candidate_bbox.y0) < 10:
+                    continue
+                if img_rect is None:
+                    img_rect = candidate_bbox
+                    is_caption = try_caption
+                else:
+                    extra_charts.append(ChartLocation(
+                        page_num=page.number,
+                        bbox=candidate_bbox,
+                        y_ticks=ticks,
+                        x_ticks=[],
+                        title=title_text,
+                        y_axis_word_bbox=None,
+                        x_axis_word_bbox=title_bbox,
+                    ))
         if img_rect is None:
             continue
 
-        # synthesize y-axis ticks: top of the image plot ≈ 10 V, bottom ≈
-        # 0 V. The raster extractor will refine these against the actual
-        # plot border by re-running the calibration on the image's tick
-        # span — see ``viz.raster_extract``.
-        y_ticks: List[Tuple[float, float]] = [
-            (10.0, img_rect.y0),
-            (0.0, img_rect.y1),
-        ]
+        # Refine y_ticks by looking for an OCRed numeric tick column in
+        # the chart's expected y-range. This is much more accurate than
+        # the default "10V at top of image, 0V at bottom" synthesis,
+        # which assumes the image edges == the plot frame.
+        y_ticks = _scan_numeric_tick_column(words, img_rect)
+        if not y_ticks:
+            y_ticks = [(10.0, img_rect.y0), (0.0, img_rect.y1)]
 
         loc = ChartLocation(
             page_num=page.number,
@@ -670,6 +838,7 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
             x_axis_word_bbox=title_bbox,
         )
         out.append(loc)
+        out.extend(extra_charts)
     return out
 
 

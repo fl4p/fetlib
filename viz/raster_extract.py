@@ -68,19 +68,49 @@ def _mask_grid_lines(bin_img: np.ndarray,
     return out
 
 
-def _trace_curve(bin_img: np.ndarray) -> np.ndarray:
-    """For each column, return the median y of dark pixels (NaN if none).
+def _trace_curve(bin_img: np.ndarray,
+                 max_gap: int = 2) -> np.ndarray:
+    """For each column, return the centre y of the *largest* dark run.
 
-    The median is robust against the few stray pixels from anti-aliased
-    text / annotations inside the plot.
+    Splits the column's dark pixels into contiguous runs (separated by
+    runs of ``max_gap`` or more light pixels) and reports the centre of
+    the longest one. This is much more robust than a global median when
+    the plot has legend boxes, annotations, or stacked curves: the
+    largest connected dark stretch through that column is almost always
+    the main curve itself.
     """
     h, w = bin_img.shape
     trace = np.full(w, np.nan, dtype=np.float64)
     for x in range(w):
-        ys = np.where(bin_img[:, x] > 0)[0]
-        if ys.size == 0:
+        col = bin_img[:, x] > 0
+        if not col.any():
             continue
-        trace[x] = float(np.median(ys))
+        # find all dark runs in this column
+        best_len = 0
+        best_center: Optional[float] = None
+        i = 0
+        while i < h:
+            if not col[i]:
+                i += 1
+                continue
+            j = i
+            while j < h and col[j]:
+                j += 1
+            # tolerate a small gap and merge runs
+            k = j
+            while k < h and not col[k] and (k - j) < max_gap:
+                k += 1
+            if k < h and col[k]:
+                j = k
+                while j < h and col[j]:
+                    j += 1
+            run_len = j - i
+            if run_len > best_len:
+                best_len = run_len
+                best_center = 0.5 * (i + j - 1)
+            i = j
+        if best_center is not None:
+            trace[x] = best_center
     return trace
 
 
@@ -163,7 +193,7 @@ def _plot_interior_bbox(chart: ChartLocation) -> pymupdf.Rect:
 
 
 def _detect_plot_border(arr: np.ndarray,
-                        dark_threshold: int = 128,
+                        dark_threshold: int = 200,
                         ratio: float = 0.55
                         ) -> Optional[Tuple[int, int, int, int]]:
     """Find the plot frame inside a rendered chart image.
@@ -206,30 +236,139 @@ def _detect_plot_border(arr: np.ndarray,
                 groups.append([int(h_)])
         return groups
 
-    def _pick_bounds(groups: List[List[int]], max_v: int,
-                     counts: np.ndarray, opposite_dim: int
-                     ) -> Tuple[int, int]:
-        # discard runs glued to the very edge: those are usually page
-        # borders, not the plot frame
-        groups = [g for g in groups if (g[0] > 1 and g[-1] < max_v - 2)]
-        # discard runs that span the *full* opposite dimension — the plot
-        # frame has small margins on each side, so its width is < image
-        # width. A 100%-wide line is a page-level horizontal rule.
-        def is_full(g):
-            mean_c = sum(int(counts[i]) for i in g) / len(g)
-            return mean_c >= 0.97 * opposite_dim
-        groups = [g for g in groups if not is_full(g)]
+    def _is_page_rule(row_or_col_indices: List[int],
+                      bin_orient: np.ndarray) -> bool:
+        """A page-level horizontal rule has dark pixels that touch *both*
+        ends of the perpendicular axis — i.e. it goes edge-to-edge. The
+        chart frame has small margins so its dark stretch is bounded
+        well inside the image."""
+        # check the densest row/col in this group
+        idxs = bin_orient.sum(axis=1) if bin_orient.ndim == 2 else None
+        return False
+
+    def _row_touches_edges(g: List[int], bin_img: np.ndarray) -> bool:
+        """True if the merged darkness for rows ``g`` reaches both column
+        ends of ``bin_img`` (= it's a page rule, not a chart frame)."""
+        slab = bin_img[g[0]:g[-1] + 1, :].any(axis=0)
+        return bool(slab[0]) and bool(slab[-1])
+
+    def _col_touches_edges(g: List[int], bin_img: np.ndarray) -> bool:
+        slab = bin_img[:, g[0]:g[-1] + 1].any(axis=1)
+        return bool(slab[0]) and bool(slab[-1])
+
+    def _pick_bounds_rows(groups: List[List[int]], max_v: int,
+                          bin_img: np.ndarray) -> Tuple[int, int]:
+        # Drop:
+        #  * page-level horizontal rules (touch both column ends)
+        #  * groups GLUED to the very image edge (rows 0..edge_pad) and
+        #    not part of a clearly-defined chart frame; but when the
+        #    image was clipped tight against the chart frame these edge
+        #    rows ARE the frame, so we accept them if the slab doesn't
+        #    touch the image's left/right edges.
+        edge_pad = 1
+        out = []
+        for g in groups:
+            if _row_touches_edges(g, bin_img):
+                continue
+            # row glued to the very edge — still accept if it doesn't
+            # touch the column edges (= real chart frame, not artefact)
+            if g[0] < edge_pad or g[-1] > max_v - 1 - edge_pad:
+                if _row_touches_edges(g, bin_img):
+                    continue
+            out.append(g)
+        groups = out
         if not groups:
             return -1, -1
         top = int(sum(groups[0]) / len(groups[0]))
         bot = int(sum(groups[-1]) / len(groups[-1]))
         return top, bot
 
-    top, bot = _pick_bounds(_group_runs(h_hits), h, row_counts, w)
-    left, right = _pick_bounds(_group_runs(v_hits), w, col_counts, h)
+    def _pick_bounds_cols(groups: List[List[int]], max_v: int,
+                          bin_img: np.ndarray) -> Tuple[int, int]:
+        edge_pad = 1
+        out = []
+        for g in groups:
+            if _col_touches_edges(g, bin_img):
+                continue
+            out.append(g)
+        groups = out
+        if not groups:
+            return -1, -1
+        top = int(sum(groups[0]) / len(groups[0]))
+        bot = int(sum(groups[-1]) / len(groups[-1]))
+        return top, bot
+
+    top, bot = _pick_bounds_rows(_group_runs(h_hits), h, dark)
+    left, right = _pick_bounds_cols(_group_runs(v_hits), w, dark)
     if top < 0 or left < 0 or bot - top < 20 or right - left < 20:
         return None
     return top, bot, left, right
+
+
+def _doc_is_ocred(page: pymupdf.Page) -> bool:
+    """Heuristic: is the underlying PDF the OCR output of ``ocr_pdf``?
+
+    ``dslib.pdf.parse.ocr_pdf`` writes ``<orig>.r600_ocrmypdf.pdf``;
+    tesseract scatters spurious "text" across curve regions in that
+    output, so we don't want to use the OCR'd text-layer to mask the
+    chart interior.
+    """
+    try:
+        name = page.parent.name or ''
+    except Exception:
+        return False
+    name = name.lower()
+    return name.endswith('.r600_ocrmypdf.pdf') \
+        or name.endswith('.r400_ocrmypdf.pdf') \
+        or '_ocrmypdf' in name
+
+
+def _mask_inchart_text(page: pymupdf.Page,
+                       bbox: pymupdf.Rect,
+                       arr: np.ndarray,
+                       zoom: float) -> np.ndarray:
+    """Erase text glyphs that sit *inside* the plot from the rendered
+    bitmap.
+
+    Charts often place curve labels (``"20 V"``, ``"40 V"``, etc.) right
+    on top of the curves. Their dark pixels would otherwise leak into
+    ``_trace_curve``'s per-column scan and pull the trace away from the
+    actual line. We render a white box over every page word whose bbox
+    falls inside the chart bbox so the curve trace sees the curve and
+    nothing else.
+
+    Skipped entirely on OCR'd PDFs: tesseract treats curve squiggles as
+    text, so the "words" the text layer reports there *are* the curve
+    pixels — masking them would erase the curve itself.
+
+    Y-axis / x-axis tick labels at the very edges are preserved
+    automatically: ``_detect_plot_border`` already crops to the plot
+    interior before the trace runs.
+    """
+    if _doc_is_ocred(page):
+        return arr
+    try:
+        words = page.get_text('words')
+    except Exception:
+        return arr
+    arr = arr.copy()
+    pad = max(1, int(zoom))
+    for w in words:
+        x0, y0, x1, y1 = w[0], w[1], w[2], w[3]
+        if x1 < bbox.x0 or x0 > bbox.x1:
+            continue
+        if y1 < bbox.y0 or y0 > bbox.y1:
+            continue
+        if x0 < bbox.x0 - 1 and x1 > bbox.x1 + 1:
+            continue
+        px0 = max(0, int((x0 - bbox.x0) * zoom) - pad)
+        py0 = max(0, int((y0 - bbox.y0) * zoom) - pad)
+        px1 = min(arr.shape[1], int((x1 - bbox.x0) * zoom) + pad)
+        py1 = min(arr.shape[0], int((y1 - bbox.y0) * zoom) + pad)
+        if px1 <= px0 or py1 <= py0:
+            continue
+        arr[py0:py1, px0:px1] = 255
+    return arr
 
 
 def find_plateau_raster(page: pymupdf.Page,
@@ -242,6 +381,10 @@ def find_plateau_raster(page: pymupdf.Page,
 
     bbox = _plot_interior_bbox(chart)
     arr, sx, sy = _render_chart(page, bbox, dpi=dpi)
+    # Wipe out in-chart text (curve labels like "20 V"/"40 V") before the
+    # plateau scan — labels sit right on top of the curves and would pull
+    # the per-column trace away from the actual line.
+    arr = _mask_inchart_text(page, bbox, arr, sy)
     h, w = arr.shape
 
     if h < 30 or w < 30:
@@ -290,8 +433,22 @@ def find_plateau_raster(page: pymupdf.Page,
     if np.isnan(trace).all():
         return None
 
+    # Reject charts whose curve hardly varies — they're not gate-charge
+    # curves (probably a V_th-vs-something plot that happens to share
+    # the 0..10 V y-axis). The real V_GS curve sweeps from ~0 V to the
+    # drive voltage, so the trace spans nearly the full plot height.
+    valid_trace = trace[~np.isnan(trace)]
+    if valid_trace.size > 0:
+        trace_span = float(valid_trace.max() - valid_trace.min())
+        if trace_span / max(h, 1) < 0.5:
+            return None
+
+    # Tolerate ~0.5% of plot height of vertical wander; plateaus are
+    # flat but aliased strokes jitter by a couple of pixels. Min run
+    # length is ~3% of plot width — covers short Miller plateaus on
+    # legend-cluttered charts.
     flatness_px = max(2.0, 0.005 * h)
-    min_run_px = max(10, int(0.07 * w))
+    min_run_px = max(10, int(0.03 * w))
 
     run = _find_plateau_run(trace, flatness_px=flatness_px,
                             min_run_px=min_run_px)
