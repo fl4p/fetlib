@@ -33,6 +33,10 @@ NUMERIC_COLUMNS = (
     "V_pl",
     "Vgs_th",
     "QgdQgs_ratio",
+    "FoM",
+    "FoMqsw",
+    "FoMqrr",
+    "FoMcoss",
 )
 
 SLIDER_COLUMNS = (
@@ -44,6 +48,10 @@ SLIDER_COLUMNS = (
     "Qrr",
     "Vsd",
     "QgdQgs_ratio",
+    "FoM",
+    "FoMqsw",
+    "FoMqrr",
+    "FoMcoss",
 )
 
 # (weight_under, weight_over) where "under" means candidate < query in log space.
@@ -157,6 +165,10 @@ def _serialize(part) -> dict:
         "V_pl": _clean(_safe_attr(specs, "V_pl")),
         "Vgs_th": _clean(vgs_th),
         "QgdQgs_ratio": _clean(_safe_attr(specs, "QgdQgsRatio")),
+        "FoM": _clean(_safe_attr(specs, "FoM")),
+        "FoMqsw": _clean(_safe_attr(specs, "FoMqsw")),
+        "FoMqrr": _clean(_safe_attr(specs, "FoMqrr")),
+        "FoMcoss": _clean(_safe_attr(specs, "FoMcoss")),
         "date": date_str,
     }
 

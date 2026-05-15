@@ -13,6 +13,10 @@ export interface Part {
 	V_pl: number | null;
 	Vgs_th: number | null;
 	QgdQgs_ratio: number | null;
+	FoM: number | null;
+	FoMqsw: number | null;
+	FoMqrr: number | null;
+	FoMcoss: number | null;
 	date: string | null;
 	score?: number | null;
 }
@@ -51,7 +55,11 @@ export type NumericKey =
 	| 'Vsd'
 	| 'V_pl'
 	| 'Vgs_th'
-	| 'QgdQgs_ratio';
+	| 'QgdQgs_ratio'
+	| 'FoM'
+	| 'FoMqsw'
+	| 'FoMqrr'
+	| 'FoMcoss';
 
 export type SortKey = keyof Part;
 export type SortDir = 'asc' | 'desc';

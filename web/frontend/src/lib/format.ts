@@ -31,6 +31,16 @@ export function fmtRatio(v: number | null): string {
 	return num(v);
 }
 
+export function fmtFomNc(v: number | null): string {
+	if (v == null) return '';
+	return num(v) + ' mΩ·nC';
+}
+
+export function fmtFomPf(v: number | null): string {
+	if (v == null) return '';
+	return num(v) + ' mΩ·pF';
+}
+
 export function fmtDate(s: string | null): string {
 	return s ?? '';
 }

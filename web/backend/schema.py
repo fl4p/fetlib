@@ -17,6 +17,10 @@ class Part(BaseModel):
     V_pl: Optional[float] = None
     Vgs_th: Optional[float] = None
     QgdQgs_ratio: Optional[float] = None
+    FoM: Optional[float] = None
+    FoMqsw: Optional[float] = None
+    FoMqrr: Optional[float] = None
+    FoMcoss: Optional[float] = None
     date: Optional[str] = None
 
 

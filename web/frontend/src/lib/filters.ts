@@ -1,5 +1,13 @@
 import type { FilterState, Meta, Part, SortDir, SortKey } from './types';
-import { fmtAmp, fmtMilliOhm, fmtNanoC, fmtRatio, fmtVoltage } from './format';
+import {
+	fmtAmp,
+	fmtFomNc,
+	fmtFomPf,
+	fmtMilliOhm,
+	fmtNanoC,
+	fmtRatio,
+	fmtVoltage
+} from './format';
 
 export const SLIDER_KEYS = [
 	'Vds_max',
@@ -9,7 +17,11 @@ export const SLIDER_KEYS = [
 	'Qg',
 	'Qrr',
 	'Vsd',
-	'QgdQgs_ratio'
+	'QgdQgs_ratio',
+	'FoM',
+	'FoMqsw',
+	'FoMqrr',
+	'FoMcoss'
 ] as const;
 
 const EPSILON = 1e-9;
@@ -56,6 +68,10 @@ function haystack(p: Part): string {
 		fmtVoltage(p.V_pl),
 		fmtVoltage(p.Vgs_th),
 		fmtRatio(p.QgdQgs_ratio),
+		fmtFomNc(p.FoM),
+		fmtFomNc(p.FoMqsw),
+		fmtFomNc(p.FoMqrr),
+		fmtFomPf(p.FoMcoss),
 		p.date ?? ''
 	].join(' ');
 	haystackCache.set(p, h);

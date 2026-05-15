@@ -2,7 +2,15 @@
 	import type { FilterState, Meta } from './types';
 	import { SLIDER_KEYS, sliderBounds } from './filters';
 	import RangeSlider from './RangeSlider.svelte';
-	import { fmtAmp, fmtMilliOhm, fmtNanoC, fmtRatio, fmtVoltage } from './format';
+	import {
+		fmtAmp,
+		fmtFomNc,
+		fmtFomPf,
+		fmtMilliOhm,
+		fmtNanoC,
+		fmtRatio,
+		fmtVoltage
+	} from './format';
 
 	interface Props {
 		meta: Meta;
@@ -34,7 +42,11 @@
 		Qg: 'Q_g',
 		Qrr: 'Q_rr',
 		Vsd: 'V_SD',
-		QgdQgs_ratio: 'Q_gd / Q_gs'
+		QgdQgs_ratio: 'Q_gd / Q_gs',
+		FoM: 'FoM (R·Qg)',
+		FoMqsw: 'FoM_sw (R·Qsw)',
+		FoMqrr: 'FoM_rr (R·Qrr)',
+		FoMcoss: 'FoM_oss (R·Coss)'
 	};
 
 	const formatters: Record<(typeof SLIDER_KEYS)[number], (v: number) => string> = {
@@ -45,7 +57,11 @@
 		Qg: (v) => fmtNanoC(v),
 		Qrr: (v) => fmtNanoC(v),
 		Vsd: (v) => fmtVoltage(v),
-		QgdQgs_ratio: (v) => fmtRatio(v)
+		QgdQgs_ratio: (v) => fmtRatio(v),
+		FoM: (v) => fmtFomNc(v),
+		FoMqsw: (v) => fmtFomNc(v),
+		FoMqrr: (v) => fmtFomNc(v),
+		FoMcoss: (v) => fmtFomPf(v)
 	};
 
 	function updateRange(key: string, values: [number, number]) {
