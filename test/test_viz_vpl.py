@@ -47,6 +47,8 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/ti/CSD19501KCS.pdf', 4.25),
     ('datasheets/mcc/MCAC100N08Y-TP.pdf', 5.1),
     ('datasheets/ti/TPS1100.pdf', 3.1),
+    ('datasheets/infineon/IPW60R060C7.pdf', 5.0),
+    ('datasheets/infineon/IPI65R190CFD.pdf', 6.4),
 ]
 
 
