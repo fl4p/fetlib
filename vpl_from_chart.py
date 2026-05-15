@@ -88,9 +88,14 @@ class ChartFrame:
 
 
 def _parse_number(text: str) -> Optional[float]:
+    # Normalise unicode dashes and strip whitespace.  Some PDFs render "−10"
+    # as a single span with a space ("– 10") so we also collapse the dash and
+    # the digits when only whitespace separates them.
     t = text.strip().replace('−', '-').replace('–', '-').replace('—', '-')
     if not t:
         return None
+    if t[0] == '-' and len(t) > 1 and t[1].isspace():
+        t = '-' + t[1:].lstrip()
     try:
         return float(t)
     except ValueError:
@@ -160,14 +165,46 @@ def _maximal_arithmetic_progressions(items, pos_idx, eps_v=0.05, eps_x=0.20, min
     return maximal
 
 
+_DASH_CHARS = frozenset({'-', '–', '—', '−', '‐', '‑', '‒'})
+
+
+def _is_minus_token(t: str) -> bool:
+    s = t.strip()
+    return bool(s) and all(c in _DASH_CHARS for c in s)
+
+
 def _build_axes(page) -> Tuple[List[AxisAP], List[AxisAP]]:
     spans = _get_spans(page)
+    # Collect numbers, plus any standalone "minus" tokens — some PDFs (e.g. TI's
+    # P-channel datasheets) render axis labels like "−6" as two separate spans
+    # ("−" and "6"), so we glue them back together by proximity.
     nums = []
+    minus_signs = []  # (cx, cy, x1)
     for text, bb in spans:
+        if _is_minus_token(text):
+            minus_signs.append(((bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2, bb[2]))
+            continue
         v = _parse_number(text)
         if v is None:
             continue
         nums.append((v, (bb[0] + bb[2]) / 2, (bb[1] + bb[3]) / 2, bb))
+    # Apply preceding minus signs: a minus token whose right edge sits just
+    # left of a positive number AND on the same baseline negates that number.
+    if minus_signs:
+        attached = []
+        for i, (v, cx, cy, bb) in enumerate(nums):
+            if v < 0:
+                attached.append((v, cx, cy, bb)); continue
+            x0 = bb[0]
+            for mx, my, mx1 in minus_signs:
+                if abs(my - cy) > 4:
+                    continue
+                gap = x0 - mx1
+                if -2 <= gap <= 10:  # immediately to the left
+                    v = -v
+                    break
+            attached.append((v, cx, cy, bb))
+        nums = attached
     h_axes: List[AxisAP] = []
     for grp in _cluster_1d(nums, 2, 3.0):  # cluster by cy → horizontal axes
         for ap in _maximal_arithmetic_progressions(grp, pos_idx=1):
@@ -212,8 +249,13 @@ def find_gate_charge_charts(doc) -> List[ChartFrame]:
                 vys = v.cy
                 vx = float(np.mean(v.cx))
                 vvs = v.values
-                # V_GS axis must cover roughly 0..(5..25 V)
-                if min(vvs) < -1 or max(vvs) < 4 or max(vvs) > 25:
+                # V_GS axis covers roughly 0..±(5..25) V — accept either an
+                # all-positive (N-channel) or all-negative (P-channel) axis;
+                # reject ranges that cross zero (those are some other chart).
+                vabs_max = max(abs(min(vvs)), abs(max(vvs)))
+                if vabs_max < 4 or vabs_max > 25:
+                    continue
+                if min(vvs) < -1 and max(vvs) > 1:  # spans zero significantly
                     continue
                 # Geometric corner: vertical axis sits to the left of x-axis labels,
                 # horizontal axis sits below vertical axis labels.
@@ -669,11 +711,18 @@ def find_gate_charge_charts_by_caption(doc) -> List[ChartFrame]:
 
 
 def _axis_arrays(chart: ChartFrame):
-    """Return (x_pdf, x_val, y_pdf, y_val) numpy arrays of tick positions."""
+    """Return (x_pdf, x_val, y_pdf, y_val) numpy arrays of tick positions.
+
+    For P-channel parts the Y-axis labels are all ≤ 0 (e.g. 0, −2, −4, … −10);
+    we flip them to absolute V_GS so the rest of the pipeline (plateau
+    detection, plausibility checks) stays sign-agnostic.
+    """
     xs = np.array(chart.x_axis.cx)
     xv = np.array(chart.x_axis.values)
     ys = np.array(chart.y_axis.cy)
     yv = np.array(chart.y_axis.values)
+    if yv.max() <= 0:
+        yv = -yv
     return xs, xv, ys, yv
 
 
@@ -730,10 +779,22 @@ def extract_curves(page, chart: ChartFrame, dpi: int = 300) -> Tuple[np.ndarray,
     v_min_px_y = pdf_to_px(0, pdf_y_at_vmin)[1]
     v_max_px_y = pdf_to_px(0, pdf_y_at_vmax)[1]
 
-    # Threshold to extract dark "ink".  Curve lines are near-black; gridlines are
-    # light gray; chart background is white.  A strict threshold (~110) keeps the
-    # curves and drops most gridlines.
-    _, mask = cv2.threshold(img, 110, 255, cv2.THRESH_BINARY_INV)
+    # Threshold to extract "ink" pixels.  Curve colour varies across vendors:
+    # some draw curves in black (~0), others in mid-grey (~110), with gridlines
+    # at a lighter grey (~210) and background near white (255).  We pick the
+    # threshold by running OTSU on pixels darker than the near-white background
+    # — that excludes the bg cluster from the split so OTSU finds the boundary
+    # between the *curve* mode and whatever the next-lightest cluster is
+    # (gridlines if present, otherwise just the bg fringe).
+    dark_pixels = img[img < 230]
+    if dark_pixels.size > 0:
+        thr_val, _ = cv2.threshold(dark_pixels, 0, 255,
+                                    cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        # Safety floor: avoid pathological thresholds < 30 on near-flat images.
+        thr_val = max(30, int(thr_val))
+    else:
+        thr_val = 110
+    _, mask = cv2.threshold(img, thr_val, 255, cv2.THRESH_BINARY_INV)
 
     # Crop strictly to the plotting area (interior of the axes) so axis lines and
     # tick marks don't contaminate the curve.
@@ -929,10 +990,10 @@ def find_plateau_vpl(inner_mask: np.ndarray, transform: np.ndarray, debug=None) 
 # ---------------------------------------------------------------------------
 
 
-def vpl_from_pdf(pdf_path: str, dpi: int = 300, debug: bool = False):
+def vpl_from_pdf(pdf_path: str, dpi: int = 300, enable_ocr=False, debug: bool = False):
     doc = fitz.open(pdf_path)
     charts = find_gate_charge_charts(doc)
-    if not charts:
+    if not charts and enable_ocr:
         # Fallback for rasterised charts: find the figure caption ("14 Typ.
         # gate charge", "Fig. 7 Gate-Charge Characteristics", ...), locate
         # the embedded image below it, and OCR its tick labels.
