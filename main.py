@@ -280,7 +280,8 @@ def run(args: RunArgs, cargs, name):
         # do all the magic: download datasheets, read them and compute power loss:
         dss = read_parts_datasheets(parts, dotdict(cargs.__dict__))
 
-        dss = [ds for ds in dss if dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds'))]
+        if not args.vdsRange:
+            dss = [ds for ds in dss if dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds'))]
 
         generate_HS_power_loss_csv(dss,
                                    args=args.dcdc,
@@ -580,7 +581,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
         dat = f'{datetime.datetime.now():%Y-%m-%d}'
         out_fn = f'out/{dcdc.fn_str("buck")}-{dat}-inp{len(parts)}.csv'
         write_csv(df, out_fn)
-        print('written', out_fn)
+        print('\n>>>', out_fn)
     else:
         print('skip csv write because only few parts')
 
@@ -756,7 +757,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         out_fn = f'out/{name}/{dat}-{dcdc.fn_str("buck")}-HS-inp{len(dss)}'
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
-        print('written', out_fn)
+        print('\n>>>', out_fn)
     else:
         print('skip csv write because only few parts')
 
@@ -838,7 +839,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         out_fn = f'out/{name}/{dat}-{dcdc.fn_str("buck")}-LS-inp{len(dss)}'
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
-        print('written', out_fn)
+        print('\n>>>', out_fn)
     else:
         print('skip csv write because only few parts')
 

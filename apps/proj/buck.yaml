@@ -1,9 +1,9 @@
 
 topology: buck
 
-substrates: ['Si', 'GaN']
-packages: []
-vdsRange: [60, 200]
+substrates: [] # any
+packages: [] #any
+vdsRange: [30, 650]
 
 gateDrive:
   voltage: 11
@@ -26,7 +26,7 @@ inductor:
 
 loadPoints:
   - pointWeight: 1
-    vIn: 30
-    vOut: 27
-    pIn: 900
+    vIn: 20
+    vOut: 12
+    pIn: 1
     f: 40e3
