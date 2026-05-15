@@ -72,6 +72,11 @@ WEB_FIELDS: Tuple[Tuple[str, str, str], ...] = (
     #('Vgs_th',       'basic', 'Vgs_th_max'),
 )
 
+WEB_FIELDS: Tuple[Tuple[str, str, str], ...] = (
+    ('Vds_max',      'specs', 'Vds'),
+
+) # todo temporarily disabled other fields
+
 # Fields where the web allows a fallback from DiscoveredPart.specs when the
 # primary MosfetSpecs value is missing.
 ID_FALLBACK = ('basic', 'ID_25')

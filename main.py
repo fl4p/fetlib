@@ -316,12 +316,14 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
     ds.add_multiple(man_fields.get(mfr, {}).get(mpn, []), ['ref'])
 
     ff = dslib.manual_fields.fallback_specs(mfr, mpn)
+    # todo filter invalid fields
     if ds or ff:
         need_symbols = subsctract_needed_symbols(need_symbols, set(ds.keys()) | set(ff.keys()), copy=True)
 
     if not no_cache:
 
         lp = dslib.store.parts_db.load_obj(part)
+        # todo filter invalid fields
         if lp:
             lp_keys = lp.specs.keys()
             if lp_keys:

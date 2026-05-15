@@ -1,6 +1,9 @@
 import datetime
 import math
 
+import pytest
+import timeout_decorator
+
 test_stream_todo = """
 
 Qgs
@@ -408,13 +411,29 @@ def test_cases_from_stream():
 
         lines = list(filter(lambda s: not s or s[0] != '>', lines))
         ds = extract_fields_from_text('\n'.join(lines), 'any', verbose='debug')
-        assert sym in ds, lines
+        assert sym in ds, '\n'.join(lines)
         ds[sym].assert_value(ref_val)
 
 
 def test_catasthasthrophic():
     s = "'Figure 9. Diode Forward Voltage vs. Current\nVGS = 0V\nTJ= -55°C\nTJ= 25°C\nTJ= 85°C\nTJ= 125°C\nTJ= 150°C\nTJ= 175°C\n10\n100\n1000\n10000'"
     assert not extract_fields_from_text(s, 'any')
+    # with pytest.raises(timeout_decorator.timeout_decorator.TimeoutError):
+    #    assert not extract_fields_from_text(s, 'any')
+
+    with pytest.raises(timeout_decorator.timeout_decorator.TimeoutError):
+        assert not extract_fields_from_text("""Qgs
+VGS = 10V, VDS = 0.5 * VDSS, ID = 0.5 * ID25
+8
+nC
+Qgd
+10
+nC
+RthJC
+0.52 C/W
+RthCS
+TO-220                                                              0.50              C/W
+Resistive Switching Times""", 'any')
 
 
 def test_extract_text():
