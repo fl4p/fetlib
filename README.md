@@ -1,3 +1,8 @@
+commands
+- discover parts
+- download datasheets
+
+
 I’ve been working on this the last years.
 It is 3 projects in one repo:
 
@@ -414,3 +419,54 @@ fetfinder
 findfet
 mosdb
 magic mosfet
+
+
+
+TODO issues
+```
+
+datasheets/hxy/HXY30N10D.pdf parse error PSSyntaxError Invalid dictionary construct: [/'BM', /'Normal', /'CA', 1, /'ca', 1, /'AIS', /b'fals', /b'e']
+
+gfs error parsing field row Forward Transconductance,gFS,VDS=5V,ID=6.5A,8,-,-,S all nan Field("gfs",nan,nan,nan,"S",cond={0: 'Forward Transconductance', 1: 'gFS', 2: 'VDS=5V,ID=6.5A', 3: '8', 4: '-', 5: '-', 6: 'S'})
+Vds error parsing field row Drain-Source Breakdown Voltage,BVDSS,VGS=0V ID=250μA,20,,-,V, all nan Field("Vds",nan,nan,nan,"V",cond={0: 'Drain-Source Breakdown Voltage', 1: 'BVDSS', 2: 'VGS=0V ID=250μA', 3: '20', 4: '', 5: '-', 6: 'V', 7: ''})
+gf
+
+/datasheets/infineon/IPI147N12N3 G.pdf
+
+
+
+infineon IPTC011N08NM5
+Symbol         min     typ     max     unit    cond                  source
+Vds               ⎵     80.0      ⎵       V                            read_sheet                    
+Vds               ⎵       ⎵      0.5    ⎵                              read_sheet   
+
+
+
+Vds error parsing field row BVDSS,Drain-Source Breakdown Voltage,VGS=0V,ID=250uA,100,---,---,V all nan Field("Vds",nan,nan,nan,"V",cond={0: 'BVDSS', 1: 'Drain-Source Breakdown Voltage', 2: 'VGS=0V , ID=250uA', 3: '100', 4: '---', 5: '---', 6: 'V'})
+Vds error parsing field row Drain-source breakdown voltage V (BR)DSS,V GS=0 V,I D=1 mA,nan,200,-,-,V all nan Field("Vds",nan,nan,nan,"V",cond={0: 'Drain-source breakdown voltage V (BR)DSS', 1: 'V GS=0 V, I D=1 mA', 3: '200', 4: '-', 5: '-', 6: 'V'})
+
+
+datasheets/xnrusemi/XRS12N12.pdf error parsing field Ciss in Row(437 ~ 449, 'Ciss Input Capacitance -- 248 --'): (248.0, 248.0)
+datasheets/xnrusemi/XRS12N12.pdf error parsing field tDoff in Row(283 ~ 296, 'td(OFF) Turn-Off Delay Time VGS= 10V -- 19 --'): (19.0, 19.0)
+
+
+parsing Qsw in Qsw,Switch Charge (Qgs2 + Qgd) ---,10.2,---,nC, but found stop word Qg in match head: Qsw,Switch Charge (Qgs2 + Qgd) ---,
+
+IPP120N20NFD.pdf Id error parsing field row Continuous drain current,ID,- -,- -,84 60,A,TC=25 °C TC=100 °C (84.0, 60.0)
+
+IPB027N10N3GATMA1.pdf trr error parsing field row Reverse recovery time,Cnr,V p=50 V,1-=100 A,-,86,7,ns (86.0, 7.0)
+
+NTMFS015N15MC.pdf Vds error parsing field row Drain-to-Source Breakdown Voltage Temperature Coefficient,V(BR)DSS, TJ,ID = 250A,ref to 25°C,,109,,mV,°C, invalid Vds unit mV
+
+
+HY1908MF not found in PDF text(B-uUUAYI HY1908P/M/B/ MF/PS/PM)
+
+
+datasheets/goford/GT105N10T.pdf error parsing field trr in Row(175 ~ 187, 'Reverse Recovery Time Trr -- 45 -- ns') (val={'min': '45', 'typ': '45', 'max': '45'}): (45.0, 45.0)
+/Users/fab/dev/pv/pwr-mosfet-lib/datasheets/goford/GT105N10T.pdf error parsing field Rds_on in Row(559 ~ 569, 'Drain-Source On-Resistance RDS(on) mΩ') (val={'min': '100', 'typ': '100', 'max': '100'}): (100.0, 100.0)
+
+
+
+    assert vpl > vgs_th, (hs.part.mpn, vpl, vgs_th)
+AssertionError: ('IRFI4227', 4.5, nan)
+```

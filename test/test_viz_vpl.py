@@ -41,7 +41,12 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/infineon/BSC050N10NS5ATMA1.pdf', 4.7),
     ('datasheets/vishay/SQJQ480E-T1_GE3.pdf', 3.9),
     ('datasheets/littelfuse/IXTT240N15X4HV.pdf', 5),
-    #('datasheets/onsemi/NVCR4LS1D3N08M7A.pdf', 4.2),
+
+    ('datasheets/onsemi/FDA032N08.pdf', 5.5),
+    ('datasheets/onsemi/NVCR4LS1D3N08M7A.pdf', 4.2),
+    ('datasheets/ti/CSD19501KCS.pdf', 4.25),
+    ('datasheets/mcc/MCAC100N08Y-TP.pdf', 5.1),
+    ('datasheets/ti/TPS1100.pdf', 3.1),
 ]
 
 
