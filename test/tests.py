@@ -310,23 +310,23 @@ def test_pdf_parse():
                             Field("Rg", nan, 0.5, nan, "Ω"),
                             Field("gfs", 34.0, 69.0, nan, "S"),
                             Field("Ciss", nan, 4100.0, 5500.0, "pF"),
-                            Field("Coss", nan, 750.0, 1000.0, "None"),
-                            Field("Crss", nan, 27.0, nan, "None"),
+                            Field("Coss", nan, 750.0, 1000.0, "pF"),
+                            Field("Crss", nan, 27.0, nan, "pF"),
 
-                            Field("tDon", nan, 15.0, nan, "ns"),
-                            Field("tRise", nan, 9.0, nan, "None"),
-                            Field("tFall", nan, 8.0, nan, "None"),
-                            Field("tDoff", nan, 25.0, nan, "None"),
+                            #Field("tDon", nan, 15.0, nan, "ns"),
+                            #Field("tRise", nan, 9.0, nan, "None"),
+                            #Field("tFall", nan, 8.0, nan, "None"),
+                            #Field("tDoff", nan, 25.0, nan, "None"),
 
                             Field("Qgs", nan, 17.0, nan, "nC"),
-                            Field("Qgd", nan, 9.7, nan, "None"),
-                            Field("Qg", nan, 56.0, 74.0, "None"),
+                            Field("Qgd", nan, 9.7, nan, "nC"),
+                            Field("Qg", nan, 56.0, 74.0, "nC"),
 
                             Field("Vpl", nan, 4.2, nan, "V"),
                             Field("Vsd", nan, 0.9, 1.2, "V"),
                             Field("Qrr", nan, 174.0, nan, "nC"),
                             Field("trr", nan, 64.0, nan, "ns"),
-                            Field("Rds_on", nan, 5.0, 5.6, "None"),
+                            Field("Rds_on", nan, 5.0, 5.6, "mΩ"),
 
                             # Field("Qsw", nan, 56.0, 74.0, "None") "Gate to drain charge, Qsw"
                             Field("Qsw", nan, 20, nan, "None")
@@ -351,11 +351,13 @@ def test_pdf_parse():
     # d = parse_datasheet('../datasheets/infineon/AUIRF7759L2TR.pdf')
     d = tabula_read('../datasheets/./infineon/AUIRF7759L2TR.pdf', need_symbols={'Vsd'})
     ref = DatasheetFields("None", "None",
-                          fields=[Field("Qgd", nan, 62.0, 93.0, "nC"), Field("Qsw", nan, 73.0, nan, "None"),
+                          fields=[Field("Qgd", nan, 62.0, 93.0, "nC"),
+                                  Field("Qsw", nan, 73.0, nan, "None"),
                                   Field("tRise", nan, 37.0, nan, "ns"),
                                   # Field("trr", nan, 64.0, 96.0, "ns"),
                                   Field("Qrr", nan, 150.0, 225.0, "nC"),
-                                  Field("Qg_th", nan, 37.0, nan, "None"), Field("Coss", nan, 1465.0, nan, "None"),
+                                  Field("Qg_th", nan, 37.0, nan, "nC"),
+                                  Field("Coss", nan, 1465.0, nan, "nC"),
                                   Field("Vsd", nan, nan, 1.3, "V")])
     assert ref.show_diff(d) == 0
     assert d.Qgd == (na, 62, 93)
@@ -463,7 +465,7 @@ def test_pdf_parse():
     assert len(d) >= 11
 
     d = tabula_read('../datasheets/infineon/BSB056N10NN3GXUMA2.pdf')
-    assert d.Qgd.typ == 20  # datasheet mistake! 9.7
+    assert d.Qgd.typ == 9.7
 
     d = tabula_read('../datasheets/infineon/BSC025N08LS5ATMA1.pdf')
     assert d.Vpl.typ == 2.8

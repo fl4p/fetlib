@@ -584,7 +584,7 @@ def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadPar
     else:
         print('skip csv write because only few parts')
 
-    dslib.store.parts_db.add(result_parts, overwrite=True)
+    dslib.store.parts_db.add_background(result_parts, overwrite=True)
     dslib.store.datasheets_db.add(dss, overwrite=True)
 
     print('')

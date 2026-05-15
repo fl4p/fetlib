@@ -101,8 +101,8 @@ _HOUSING_RULES = (
     (re.compile(r"(TO-?252.*|DPAK\+?)"), "TO-252"),
     (re.compile(r"(TO-?263|D2PAK).*"), "TO-263"),
     (re.compile(
-        r"(8-PowerTDFN|PowerPAK®? SO-8|P?DFN-?8L?\(5x6\)|P?DFN5x6(-8L)?|Single SSO8|SO-8FL / DFN-5|DFNW5|SuperSO8|8-PowerVDFN|PowerFLAT 5x6|DFN5060).*"),
-     "SO8(5x6)", re.IGNORECASE),  # 8-DFN (5x6), 	8-PowerSMD
+        r"(8-PowerTDFN|PowerPAK®? SO-8|P?DFN-?8L?\(5x6\)|P?DFN5x6(-8L)?|Single SSO8|SO-8FL / DFN-5|DFNW5|SuperSO8|8-PowerVDFN|PowerFLAT 5x6|DFN5060).*", re.IGNORECASE),
+     "SO8(5x6)"),  # 8-DFN (5x6), 	8-PowerSMD
     (re.compile(r"(Q-DPAK).*"), "Q-DPAK"),  # 8-DFN (5x6), 	8-PowerSMD
 )
 
@@ -176,6 +176,7 @@ def _load_parts() -> List[dict]:
             rows.append(_serialize(part))
         except Exception as e:
             log.warning("Skipping part %s/%s: %s", getattr(part, "mfr", "?"), getattr(part, "mpn", "?"), e)
+            raise
     return rows
 
 

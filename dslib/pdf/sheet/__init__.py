@@ -25,6 +25,7 @@ from dslib.pdf.sheet.tables import table_segregation, DetectedRowField, Table
 from dslib.pdf.to_html import Annotation
 from dslib.pdf.tree import bbox_union, GraphicBlock, Bbox
 
+# regular expression to detect table headers
 head_re = re.compile(
     '((\s+|^\s*)('
     '(?P<sym>Symbol)'

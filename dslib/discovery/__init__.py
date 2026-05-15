@@ -1,6 +1,7 @@
 import datetime
 import math
 import os
+import warnings
 from typing import List, Callable, Optional, Literal
 
 import numpy as np
@@ -36,13 +37,23 @@ def ensure_ohm(s, min, max):
     assert not (s < min or s > max), (min, s, max)
     return s
 
+
 Substrate = Literal['Si', 'SiC', 'GaN']
+
 
 class MosfetBasicSpecs():
     def __init__(self, Vds_max, Rds_on_10v_max, ID_25,
                  Vgs_th_min, Vgs_th_typ, Vgs_th_max,
-                 Qg_typ, Qg_max, source: List[str], substrate:Optional[Substrate] = None):
-        self.substrate:Optional[Substrate] = substrate
+                 Qg_typ, Qg_max, source: List[str], substrate: Optional[Substrate] = None):
+
+        Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 800)
+
+        p = ID_25 ** 2 * Rds_on_10v_max
+        if Rds_on_10v_max > 0.5 and Vds_max < 100 and ID_25 > 100 and ID_25 < 1000 and p > 5000:
+            Rds_on_10v_max *= 1e-3
+            warnings.warn('correcting Rds_on_10v_max %s ID_25=%.1f' % (Rds_on_10v_max, ID_25))
+
+        self.substrate: Optional[Substrate] = substrate
         self.Vds_max = Vds_max
         self.Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 800)
         self.ID_25 = ID_25
@@ -61,7 +72,8 @@ class MosfetBasicSpecs():
             # p-ch
             assert math.isnan(f * ID_25) or 1 < abs(f * ID_25) < 60, (f * ID_25, f, ID_25)
         else:
-            assert math.isnan(f * ID_25) or 0.1 < abs(f * ID_25) < 95, (self.Rds_on_10v_max, Vds_max, f * ID_25, f, ID_25)
+            assert math.isnan(f * ID_25) or 0.1 < abs(f * ID_25) < 95, (self.Rds_on_10v_max, Vds_max, f * ID_25, f,
+                                                                        ID_25)
 
     @property
     def isGaN(self):
@@ -81,7 +93,10 @@ class MosfetBasicSpecs():
         if math.isnan(self.Vds_max):
             self.Vds_max = specs.Vds_max
 
-        assert math.isnan(specs.Vds_max) or self.Vds_max == specs.Vds_max, (self.Vds_max, specs.Vds_max)
+        if self.Vds_max != specs.Vds_max and abs(self.Vds_max) == abs(specs.Vds_max):
+            self.Vds_max = min(self.Vds_max, specs.Vds_max)  # give preference to p-ch
+        else:
+            assert math.isnan(specs.Vds_max) or self.Vds_max == specs.Vds_max, (self.Vds_max, specs.Vds_max)
 
         def mean_chk_std(t, std, fn: Callable = np.nanmean):
             if sum(~np.isnan(t)) == 0:
@@ -136,7 +151,8 @@ class DiscoveredPart:
         self.status = status
 
     def get_ds_path(self):
-        return os.path.join('datasheets', self.mfr, self.mpn.replace('/','_').replace(' ','_').replace(', ',',') + '.pdf')
+        return os.path.join('datasheets', self.mfr,
+                            self.mpn.replace('/', '_').replace(' ', '_').replace(', ', ',') + '.pdf')
 
     def __repr__(self):
         return f'DiscoveredPart({self.mfr}, {self.mpn}, ({self.specs}))'
