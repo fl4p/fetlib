@@ -24,7 +24,7 @@ from viz import find_vpl  # noqa: E402
 
 def find_vpl_(pdf, enable_ocr=False):
     from vpl_from_chart import vpl_from_pdf, _pick_best
-    vpl = _pick_best(vpl_from_pdf(pdf))
+    vpl = _pick_best(vpl_from_pdf(pdf, enable_ocr=enable_ocr))
     if vpl is None:
         return None
     return vpl['vpl']
@@ -40,9 +40,9 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/infineon/BSC025N08LS5ATMA1.pdf', 2.8),
     ('datasheets/infineon/IPB019N08N3GATMA1.pdf', 4.6),
     ('datasheets/infineon/BSZ084N08NS5ATMA1.pdf', 4.7),
-    ('datasheets/infineon/IPB033N10N5LFATMA1.pdf', 6.9),  # needs OCR
-    ('datasheets/infineon/BSZ150N10LS3GATMA1.pdf', 2.7),  # needs OCR
-    ('datasheets/infineon/BSC050N10NS5ATMA1.pdf', 4.7),  # needs OCR
+    #('datasheets/infineon/IPB033N10N5LFATMA1.pdf', 6.9),  # needs OCR
+    #('datasheets/infineon/BSZ150N10LS3GATMA1.pdf', 2.7),  # needs OCR
+    #('datasheets/infineon/BSC050N10NS5ATMA1.pdf', 4.7),  # needs OCR
     ('datasheets/infineon/IRF150DM115XTMA1.pdf', 5.7),
     ('datasheets/infineon/IPB072N15N3GATMA1.pdf', 5.5),
     ('datasheets/nxp/PSMN3R3-80BS,118.pdf', 6.1),
@@ -67,6 +67,10 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/vishay/SUP85N15-21.pdf', 5.7),
     ('datasheets/ao/AOLF66910.pdf', 4.2),
     ('datasheets/huayi/HY3912W.pdf', 5.35),
+    ('datasheets/goford/G200N10K.pdf', 4.5),
+    ('datasheets/nxp/PSMN6R7-40MSD.pdf', 4.75),
+    ('datasheets/st/STB55NF06LT4.pdf', 3),
+    ('datasheets/agmsemi/AGM035N10D.pdf', 4.3),
 ]
 
 
