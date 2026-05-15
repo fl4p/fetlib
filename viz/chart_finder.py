@@ -538,9 +538,10 @@ _CHART_TITLE_RE = re.compile(
     r"|[0-9]*[\s.:]*typycal\s+gate[\s-]+charge\b.*"
     # 2. "[Typ.] gate charge curve/vs/waveforms"
     r"|(typ\s*\.?\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*"
-    # 3. "Figure / Diagram N. Gate Charge ..." (separator is optional —
-    # some manufacturers write "Fig.6 Gate Charge" without "." or ":")
-    r"|(Diagram|Fig.?(ure)?)\s*[0-9]+\s*[.:]?\s+Gate[\s-]+Charge.*)",
+    # 3. "Figure / Diagram N. Gate Charge ..." — separator after the
+    # number is optional, and may be a dash ("Fig.6 - Gate Charge")
+    # rather than the more common "." / ":".
+    r"|(Diagram|Fig.?(ure)?)\s*[0-9]+\s*[.:\-]?\s+Gate[\s-]+Charge.*)",
     re.IGNORECASE,
 )
 
