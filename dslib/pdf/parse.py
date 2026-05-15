@@ -21,6 +21,7 @@ from dslib.pdf.pipeline import convertapi, pdf2pdf
 
 pymupdf.TOOLS.mupdf_display_errors(False)
 
+
 def _empty(s):
     return not s or str(s).lower() == 'nan'
 
@@ -123,7 +124,7 @@ regex_ver_salt = ('v46', dim_regs_csv, get_field_detect_regex('any'))
 
 
 @disk_cache(ttl='999d', salt=(regex_ver_salt, 'v01'), hash_func_code=True)
-def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False):
+def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False) -> DatasheetFields:
     assert mfr
     mpn = pdf_path.split('/')[-1].split('.')[0] if pdf_path else None
 
@@ -299,6 +300,7 @@ def ocr_pdf(pdf_path, method='r600_ocrmypdf'):
     pdf2pdf(pdf_path, out_path, method)
     return out_path
 
+
 @disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v04'), ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
@@ -378,6 +380,13 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     ds.add_multiple(fields, ['read_sheet'])
 
+    # Vpl
+    if not math.isfinite(ds.get_max_or_min_or_typ('Vpl')):
+        from vpl_from_chart import vpl_from_pdf, _pick_best
+        vpl = _pick_best(vpl_from_pdf(pdf_path))
+        if vpl:
+            ds.add(Field('Vpl', min=math.nan, typ=round(vpl['vpl'], 1), max=math.nan, unit='V', source='vplFromPdf'))
+
     if need_symbols:
         subsctract_needed_symbols(need_symbols, ds.keys())
     else:
@@ -427,6 +436,7 @@ try:
 except ImportError:
     # print('jpype not found')
     _force_subprocess = True
+
 
 @disk_cache(ttl='999d', file_dependencies=True)
 def tabula_read_pdf_cached(pdf_path, *args, **kwargs):
@@ -544,15 +554,18 @@ def find_iter(r: re.Pattern, s: str) -> re.Match:
     else:
         return next(r.finditer(s), None)
 
+
 import re
 
 RE_D = re.compile('\d')
+
 
 def has_digits(string):
     res = RE_D.search(string)
     return res is not None
 
-def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None, mpn=None,) \
+
+def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None, mpn=None, ) \
         -> Union[Optional[Field], Tuple[Optional[Field], Optional[re.Match]]]:
     range = valid_range.get(field_sym)
     err = []
@@ -703,8 +716,10 @@ def right_strip_nan(v, n):
         v = v[0:i + n + 1]
     return v
 
+
 # TODO cache
-def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', verbose=False, mpn=None) -> DatasheetFields:
+def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', verbose=False,
+                                   mpn=None) -> DatasheetFields:
     assert mfr
     assert not ds_path or mfr in ds_path, (mfr, ds_path)
     fields_detect = get_field_detect_regex(mfr)

@@ -163,7 +163,6 @@ How would you approach that?
 
 * The temperature test condition often appears below the section heading
 
-
 # Gate Charge curve
 
 Most mosfet datasheets don't specify the Miller-Plateu Voltage Vpl in the tabular data.
@@ -175,3 +174,52 @@ Write a program that finds the Gate Charge Curve chart in a PDF and determines V
 Notice the different styling of the charts across manufactureres. The curves look all quite similar.
 Use sample files from test/tests.py. Some reference data includes Vpl, which you can use to validate your program.
 Put your code in viz/.
+
+Find charts by their caption with this regular expression (case insensitive):
+r"(([0-9]*\s*typ(\.|ycal)\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*|(Fig.?(ure)?)\s*[0-9]+\s*[.:]\s*Gate[\s-]
++Charge.*)"
+
+In case you find captions in the PDF texts that you might think should match  (curve, diagram, ...) in the pdf text tha
+
+* are there any captions you have seen in the text that you might think should match? e.g. using synomys for "curve" or
+  "diagram"? then optimize the regex to match these synonym
+
+Now use the refresh script to find missing Vpl using the chart-extractor.
+If a value
+
+* Vpl valid range is (-1, 10)
+*
+
+use this to get an
+
+* the chart in BSB056N10NN3GXUMA2.pdf is rastered with a caption "14 Typ. gate charge". at caption based chart detection
+  with regex for matching similar captions
+* in BSZ084N08NS5ATMA1.pdf there are actually 3 curves hardly distinguishable from each other. The curves have small
+  labels next to them. Ignore the labels as they might interfere with finding the plateau.
+
+the regular expression (python):
+r'(?P<conds_mTm>=name)?^([^\n]*\n){0,2}[-    _.,;:#*"\'()\[\]a-z0-9]{,30}(capacitance|C[ _]?[a-z]{1,3})
+*[-    _.,;:#*"\'()\[\]a-z0-9]* *\n((?P<conds_ml>(?P<cond_sym>([a-z]{1,2}([/a-z0-9]*|[_ ][a-z]{1,3})(\([a-z0-9]
+{1,6}\))?)) *[=≈] *(((?P<cond_val>(-?[0-9]+(\.[0-9]+)?)) *(?P<cond_unit>((([uμnm]s|㎱|㎲|㎳)|[uμnp]F|[m]?Vv?|[uμnp]
+?C|[muμn]?A|[mkM]?(Ω|Ω|O|Q|Ohm|W)|[k]?(S)|(°C|℃)/W|(°[CF]|K|℃|℉)|[Mk]?Hz)[/a-z0-9]{0,4}){0,2})?|([a-z]
+{1,2}([/a-z0-9]*|[_ ][a-z]{1,3})(\([a-z0-9]{1,6}\))?)) *[-+*/]? *)+( +to +(?P<cond_val_to>(-?[0-9]+(\.[0-9]+)?)) *(?P<
+cond_unit2>([uμnm]s|㎱|㎲|㎳)|[uμnp]F|[m]?Vv?|[uμnp]?C|[muμn]?A|[mkM]?(Ω|Ω|O|Q|Ohm|W)|[k]?(S)|(°C|℃)/W|(°[CF]|K|℃|℉)|[Mk]
+?Hz)?)? *[;,\n ]*)+[-    _.,;:#*"\'()\[\]a-z0-9]*\n)?(?P<min>[-~=._]+|nan|[0-9]+(\.[0-9]+)?)\n(?P<typ>[0-9]+(\.[0-9]+)?)
+\n(?P<max>[-~=._]+|nan|[0-9]+(\.[0-9]+)?)\n(\n|$)' in 'Ciss\nCoss\nCrss\nVGS=0V ,
+f=1MHz\nCiss=Cgs+Cgd\nCoss=Cds+Cgd\nCrss=Cgd\nVDS=520V\nVDS=325V\nVDS=130V\nFigure 10 Typical Theshold Voltage vs
+Junction Temperature\nFigure 11 Typical Breakdown Voltage vs Junction Temperature'
+causes catastrophic backtracking on this input:
+input="""Ciss
+Coss
+Crss
+VGS=0V , f=1MHz
+Ciss=Cgs+Cgd
+Coss=Cds+Cgd
+Crss=Cgd
+VDS=520V
+VDS=325V
+VDS=130V
+Figure 10 Typical Theshold Voltage vs Junction Temperature
+Figure 11 Typical Breakdown Voltage vs Junction Temperature"""
+
+can you fix the regex?
