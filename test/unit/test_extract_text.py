@@ -425,8 +425,7 @@ def test_catasthasthrophic():
     # with pytest.raises(timeout_decorator.timeout_decorator.TimeoutError):
     #    assert not extract_fields_from_text(s, 'any')
 
-    with pytest.raises(timeout_decorator.timeout_decorator.TimeoutError):
-        assert not extract_fields_from_text("""Qgs
+    extract_fields_from_text("""Qgs
 VGS = 10V, VDS = 0.5 * VDSS, ID = 0.5 * ID25
 8
 nC

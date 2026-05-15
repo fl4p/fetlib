@@ -306,8 +306,18 @@ def line_regex_variations(dim: Dimension):
 
     cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_ ][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
 
+    # NOTE: this test_cond uses possessive quantifiers (++, ?+, {n,m}+) on
+    # the internal variable-length parts of a single test_cond. These prevent
+    # catastrophic backtracking when the surrounding pattern fails to match
+    # (e.g. unicode chars like °, μ in conds break misc_ref absorption and
+    # trigger combinatorial BT through every conds permutation). The trailing
+    # [;,\n ]* separator is INTENTIONALLY left greedy (not possessive) so it
+    # can give back a newline to the next misc_ref*\n in valid cases.
+    # rec() compiles with the `regex` module which supports these markers;
+    # do NOT reuse this string with re.compile (see get_cond_regex below for
+    # the re-compatible variant).
     test_cond = (rf'(?P<cond_sym>{cond_sym})\s*[=≈]\s*'
-                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[-+*/]? *)+'
+                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit})[/a-z0-9]{{0,4}}+){{0,2}}+)?+|{cond_sym}) *[-+*/]? *)++'
                  ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
                  )
     test_conds_delim_ml = (rf'(?P<conds_ml>{test_cond}\s*[;,\n\s]*)')
@@ -335,7 +345,13 @@ def line_regex_variations(dim: Dimension):
         rec((
             # catastrophic BT
             rf'(?P<cond_mtmu>=name)?{head}\s*{misc_ref}*\s*\n'
-            rf'(?=(\n|.)+({unit})(\n|$))'  # positive look-ahead before complex conds ex
+            # bounded look-ahead that requires the actual min/typ/max/unit
+            # window ahead — the previous loose lookahead only checked for the
+            # unit char anywhere, which lets inputs with unit chars inside
+            # conds (e.g. "VGS = 10 V thru 6 V" + non-matching trailing
+            # numbers) still trigger catastrophic backtracking in the conds
+            # block before failing.
+            rf'(?=([^\n]*\n){{0,16}}({rs.val_nan})\n({rs.val_nan})\n({rs.val_nan})\n({unit})(\n|$))'
             rf'(({test_conds_delim_ml}+){misc_ref}*\n'
             '' rf'({misc_ref}+\n){{0,3}})?'
             rf'(?P<min>{rs.val_nan})\n'
@@ -350,7 +366,11 @@ def line_regex_variations(dim: Dimension):
             rf'(?P<cond_tM_unit>=name)?'
             rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
             # rf'([a-z]{{1,3}}\n)?'
-            rf'(?=(\n|.)+({unit})(\n|$))'  # positive look-ahead before complex conds ex
+            # tightened look-ahead: require the actual max(\n| +)unit window
+            # (with optional preceding typ-like line) to exist within a bounded
+            # number of lines ahead, not just any unit char somewhere — see
+            # also the conds_mTm regex and the cond_mtmu regex above.
+            rf'(?=([^\n]*\n){{0,16}}({rs.val})(\n| +)({unit})(\n|$| *[,|]))'
             rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
             rf'((?P<typ>{rs.val_nane})\n)?'
             rf'(?P<max>{rs.val})(\n| +)'  # inline unit
@@ -363,7 +383,7 @@ def line_regex_variations(dim: Dimension):
             rf'(?P<cond_Tm_unit>=name)?'
             rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
             # rf'([a-z]{{1,3}}\n)?'
-            rf'(?=(\n|.)+({unit})(\n|$))'  # positive look-ahead before complex conds ex
+            rf'(?=([^\n]*\n){{0,16}}({rs.val})\n({rs.val_nane})\n({unit})(\n|$| *[,|]))'
             rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
             rf'(?P<typ>{rs.val})\n'
             rf'(?P<max>{rs.val_nane})\n'
@@ -462,6 +482,10 @@ def line_regex_variations(dim: Dimension):
 
         rec((
             rf'(?P<conds_mTm>=name)?{head}\s*{misc_ref}*\s*\n'
+            # bounded look-ahead for the min/typ/max trio gates the expensive
+            # conds block against catastrophic backtracking on inputs that
+            # lack a numeric trio at all (e.g. Ciss/Coss/Crss legend blocks).
+            rf'(?=([^\n]*\n){{0,12}}({rs.val_nan})\n({rs.val})\n({rs.val_nan})\n)'
             rf'({test_conds_delim_ml}+{misc_ref}*\n)?'
             rf'(?P<min>{rs.val_nan})\n'
             rf'(?P<typ>{rs.val})\n'
