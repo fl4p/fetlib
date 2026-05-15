@@ -7,7 +7,7 @@ from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast, Optional
 
 from dslib import round_to_n_dec
-from dslib.pdf.expr import any_unit
+from dslib.pdf.expr import any_unit, DIMENSIONS, Dimension
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 
 
@@ -171,6 +171,14 @@ class Field():
             return self.max
         elif not math.isnan(self.min):
             return self.min
+        return math.nan
+
+    @property
+    def max_or_typ(self):
+        if not math.isnan(self.max):
+            return self.max
+        elif not math.isnan(self.typ):
+            return self.typ
         return math.nan
 
     @property
@@ -433,9 +441,9 @@ class DatasheetFields():
 
         ds = self
 
-        rds_on = ds.get_max('Rds_on_10v', cond=dict(Vgs=Vgs)) * 1e3
+        rds_on = ds.get_max_or_typ('Rds_on_10v', cond=dict(Vgs=Vgs)) * 1e3
         if math.isnan(rds_on):
-            rds_on = ds.get_max('Rds_on', cond=dict(Vgs=Vgs))
+            rds_on = ds.get_max_or_typ('Rds_on', cond=dict(Vgs=Vgs))
 
         Id = ds.get_typ_or_max_or_min('ID_25', False)
         if math.isnan(Id):
@@ -481,6 +489,11 @@ class DatasheetFields():
         r = self._get_by_cond(sym, cond)
         assert r or not required
         return math.nan if not r else r.max_or_min
+
+    def get_max_or_typ(self, sym, required=False, cond=None):
+        r = self._get_by_cond(sym, cond)
+        assert r or not required
+        return math.nan if not r else r.max_or_typ
 
     def get_typ(self, sym):
         r = self.fields_filled.get(sym)
