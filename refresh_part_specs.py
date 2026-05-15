@@ -147,7 +147,8 @@ def _ds_path(part: Part) -> Optional[str]:
     return path if path and os.path.isfile(path) else None
 
 
-def _try_fill_vpl_from_chart(part: Part) -> Optional[Part]:
+def _try_fill_vpl_from_chart(part: Part,
+                             enable_ocr: bool = False) -> Optional[Part]:
     """Read V_pl off the gate-charge curve in the part's datasheet PDF.
 
     Returns a copy of ``part`` with ``specs._Vpl`` populated, or None if
@@ -169,7 +170,7 @@ def _try_fill_vpl_from_chart(part: Part) -> Optional[Part]:
         return None
 
     try:
-        vpl = find_vpl(pdf_path)
+        vpl = find_vpl(pdf_path, enable_ocr=enable_ocr)
     except Exception as e:
         print(f'  viz error on {pdf_path}: {type(e).__name__}: {e}')
         return None
@@ -304,7 +305,7 @@ def main():
         # plateau off the gate-charge chart is orders of magnitude cheaper
         # than a full datasheet recompile — try it first.
         if miss == ['V_pl']:
-            viz_part = _try_fill_vpl_from_chart(part)
+            viz_part = _try_fill_vpl_from_chart(part, enable_ocr=not args.no_ocr)
             if viz_part is None:
                 print('  · viz could not extract Vpl from chart')
                 continue
@@ -325,7 +326,7 @@ def main():
         # chart extractor — most datasheets don't tabulate V_pl, so this
         # is the normal path for it.
         if 'V_pl' in missing_web_fields(new_part):
-            viz_part = _try_fill_vpl_from_chart(new_part)
+            viz_part = _try_fill_vpl_from_chart(new_part, enable_ocr=not args.no_ocr)
             if viz_part is not None:
                 v = _read_web_field(viz_part, 'specs', 'V_pl')
                 print(f'  + V_pl from chart: ≈ {float(v):.2f} V')

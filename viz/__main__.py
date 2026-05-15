@@ -12,11 +12,15 @@ def main():
     p.add_argument('pdfs', nargs='+')
     p.add_argument('--no-raster', action='store_true',
                    help="don't fall back to image-based extraction")
+    p.add_argument('--ocr', action='store_true',
+                   help='run OCR (dslib.pdf.parse.ocr_pdf) on scanned PDFs')
     args = p.parse_args()
 
     for path in args.pdfs:
         print(path)
-        results = find_in_pdf(path, enable_raster=not args.no_raster)
+        results = find_in_pdf(path,
+                              enable_raster=not args.no_raster,
+                              enable_ocr=args.ocr)
         if not results:
             print('  no gate-charge chart found')
             continue

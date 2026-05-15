@@ -292,6 +292,13 @@ def extract_dates(pdf_text: str):
     return [x[1] for x in sorted(dates, key=lambda x: x[0])]
 
 
+def ocr_pdf(pdf_path, method='r600_ocrmypdf'):
+    out_path = pdf_path + '.' + method + '.pdf'
+    if os.path.exists(out_path):
+        return out_path
+    pdf2pdf(pdf_path, out_path, method)
+    return out_path
+
 @disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v04'), ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,

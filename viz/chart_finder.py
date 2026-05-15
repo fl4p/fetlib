@@ -361,10 +361,17 @@ def _calibrate_axes(words: List[_Word],
                 y_col_score = score
                 y_col = run
 
-    # x-ticks: horizontal row near the bottom of the chart. Cluster by y.
+    # x-ticks: horizontal row near the bottom of the chart. Cluster by y,
+    # then within each row try every equispaced run — the right one is
+    # the run whose leftmost tick sits just right of the y-axis column,
+    # not necessarily the longest run (the longest can belong to a
+    # neighbouring chart that shares the same baseline).
     y_clusters = _cluster(nums, lambda w: w.cy, 4.0)
     x_row: Optional[List[_Word]] = None
-    for cl in sorted(y_clusters, key=lambda c: -len(c)):
+    x_row_score = float('inf')
+    # right edge of the y-axis tick column = chart's left bound
+    y_col_right = max((w.x1 for w in y_col), default=yword.x1) if y_col else yword.x1
+    for cl in y_clusters:
         if len(cl) < 3:
             continue
         cy = sum(w.cy for w in cl) / len(cl)
@@ -372,17 +379,26 @@ def _calibrate_axes(words: List[_Word],
             continue
         if cy > xword_left.y0 - 1:
             continue
-        run = _longest_equispaced_run(sorted(cl, key=lambda w: w.cx),
-                                      pos=lambda w: w.cx)
-        if len(run) < 3:
-            continue
-        try:
-            if not _values_linear_in_position(run, key_pos=lambda w: w.cx):
+        sorted_cl = sorted(cl, key=lambda w: w.cx)
+        for run in _all_equispaced_runs(sorted_cl,
+                                        pos=lambda w: w.cx):
+            try:
+                if not _values_linear_in_position(run, key_pos=lambda w: w.cx):
+                    continue
+            except ValueError:
                 continue
-        except ValueError:
-            continue
-        x_row = run
-        break
+            # distance from the run's leftmost tick to the y-axis column.
+            # Small distance = this chart's x-axis. Large positive distance
+            # = a neighbouring chart on the same baseline. Negative
+            # distance = a run that starts before the y-axis column (not
+            # this chart either).
+            left_gap = run[0].x0 - y_col_right
+            if left_gap < -8 or left_gap > 60:
+                continue
+            score = abs(left_gap)
+            if score < x_row_score:
+                x_row_score = score
+                x_row = run
 
     y_ticks: List[Tuple[float, float]] = []
     x_ticks: List[Tuple[float, float]] = []
@@ -485,6 +501,178 @@ def find_gate_charge_charts(page: pymupdf.Page) -> List[ChartLocation]:
     return dedup
 
 
+_CHART_TITLE_RE = re.compile(
+    # 1. bare "<n>? Typ. gate charge" — no trailing suffix required
+    r"([0-9]*\s*typ(\.|ycal)\s+gate[\s-]+charge\b.*"
+    # 2. "[Typ.] gate charge curve/vs/waveforms"
+    r"|(typ(\.|ycal)\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*"
+    # 3. "Figure / Diagram N. Gate Charge ..."
+    r"|(Diagram|Fig.?(ure)?)\s*[0-9]+\s*[.:]\s*Gate[\s-]+Charge.*)",
+    re.IGNORECASE,
+)
+
+
+def _group_words_by_line(words: List[_Word], y_tol: float = 3.0,
+                         x_gap_split: float = 50.0
+                         ) -> List[List[_Word]]:
+    """Group words by baseline (cy within ``y_tol``), then split each line
+    on horizontal gaps larger than ``x_gap_split`` — two charts' captions
+    that share a baseline (Infineon table-style layouts) must end up as
+    *separate* title candidates, not a single merged line.
+    """
+    if not words:
+        return []
+    by_y = sorted(words, key=lambda w: (w.cy, w.x0))
+    raw_lines: List[List[_Word]] = [[by_y[0]]]
+    for w in by_y[1:]:
+        if abs(w.cy - raw_lines[-1][0].cy) <= y_tol:
+            raw_lines[-1].append(w)
+        else:
+            raw_lines.append([w])
+
+    out: List[List[_Word]] = []
+    for line in raw_lines:
+        line.sort(key=lambda w: w.x0)
+        if not line:
+            continue
+        chunk: List[_Word] = [line[0]]
+        for w in line[1:]:
+            if w.x0 - chunk[-1].x1 > x_gap_split:
+                out.append(chunk)
+                chunk = [w]
+            else:
+                chunk.append(w)
+        if chunk:
+            out.append(chunk)
+    return out
+
+
+_FOOTNOTE_START_RE = re.compile(r'^(\*+\)|[0-9]+\)|See\b|see\b|cf\.)')
+
+
+def _find_chart_title_lines(words: List[_Word]
+                            ) -> List[List[_Word]]:
+    """Lines whose joined text matches the chart-title regex.
+
+    Filters out:
+      * lines starting with footnote markers (``"*) See …"`` etc.) that
+        happen to contain ``"gate charge waveforms"`` as a reference
+      * when more than one match remains, drops "waveform" lines so the
+        switching-diagram caption can't outrank the canonical V_GS-vs-Q_G
+        chart title sharing the same page.
+    """
+    out: List[List[_Word]] = []
+    for line in _group_words_by_line(words):
+        text = ' '.join(w.text for w in line).strip()
+        if not text:
+            continue
+        # skip footnotes / references that mention "gate charge"
+        if _FOOTNOTE_START_RE.match(text):
+            continue
+        if _CHART_TITLE_RE.search(text):
+            out.append(line)
+    if len(out) >= 2:
+        non_wave = [l for l in out
+                    if 'waveform' not in ' '.join(w.text for w in l).lower()]
+        if non_wave:
+            return non_wave
+    return out
+
+
+def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
+    """Detect raster gate-charge charts by their title text.
+
+    A chart-title line matching ``_CHART_TITLE_RE`` — e.g.
+
+      * ``"Typ. gate charge"`` (Infineon)
+      * ``"Gate Charge vs. Gate-to-Source Voltage"`` (onsemi)
+      * ``"Figure 16. Gate Charge ..."`` (onsemi / TI / IRF)
+
+    anchors the chart. The associated bitmap is the page image whose
+    bbox sits next to that title (above for "Figure N." captions
+    underneath the chart, below for "Typ. gate charge" headers above it).
+    The y-axis is calibrated to 0 V at the plot bottom and 10 V at the
+    top; the raster extractor refines this against the detected plot
+    frame inside the bitmap.
+    """
+    words = _page_words(page)
+
+    title_lines = _find_chart_title_lines(words)
+    if not title_lines:
+        return []
+
+    images = page.get_image_info(hashes=False)
+    if not images:
+        return []
+
+    out: List[ChartLocation] = []
+    for grp in title_lines:
+        title_bbox = pymupdf.Rect(
+            min(w.x0 for w in grp), min(w.y0 for w in grp),
+            max(w.x1 for w in grp), max(w.y1 for w in grp))
+
+        # The chart bitmap can be either below the title (header style:
+        # "Typ. gate charge") or above it (caption style: "Figure 16.
+        # Gate Charge ..."). Pick the closest image that is also
+        # horizontally aligned with the title.
+        title_text = ' '.join(w.text for w in grp)
+        is_caption = bool(re.match(r'(?i)\s*Fig', title_text))
+
+        title_cx = 0.5 * (title_bbox.x0 + title_bbox.x1)
+
+        img_rect: Optional[pymupdf.Rect] = None
+        best_d = float('inf')
+        for img in images:
+            b = img.get('bbox')
+            if not b:
+                continue
+            r = pymupdf.Rect(b)
+            if is_caption:
+                # caption sits below the chart → image is above
+                if r.y1 > title_bbox.y0:
+                    continue
+                d = title_bbox.y0 - r.y1
+            else:
+                # title sits above the chart → image is below
+                if r.y0 < title_bbox.y1:
+                    continue
+                d = r.y0 - title_bbox.y1
+            if d > 40:
+                continue
+            # Require the title's centre to fall inside the image's x
+            # range (with a small slack). That rules out the
+            # neighbouring-column image in two-column layouts where the
+            # gap between columns is < 30 pt.
+            if not (r.x0 - 5 <= title_cx <= r.x1 + 5):
+                continue
+            if d < best_d:
+                best_d = d
+                img_rect = r
+        if img_rect is None:
+            continue
+
+        # synthesize y-axis ticks: top of the image plot ≈ 10 V, bottom ≈
+        # 0 V. The raster extractor will refine these against the actual
+        # plot border by re-running the calibration on the image's tick
+        # span — see ``viz.raster_extract``.
+        y_ticks: List[Tuple[float, float]] = [
+            (10.0, img_rect.y0),
+            (0.0, img_rect.y1),
+        ]
+
+        loc = ChartLocation(
+            page_num=page.number,
+            bbox=img_rect,
+            y_ticks=y_ticks,
+            x_ticks=[],
+            title=title_text,
+            y_axis_word_bbox=None,
+            x_axis_word_bbox=title_bbox,
+        )
+        out.append(loc)
+    return out
+
+
 def find_in_pdf(pdf_path: str) -> List[ChartLocation]:
     """Open the PDF and return every detected gate-charge chart."""
     doc = pymupdf.open(pdf_path)
@@ -494,4 +682,5 @@ def find_in_pdf(pdf_path: str) -> List[ChartLocation]:
         if 'gate charge' not in text.lower() and 'qg' not in text.lower():
             continue
         out.extend(find_gate_charge_charts(page))
+        out.extend(_find_infineon_raster_charts(page))
     return out

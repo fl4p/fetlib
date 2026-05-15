@@ -340,6 +340,21 @@ def find_plateau(page: pymupdf.Page,
     )
 
 
+def _chart_bboxes_overlap(a: pymupdf.Rect, b: pymupdf.Rect,
+                          min_overlap: float = 0.4) -> bool:
+    """Approximate overlap check used to dedupe charts found by the two
+    paths. Two bboxes count as the same chart when their intersection
+    area exceeds ``min_overlap`` of the smaller rect."""
+    inter = pymupdf.Rect(max(a.x0, b.x0), max(a.y0, b.y0),
+                         min(a.x1, b.x1), min(a.y1, b.y1))
+    iw = inter.width
+    ih = inter.height
+    if iw <= 0 or ih <= 0:
+        return False
+    smaller = min(a.width * a.height, b.width * b.height)
+    return (iw * ih) >= min_overlap * smaller
+
+
 def _vector_or_raster(page: pymupdf.Page,
                       chart: ChartLocation,
                       enable_raster: bool):
@@ -356,31 +371,102 @@ def _vector_or_raster(page: pymupdf.Page,
     return rhit, 'raster'
 
 
-def find_in_pdf(pdf_path: str, enable_raster: bool = True
+def _looks_scanned(doc: pymupdf.Document) -> bool:
+    """True if the PDF appears to be a scanned document.
+
+    A "scanned" page has (almost) no extractable text but does contain an
+    embedded image — that's the typical layout of an Infineon datasheet
+    where every page is a single bitmap. We use this as the cue to fall
+    back to OCR.
+    """
+    for page in doc.pages():
+        text = page.get_text().strip()
+        if len(text) > 80:
+            return False
+    # at least one page must carry an image, otherwise OCR is pointless
+    for page in doc.pages():
+        if page.get_images(full=False):
+            return True
+    return False
+
+
+def find_in_pdf(pdf_path: str,
+                enable_raster: bool = True,
+                enable_ocr: bool = False,
+                _ocr_attempted: bool = False
                 ) -> List[Tuple[ChartLocation, Optional[object], Optional[str]]]:
     """Locate every gate-charge chart in a PDF and report its Vpl.
 
     Returns a list of ``(chart, plateau_hit_or_None, source_or_None)`` where
-    ``source`` is ``'vector'`` or ``'raster'`` depending on which pipeline
-    produced the hit.
+    ``source`` is ``'vector'``, ``'raster'``, or (after an OCR retry) one
+    of those with ``'+ocr'`` appended.
+
+    When ``enable_ocr`` is True and the PDF appears to be a scanned
+    document (no extractable text on any page), the PDF is run through
+    ``dslib.pdf.parse.ocr_pdf`` and this function is re-invoked on the
+    resulting text-layer-augmented PDF. The OCR retry happens at most
+    once per call chain.
     """
-    from viz.chart_finder import find_gate_charge_charts
+    from viz.chart_finder import (find_gate_charge_charts,
+                                   _find_infineon_raster_charts)
     doc = pymupdf.open(pdf_path)
     out = []
     for page in doc.pages():
         text = page.get_text()
         if 'gate charge' not in text.lower() and 'qg' not in text.lower():
             continue
-        for chart in find_gate_charge_charts(page):
+        charts = list(find_gate_charge_charts(page))
+        # always also consider title-anchored charts — on OCRed pages the
+        # standard tick-based finder often locks onto noisy fragments
+        # and the title path produces a cleaner bbox.
+        for c in _find_infineon_raster_charts(page):
+            if not any(_chart_bboxes_overlap(c.bbox, x.bbox) for x in charts):
+                charts.append(c)
+        for chart in charts:
             hit, source = _vector_or_raster(page, chart, enable_raster)
             out.append((chart, hit, source))
-    return out
+
+    if out or not enable_ocr or _ocr_attempted:
+        return out
+
+    if not _looks_scanned(doc):
+        return out
+
+    # No text-layer cues anywhere; try OCR and retry on the augmented PDF.
+    import os
+    import shutil
+    import warnings
+    # Avoid re-running ocrmypdf (slow + requires tesseract) if a cached
+    # variant from a previous run is already on disk.
+    cached = pdf_path + '.r600_ocrmypdf.pdf'
+    if os.path.isfile(cached):
+        ocr_path = cached
+    elif shutil.which('tesseract') is None:
+        # ocrmypdf shells out to tesseract; without it the call would hang
+        # / raise a MissingDependencyError.
+        warnings.warn(f'viz: skipping OCR for {pdf_path} — tesseract not installed')
+        return out
+    else:
+        try:
+            from dslib.pdf.parse import ocr_pdf
+            ocr_path = ocr_pdf(pdf_path)
+        except Exception as e:
+            warnings.warn(f'viz: ocr_pdf failed on {pdf_path}: {type(e).__name__}: {e}')
+            return out
+
+    retried = find_in_pdf(ocr_path, enable_raster=enable_raster,
+                          enable_ocr=enable_ocr, _ocr_attempted=True)
+    return [(c, h, (s + '+ocr') if s else s) for c, h, s in retried]
 
 
-def find_vpl(pdf_path: str, enable_raster: bool = True) -> Optional[float]:
+def find_vpl(pdf_path: str,
+             enable_raster: bool = True,
+             enable_ocr: bool = False) -> Optional[float]:
     """Convenience: return the most confident Vpl, or None if none found."""
     cands = []
-    for _chart, hit, _src in find_in_pdf(pdf_path, enable_raster=enable_raster):
+    for _chart, hit, _src in find_in_pdf(pdf_path,
+                                         enable_raster=enable_raster,
+                                         enable_ocr=enable_ocr):
         if hit is None:
             continue
         cands.append(hit)

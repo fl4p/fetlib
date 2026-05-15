@@ -162,6 +162,76 @@ def _plot_interior_bbox(chart: ChartLocation) -> pymupdf.Rect:
     return pymupdf.Rect(bx0, by0, bx1, by1)
 
 
+def _detect_plot_border(arr: np.ndarray,
+                        dark_threshold: int = 128,
+                        ratio: float = 0.55
+                        ) -> Optional[Tuple[int, int, int, int]]:
+    """Find the plot frame inside a rendered chart image.
+
+    Returns ``(top_px, bottom_px, left_px, right_px)`` — the rows / cols
+    where the chart's bordering rectangle sits. Returns ``None`` if no
+    clear frame is detectable.
+
+    Strategy:
+      1. flag rows/cols whose dark-pixel count exceeds ``ratio`` of the
+         opposite dimension
+      2. cluster runs of consecutive flagged indices (a 4-pixel-thick
+         frame counts as one)
+      3. drop runs that touch the very edge of the image, or that span
+         (nearly) the full opposite dimension — those are page borders /
+         footer bleed-through, not the plot frame
+      4. plot top = first surviving horizontal run, plot bottom = last;
+         same for left/right columns
+    """
+    h, w = arr.shape
+    if h < 20 or w < 20:
+        return None
+
+    dark = arr < dark_threshold
+    row_counts = dark.sum(axis=1).astype(np.int32)
+    col_counts = dark.sum(axis=0).astype(np.int32)
+
+    h_hits = np.where(row_counts > ratio * w)[0]
+    v_hits = np.where(col_counts > ratio * h)[0]
+
+    if h_hits.size < 1 or v_hits.size < 1:
+        return None
+
+    def _group_runs(hits: np.ndarray) -> List[List[int]]:
+        groups: List[List[int]] = []
+        for h_ in hits:
+            if groups and h_ - groups[-1][-1] <= 4:
+                groups[-1].append(int(h_))
+            else:
+                groups.append([int(h_)])
+        return groups
+
+    def _pick_bounds(groups: List[List[int]], max_v: int,
+                     counts: np.ndarray, opposite_dim: int
+                     ) -> Tuple[int, int]:
+        # discard runs glued to the very edge: those are usually page
+        # borders, not the plot frame
+        groups = [g for g in groups if (g[0] > 1 and g[-1] < max_v - 2)]
+        # discard runs that span the *full* opposite dimension — the plot
+        # frame has small margins on each side, so its width is < image
+        # width. A 100%-wide line is a page-level horizontal rule.
+        def is_full(g):
+            mean_c = sum(int(counts[i]) for i in g) / len(g)
+            return mean_c >= 0.97 * opposite_dim
+        groups = [g for g in groups if not is_full(g)]
+        if not groups:
+            return -1, -1
+        top = int(sum(groups[0]) / len(groups[0]))
+        bot = int(sum(groups[-1]) / len(groups[-1]))
+        return top, bot
+
+    top, bot = _pick_bounds(_group_runs(h_hits), h, row_counts, w)
+    left, right = _pick_bounds(_group_runs(v_hits), w, col_counts, h)
+    if top < 0 or left < 0 or bot - top < 20 or right - left < 20:
+        return None
+    return top, bot, left, right
+
+
 def find_plateau_raster(page: pymupdf.Page,
                         chart: ChartLocation,
                         dpi: int = 300) -> Optional[RasterPlateauHit]:
@@ -177,7 +247,39 @@ def find_plateau_raster(page: pymupdf.Page,
     if h < 30 or w < 30:
         return None
 
-    # binarise: ink = dark pixels (below mean - some margin)
+    # If the chart bbox is the full image (e.g. the Infineon raster
+    # fallback hands us the bitmap bbox directly), snap to the actual plot
+    # frame so the y-axis calibration aligns with the plot edges rather
+    # than the image edges.
+    border = _detect_plot_border(arr)
+    crop_top_px = 0
+    crop_left_px = 0
+    if border is not None:
+        top_px, bot_px, left_px, right_px = border
+        # tight crop, but leave a 1-pixel pad so the curve isn't clipped
+        crop_top_px = max(top_px + 1, 0)
+        crop_left_px = max(left_px + 1, 0)
+        crop_bot_px = min(bot_px - 1, h)
+        crop_right_px = min(right_px - 1, w)
+        if crop_bot_px > crop_top_px + 20 and crop_right_px > crop_left_px + 20:
+            arr = arr[crop_top_px:crop_bot_px, crop_left_px:crop_right_px]
+            # Realign the y-tick calibration to the detected plot frame:
+            # top of plot = highest tick value, bottom = lowest.
+            ymin = min(v for v, _ in chart.y_ticks)
+            ymax = max(v for v, _ in chart.y_ticks)
+            top_pdf = bbox.y0 + top_px / sy
+            bot_pdf = bbox.y0 + bot_px / sy
+            # rebuild ticks against the detected frame
+            chart = ChartLocation(
+                page_num=chart.page_num,
+                bbox=chart.bbox,
+                y_ticks=[(ymax, top_pdf), (ymin, bot_pdf)],
+                x_ticks=chart.x_ticks,
+                title=chart.title,
+            )
+            h, w = arr.shape
+
+    # binarise: ink = dark pixels
     thresh = max(60, int(np.mean(arr) * 0.65))
     bin_img = ((arr < thresh).astype(np.uint8)) * 255
 
@@ -201,14 +303,16 @@ def find_plateau_raster(page: pymupdf.Page,
         a, b = _calibrate_y(chart, bbox.y0, sy)
     except ValueError:
         return None
-    v_pl = a * plateau_y_px + b
+    # plateau_y_px is in the cropped image; convert back to the
+    # rendered-image's pixel coordinates for calibration
+    v_pl = a * (plateau_y_px + crop_top_px) + b
     if not (1.0 < v_pl < 10.0):
         return None
 
     score = (x1 - x0) / w
     return RasterPlateauHit(
-        y_pdf=bbox.y0 + plateau_y_px / sy,
+        y_pdf=bbox.y0 + (plateau_y_px + crop_top_px) / sy,
         v_pl=round(v_pl, 2),
         score=round(score, 3),
-        plateau_run=(x0, x1),
+        plateau_run=(x0 + crop_left_px, x1 + crop_left_px),
     )
