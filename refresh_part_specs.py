@@ -22,6 +22,7 @@ Usage::
     python3 refresh_part_specs.py --mfr infineon  # restrict by manufacturer
     python3 refresh_part_specs.py --no-cache      # bypass disk/parts caches
     python3 refresh_part_specs.py --no-ocr        # skip OCR fallback
+    python3 refresh_part_specs.py -j 8            # run 8 parts in parallel
 """
 from __future__ import annotations
 
@@ -259,6 +260,69 @@ def _filter_parts(parts: dict, mfr: Optional[str],
     return parts_list
 
 
+def _process_one_part(part: Part,
+                      miss: List[str],
+                      no_cache: bool,
+                      no_ocr: bool,
+                      no_download: bool) -> Tuple[Optional[Part], List[str]]:
+    """Process a single part and return (new_part_or_None, log_lines).
+
+    This is the per-part body of the refresh loop, factored out so it can be
+    dispatched to ``run_parallel`` without sharing main-process state.  All
+    user-facing prints become *log lines* the caller is responsible for
+    flushing in order; this avoids interleaved output from worker processes
+    and keeps the function pure (picklable for the multiprocessing backend).
+    """
+    log: List[str] = []
+
+    # Fast path: V_pl is the only missing web field — read it directly off
+    # the gate-charge chart, which is much cheaper than a full re-parse.
+    if miss == ['V_pl']:
+        viz_part = _try_fill_vpl_from_chart(part, enable_ocr=not no_ocr)
+        if viz_part is None:
+            log.append('  · viz could not extract Vpl from chart')
+            return None, log
+        v = _read_web_field(viz_part, 'specs', 'V_pl')
+        log.append(f'  + gained from chart: V_pl ≈ {float(v):.2f} V')
+        return viz_part, log
+
+    new_part = refresh_part(part, NEED_SYMBOLS,
+                            no_cache=no_cache, no_ocr=no_ocr,
+                            no_download=no_download)
+    if new_part is None:
+        return None, log
+
+    # If the recompile still didn't fill V_pl, supplement with the chart
+    # extractor — most datasheets don't tabulate V_pl, so this is the normal
+    # path for it.
+    if 'V_pl' in missing_web_fields(new_part):
+        viz_part = _try_fill_vpl_from_chart(new_part, enable_ocr=not no_ocr)
+        if viz_part is not None:
+            v = _read_web_field(viz_part, 'specs', 'V_pl')
+            log.append(f'  + V_pl from chart: ≈ {float(v):.2f} V')
+            new_part = viz_part
+
+    # Don't regress.  Every WEB_FIELDS entry that was finite-and-non-zero on
+    # the OLD part must remain finite-and-non-zero on the new one.
+    old_present = {lbl for lbl, _, _ in WEB_FIELDS
+                   if lbl not in set(missing_web_fields(part))}
+    new_present = {lbl for lbl, _, _ in WEB_FIELDS
+                   if lbl not in set(missing_web_fields(new_part))}
+    dropped = old_present - new_present
+    if dropped:
+        log.append(f'  · skip write: would drop {sorted(dropped)}')
+        return None, log
+
+    new_miss = missing_web_fields(new_part)
+    gained = sorted(set(miss) - set(new_miss))
+    if gained:
+        tail = (f'  (still missing: {sorted(new_miss)})' if new_miss else '')
+        log.append(f'  + gained: {gained}{tail}')
+    else:
+        log.append(f'  · no new fields recovered (still missing: {sorted(new_miss)})')
+    return new_part, log
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -274,6 +338,9 @@ def main():
                    help='disable OCR fallback for image-only PDFs')
     p.add_argument('--download', action='store_true',
                    help='allow downloading missing datasheets (off by default)')
+    p.add_argument('-j', '--jobs', type=int, default=1,
+                   help='number of parts to process in parallel '
+                        '(1 = serial; >1 uses run_parallel from main.py)')
     args = p.parse_args()
     no_download = not args.download
 
@@ -300,72 +367,49 @@ def main():
         print('nothing to do.')
         return
 
+    if args.dry_run:
+        for i, (part, miss) in enumerate(todo, 1):
+            print(f'[{i}/{len(todo)}] {part.mfr} {part.mpn}  missing={sorted(miss)}')
+        print()
+        print('dry-run: not writing to parts_db')
+        return
+
     updated: List[Part] = []
-    for i, (part, miss) in enumerate(todo, 1):
-        print(f'[{i}/{len(todo)}] {part.mfr} {part.mpn}  missing={sorted(miss)}')
-        if args.dry_run:
-            continue
-
-        # Fast path: V_pl is the only missing web field. Reading the Miller
-        # plateau off the gate-charge chart is orders of magnitude cheaper
-        # than a full datasheet recompile — try it first.
-        if miss == ['V_pl']:
-            viz_part = _try_fill_vpl_from_chart(part, enable_ocr=not args.no_ocr)
-            if viz_part is None:
-                print('  · viz could not extract Vpl from chart')
+    if args.jobs > 1:
+        # Parallel dispatch via main.run_parallel (multiprocessing backend).
+        from main import run_parallel
+        jobs = {
+            (part.mfr, part.mpn): (_process_one_part, part, miss,
+                                   args.no_cache, args.no_ocr, no_download)
+            for part, miss in todo
+        }
+        # Header lines printed up-front so the user sees the work list before
+        # the progress bar takes over.
+        for i, (part, miss) in enumerate(todo, 1):
+            print(f'[{i}/{len(todo)}] {part.mfr} {part.mpn}  missing={sorted(miss)}')
+        results = run_parallel(jobs, args.jobs, 'multiprocessing', verbose=0)
+        for (mfr, mpn), result in results.items():
+            if result is None:
                 continue
-            new_miss = missing_web_fields(viz_part)
-            v = _read_web_field(viz_part, 'specs', 'V_pl')
-            print(f'  + gained from chart: V_pl ≈ {float(v):.2f} V')
-            updated.append(viz_part)
-            continue
-
-        new_part = refresh_part(part, NEED_SYMBOLS,
-                                no_cache=args.no_cache,
-                                no_ocr=args.no_ocr,
-                                no_download=no_download)
-        if new_part is None:
-            continue
-
-        # If the recompile still didn't fill V_pl, supplement with the
-        # chart extractor — most datasheets don't tabulate V_pl, so this
-        # is the normal path for it.
-        if 'V_pl' in missing_web_fields(new_part):
-            viz_part = _try_fill_vpl_from_chart(new_part, enable_ocr=not args.no_ocr)
-            if viz_part is not None:
-                v = _read_web_field(viz_part, 'specs', 'V_pl')
-                print(f'  + V_pl from chart: ≈ {float(v):.2f} V')
-                new_part = viz_part
-
-        # Don't regress. Compare per-web-field presence between old and new
-        # serializations: every field that used to be finite-and-non-zero on
-        # the old part must still be on the new one. Plain ``specs.keys()``
-        # would miss the @property-derived fields (Qsw, V_pl, QgdQgsRatio)
-        # the web actually shows.
-        old_present = {lbl for lbl, _, _ in WEB_FIELDS
-                       if lbl not in set(missing_web_fields(part))}
-        new_present = {lbl for lbl, _, _ in WEB_FIELDS
-                       if lbl not in set(missing_web_fields(new_part))}
-        dropped = old_present - new_present
-        if dropped:
-            print(f'  · skip write: would drop {sorted(dropped)}')
-            continue
-
-        new_miss = missing_web_fields(new_part)
-        gained = sorted(set(miss) - set(new_miss))
-        if gained:
-            tail = (f'  (still missing: {sorted(new_miss)})' if new_miss else '')
-            print(f'  + gained: {gained}{tail}')
-        else:
-            print(f'  · no new fields recovered (still missing: {sorted(new_miss)})')
-        updated.append(new_part)
+            new_part, log_lines = result
+            if log_lines:
+                print(f'{mfr} {mpn}:')
+                for line in log_lines:
+                    print(line)
+            if new_part is not None:
+                updated.append(new_part)
+    else:
+        for i, (part, miss) in enumerate(todo, 1):
+            print(f'[{i}/{len(todo)}] {part.mfr} {part.mpn}  missing={sorted(miss)}')
+            new_part, log_lines = _process_one_part(
+                part, miss, args.no_cache, args.no_ocr, no_download)
+            for line in log_lines:
+                print(line)
+            if new_part is not None:
+                updated.append(new_part)
 
     print()
     print(f'{len(updated)} parts have fresh specs.')
-
-    if args.dry_run:
-        print('dry-run: not writing to parts_db')
-        return
 
     if updated:
         parts_db.add(updated, overwrite=True)
