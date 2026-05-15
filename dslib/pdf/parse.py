@@ -120,7 +120,7 @@ def extract_text(pdf_path, try_ocr=False, auto_decrypt=False) -> Tuple[str, Data
     return pdf_text, meta
 
 
-regex_ver_salt = ('v46', dim_regs_csv, get_field_detect_regex('any'))
+regex_ver_salt = ('v51', dim_regs_csv, dim_regs_multiline, get_field_detect_regex('any'))
 
 
 @disk_cache(ttl='999d', salt=(regex_ver_salt, 'v01'), hash_func_code=True)

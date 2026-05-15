@@ -11,6 +11,11 @@ export function fmtVoltage(v: number | null): string {
 	return num(v) + ' V';
 }
 
+export function fmtVoltage1dp(v: number | null): string {
+	if (v == null) return '';
+	return v.toFixed(1) + ' V';
+}
+
 export function fmtMilliOhm(v: number | null): string {
 	if (v == null) return '';
 	return num(v * 1e3) + ' mΩ';

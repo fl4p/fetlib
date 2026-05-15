@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
@@ -264,6 +265,7 @@ def _ocr_page_captions(page, dpi: int = 220):
     try:
         import pytesseract
     except ImportError:
+        warnings.warn('pytesseract missing')
         return []
     from PIL import Image
     scale = dpi / 72.0
@@ -278,7 +280,8 @@ def _ocr_page_captions(page, dpi: int = 220):
         try:
             data = pytesseract.image_to_data(
                 pil, output_type=pytesseract.Output.DICT, config=f'--psm {psm}')
-        except pytesseract.TesseractError:
+        except pytesseract.TesseractError as e:
+            print('tesseract error', e)
             continue
         # Did we find any candidate caption?  If not, try the next PSM.
         joined = ' '.join(t for t in data['text'] if t)

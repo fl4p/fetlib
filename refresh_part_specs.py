@@ -38,7 +38,6 @@ from dslib.discovery import DiscoveredPart
 from dslib.field import DatasheetFields
 from dslib.store import Part, parts_db
 
-
 # Symbols asked of ``parse_datasheet`` when a refresh is triggered. Picked
 # to cover everything the web app reads off ``MosfetSpecs`` (whether by
 # direct attribute or via a derived @property).
@@ -79,6 +78,8 @@ WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
 
 WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
     ('Vds_max',      'specs', 'Vds',         (10.0,    10000.0)),
+    #('Qg', 'specs', 'Qg', (1e-10, 1e-5)),  # C  (0.1 nC .. 10 µC)
+    ('V_pl',         'specs', 'V_pl',        (2.0,     9.0)),
     #('Qrr',          'specs', 'Qrr',         (1.5e-9,   1e-5)),    # C
 
 ) # todo temporarily disabled other fields
@@ -144,15 +145,15 @@ def missing_web_fields(part: Part) -> List[str]:
     part for a missing ``Id`` that is rescued by ``discovered.specs.ID_25``.
     """
     miss: List[str] = []
-    if 'IXFH120N25T' in part.mpn:
-        miss.append('Qrr')
+    #if 'IXFH120N25T' in part.mpn:
+    #    miss.append('Qrr')
     for label, where, attr, valid_range in WEB_FIELDS:
         v = _read_web_field(part, where, attr)
-        if _in_range(abs(v), valid_range):
+        if _in_range(v and abs(v), valid_range):
             continue
         if label == 'Id':
             fb = _read_web_field(part, *ID_FALLBACK)
-            if _in_range(abs(fb), _ID_RANGE):
+            if _in_range(fb and abs(fb), _ID_RANGE):
                 continue
         miss.append(label)
     return miss
@@ -205,7 +206,13 @@ def _try_fill_vpl_from_chart(part: Part,
         return None
 
     if vpl is None:
-        return None
+        print(f'vpl not found in {pdf_path}', )
+        from vpl_from_chart import vpl_from_pdf, _pick_best
+        vpl = _pick_best(vpl_from_pdf(pdf_path))
+        if vpl is None:
+            return None
+        vpl = vpl['vpl']
+        print('vpl_from_chart found it', pdf_path, vpl)
     try:
         vpl_f = float(vpl)
     except (TypeError, ValueError):

@@ -5,7 +5,8 @@ import {
 	fmtNanoC,
 	fmtNum,
 	fmtRatio,
-	fmtVoltage
+	fmtVoltage,
+	fmtVoltage1dp
 } from './format';
 import type { Part } from './types';
 
@@ -29,7 +30,7 @@ export const COLUMNS: ColumnDef[] = [
 	{ key: 'Qg', label: 'Q_g', fmt: (p) => fmtNanoC(p.Qg), num: true },
 	{ key: 'Qrr', label: 'Q_rr', fmt: (p) => fmtNanoC(p.Qrr), num: true },
 	{ key: 'Vsd', label: 'V_SD', fmt: (p) => fmtVoltage(p.Vsd), num: true },
-	{ key: 'V_pl', label: 'V_pl', fmt: (p) => fmtVoltage(p.V_pl), num: true },
+	{ key: 'V_pl', label: 'V_pl', fmt: (p) => fmtVoltage1dp(p.V_pl), num: true },
 	{ key: 'Vgs_th', label: 'V_GS(th)', fmt: (p) => fmtVoltage(p.Vgs_th), num: true },
 	{ key: 'QgdQgs_ratio', label: 'Q_gd/Q_gs', fmt: (p) => fmtRatio(p.QgdQgs_ratio), num: true },
 	{ key: 'FoM', label: 'FoM', fmt: (p) => fmtNum(p.FoM), num: true },

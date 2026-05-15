@@ -6,7 +6,8 @@ import {
 	fmtMilliOhm,
 	fmtNanoC,
 	fmtRatio,
-	fmtVoltage
+	fmtVoltage,
+	fmtVoltage1dp
 } from './format';
 
 export const SLIDER_KEYS = [
@@ -65,7 +66,7 @@ function haystack(p: Part): string {
 		fmtNanoC(p.Qg),
 		fmtNanoC(p.Qrr),
 		fmtVoltage(p.Vsd),
-		fmtVoltage(p.V_pl),
+		fmtVoltage1dp(p.V_pl),
 		fmtVoltage(p.Vgs_th),
 		fmtRatio(p.QgdQgs_ratio),
 		fmtFomNc(p.FoM),
@@ -128,12 +129,11 @@ export function sortParts(parts: Part[], key: SortKey, dir: SortDir): Part[] {
 	arr.sort((a, b) => {
 		const av = a[key];
 		const bv = b[key];
-		const aNull = av == null;
-		const bNull = bv == null;
-		if (aNull && bNull) return 0;
-		if (aNull) return 1;
-		if (bNull) return -1;
-		if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * mult;
+		if (typeof av === 'number' || typeof bv === 'number' || av == null || bv == null) {
+			const an = typeof av === 'number' && Number.isFinite(av) ? av : 0;
+			const bn = typeof bv === 'number' && Number.isFinite(bv) ? bv : 0;
+			return (an - bn) * mult;
+		}
 		return String(av).localeCompare(String(bv)) * mult;
 	});
 	return arr;

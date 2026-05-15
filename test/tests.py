@@ -5,6 +5,7 @@ import pandas as pd
 
 import dslib.pdf.parse
 import dslib.pdf.pipeline
+from dslib.cache import disk_cache, disk_cache_disable
 from dslib.field import DatasheetFields, Field
 from dslib.manual_fields import reference_data
 from dslib.pdf.expr import dim_regs_csv
@@ -15,6 +16,7 @@ from dslib.pdf.tabular import tabula_browser
 
 nan = na = math.nan
 
+disk_cache_disable(True)
 
 def test_parse_cond_str():
     from dslib.pdf.sheet import parse_cond_str
@@ -305,6 +307,7 @@ def test_parse_lines():
 
 
 def test_pdf_parse():
+
     #d = read_sheet('datasheets/littelfuse/IXFH120N25T.pdf')
     d = parse_datasheet('datasheets/littelfuse/IXFH120N25T.pdf')
     assert d.Qrr == 1.18e3 # µC!

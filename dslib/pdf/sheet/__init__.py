@@ -13,10 +13,10 @@ from typing import List, Optional, Tuple, Dict, Literal
 
 from pdfminer.psexceptions import PSException
 
-from dslib.cache import disk_cache
+from dslib.cache import disk_cache, mem_cache
 from dslib.field import Field, DatasheetFields, parse_field_value, get_value_with_unit
 from dslib.pdf.ascii import pdf_to_ascii, Row, Phrase
-from dslib.pdf.expr import get_cond_regex, any_unit
+from dslib.pdf.expr import get_cond_regex, any_unit, DIMENSIONS, Dimension
 from dslib.pdf.parse import detect_fields, DetectedSymbol
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 from dslib.pdf.sheet.annotation import pdf_raster_annot
@@ -116,7 +116,7 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v10'))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v11'))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
         return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,
@@ -340,6 +340,13 @@ def _is_valid_value(mtm, s):
 
     return False
 
+@mem_cache(ttl='1h')
+def get_symbol_unit_end(symbol:str) -> re.Pattern:
+    dim: Dimension = DIMENSIONS.get(symbol[0])
+    if dim:
+        return re.compile(r'[\s](' + dim.unit_regex + r')\s*$')
+    return None
+
 
 def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes, sq: SpatialQuery, multiline_conditions,
                    annotations: List[Annotation]):
@@ -495,6 +502,9 @@ def _process_table(pdf_file, table: Table, head: TableHeaderState, column_boxes,
             els = take(els, 10)
             # assert len(els) <= 1
             unit = str(els[0]) if els else None
+            #if unit is None and (ure := get_symbol_unit_end(row.symbol.symbol)) and (m:=ure.search(row.row.text)):
+            #    unit = m[1].strip()
+
 
             # val = defaultdict(list)
             val_fields: List[Tuple[Bbox, Dict[Literal['min', 'typ', 'max'], str]]] = []

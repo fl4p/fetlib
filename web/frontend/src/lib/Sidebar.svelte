@@ -347,11 +347,12 @@
 	}
 	.slider-label {
 		font-family: var(--mono);
-		font-size: 10px;
-		letter-spacing: 0.1em;
+		font-size: 11px;
+		font-weight: bold;
+		letter-spacing: 0.08em;
 		text-transform: uppercase;
 		color: var(--text-label);
-		margin-bottom: 2px;
+		margin-bottom: 4px;
 	}
 	ul.checks {
 		list-style: none;

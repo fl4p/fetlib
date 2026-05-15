@@ -8,7 +8,6 @@ Run::
 """
 from __future__ import annotations
 
-import math
 import os
 import sys
 from typing import List, Optional, Tuple
@@ -18,38 +17,56 @@ ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+sys.path.insert(0, '/opt/homebrew/bin') # PATH="$PATH:/opt/homebrew/bin"
+
 from viz import find_vpl  # noqa: E402
+
+
+def find_vpl_(pdf, enable_ocr=False):
+    from vpl_from_chart import vpl_from_pdf, _pick_best
+    vpl = _pick_best(vpl_from_pdf(pdf))
+    if vpl is None:
+        return None
+    return vpl['vpl']
 
 
 # (pdf_path, reference_Vpl)
 # References are copied from test/tests.py (test_pdf_parse / test_pdf_ocr /
 # tests_failing) and dslib/manual_fields.reference_data.
 SAMPLES: List[Tuple[str, float]] = [
-    ('datasheets/infineon/BSB056N10NN3GXUMA2.pdf', 4.2), # chart title: "14 Typ. gate charge"
+    ('datasheets/infineon/BSB056N10NN3GXUMA2.pdf', 4.2),  # chart title: "14 Typ. gate charge"
     ('datasheets/infineon/IPT025N15NM6ATMA1.pdf', 5.4),
-    ('datasheets/infineon/BSC021N08NS5ATMA1.pdf', 4.4), #"Diagram 14 : Typ . gate charge"
+    ('datasheets/infineon/BSC021N08NS5ATMA1.pdf', 4.4),  # "Diagram 14 : Typ . gate charge"
     ('datasheets/infineon/BSC025N08LS5ATMA1.pdf', 2.8),
     ('datasheets/infineon/IPB019N08N3GATMA1.pdf', 4.6),
     ('datasheets/infineon/BSZ084N08NS5ATMA1.pdf', 4.7),
-    ('datasheets/infineon/IPB033N10N5LFATMA1.pdf', 6.9),
-    ('datasheets/infineon/BSZ150N10LS3GATMA1.pdf', 2.7),
+    ('datasheets/infineon/IPB033N10N5LFATMA1.pdf', 6.9),  # needs OCR
+    ('datasheets/infineon/BSZ150N10LS3GATMA1.pdf', 2.7),  # needs OCR
+    ('datasheets/infineon/BSC050N10NS5ATMA1.pdf', 4.7),  # needs OCR
     ('datasheets/infineon/IRF150DM115XTMA1.pdf', 5.7),
     ('datasheets/infineon/IPB072N15N3GATMA1.pdf', 5.5),
     ('datasheets/nxp/PSMN3R3-80BS,118.pdf', 6.1),
     ('datasheets/panjit/PSMP050N10NS2_T0_00601.pdf', 5.0),
     ('datasheets/infineon/IPP100N08N3GXKSA1.pdf', 5.2),
-    ('datasheets/infineon/BSC050N10NS5ATMA1.pdf', 4.7),
     ('datasheets/vishay/SQJQ480E-T1_GE3.pdf', 3.9),
     ('datasheets/littelfuse/IXTT240N15X4HV.pdf', 5),
-
     ('datasheets/onsemi/FDA032N08.pdf', 5.5),
     ('datasheets/onsemi/NVCR4LS1D3N08M7A.pdf', 4.2),
     ('datasheets/ti/CSD19501KCS.pdf', 4.25),
+    ('datasheets/ti/CSD19532KTT.pdf', 4.8),
     ('datasheets/mcc/MCAC100N08Y-TP.pdf', 5.1),
+    ('datasheets/mcc/MCP75N10Y-BP.pdf', 4.05),
     ('datasheets/ti/TPS1100.pdf', 3.1),
     ('datasheets/infineon/IPW60R060C7.pdf', 5.0),
     ('datasheets/infineon/IPI65R190CFD.pdf', 6.4),
     ('datasheets/infineon/IPT013N08NM5LFATMA1.pdf', 9.25),
+    ('datasheets/epc_space/EPC7018GSH.pdf', 2.6),
+    ('datasheets/infineon/IRFS4310TRRPBF.pdf', 6.5),
+    ('datasheets/vishay/SIJ482DP-T1-GE3.pdf', 2.9),
+    ('datasheets/infineon/IRFH7110.pdf', 4.6),
+    ('datasheets/vishay/SUP85N15-21.pdf', 5.7),
+    ('datasheets/ao/AOLF66910.pdf', 4.2),
+    ('datasheets/huayi/HY3912W.pdf', 5.35),
 ]
 
 
