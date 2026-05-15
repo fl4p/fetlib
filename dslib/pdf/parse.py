@@ -581,7 +581,9 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
             m = find_iter(r, s)
             # print('..done.')
         except timeout_decorator.timeout_decorator.TimeoutError:
-            print("catastrophic backtracking with '%s' in %r" % (r.pattern.replace('\'', '\\\'')[:60], s))
+            print("catastrophic backtracking with '%s' in %r" % (r.pattern.replace('\'', '\\\'')[:6000], s))
+            print('input="""'+s + '"""')
+            raise
             continue
         except:
             print(traceback.format_exc())

@@ -89,3 +89,5 @@ web/backend/.venv/
 web/backend/__pycache__/
 
 web/frontend/package-lock.json
+
+*.deb
