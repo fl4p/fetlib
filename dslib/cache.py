@@ -745,20 +745,6 @@ def _disk_cache_get_file_names(args, kwargs, pwd: str, deps, ignore_missing_inp_
     return file_names
 
 
-import nest_asyncio
-nest_asyncio.apply()
-
-def _async_run(task):
-    try:
-        return asyncio.get_running_loop().run_until_complete(task)
-    except RuntimeError as e1:
-        try:
-            return asyncio.run(task)
-        except RuntimeError as e2:
-            print('asyncio.run error:', e2, 'after run_until_complete:', e1, asyncio.get_running_loop(), task )
-            raise e2 from e1
-
-
 def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, salt=None,
                ignore_missing_inp_paths=False,
                hash_func_code=False):
@@ -801,22 +787,13 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
 
         is_coro = asyncio.iscoroutinefunction(target)
 
-        async def call_target(*args, **kwargs):
-            assert is_coro
-            return await target(*args, **kwargs)
-
-        # noinspection PyBroadException
-        @wraps(target)
-        def _disk_cache_wrapper(*args, **kwargs):
+        def _prepare(args, kwargs):
+            """Compute cache key and out-file state; return (key, out_fns, out_sizes, in_mtime, invalidate)."""
             cache_key_str = _cache_key(*args, **kwargs)
-
-            if cache_key_str is None:
-                return call_target(*args, **kwargs)
-
-            inv = False
-
-            if _disk_cache_disabled:
-                inv = True
+            inv = bool(_disk_cache_disabled)
+            out_fns = None
+            out_sizes = None
+            in_mtime = None
 
             if out_files:
                 # TODO store times in cache and
@@ -825,55 +802,50 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                 out_mtimes = {fn: os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns}
                 out_sizes = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
 
-                # warnings.warn('out_files not checking for external change %s' % (out_fns))
                 in_fns = _disk_cache_get_file_names(args, kwargs, pwd, file_dependencies, ignore_missing_inp_paths)
                 in_mtime = max(os.path.getmtime(fn) for fn in in_fns)
                 if in_mtime > min(out_mtimes.values()):
                     inv = True
 
-            def meta_valid(meta):
-                if out_files:
-                    for param, disk_state in {
-                        # 'mtimes':out_mtimes,
-                        'sizes': out_sizes
-                    }.items():
-                        m_out_files = meta.get('out_files_' + param)
+            return cache_key_str, out_fns, out_sizes, in_mtime, inv
 
-                        if not m_out_files:
-                            print('not meta data about out', param, 'cache is not valid', out_fns)
-                            return False
-
-                        for fn, mt in disk_state.items():
-                            if fn not in m_out_files or mt != m_out_files[fn]:
-                                print(fn, 'changed', param, 'cache=', m_out_files.get(fn), 'disk=', mt,
-                                      '(', round(mt - m_out_files.get(fn)), ')')
-                                return False
+        def _meta_valid(meta, out_fns, out_sizes):
+            if not out_files:
                 return True
+            for param, disk_state in {
+                # 'mtimes': out_mtimes,
+                'sizes': out_sizes
+            }.items():
+                m_out_files = meta.get('out_files_' + param)
+                if not m_out_files:
+                    print('not meta data about out', param, 'cache is not valid', out_fns)
+                    return False
+                for fn, mt in disk_state.items():
+                    if fn not in m_out_files or mt != m_out_files[fn]:
+                        print(fn, 'changed', param, 'cache=', m_out_files.get(fn), 'disk=', mt,
+                              '(', round(mt - m_out_files.get(fn)), ')')
+                        return False
+            return True
 
-            if not inv:
-                try:
-                    cache_val = disk_cache_store.read(cache_key_str)
-                    if cache_val is not None:
-                        if len(cache_val) == 2:
-                            ret, exp = cache_val
-                            meta = {}
-                        else:
-                            ret, exp, meta = cache_val
-                        if now() <= exp and meta_valid(meta):
-                            async def _async_ret():
-                                return ret
+        def _try_read(cache_key_str, out_fns, out_sizes):
+            """Return (value, hit) — hit=True when a fresh, valid cached value was found."""
+            try:
+                cache_val = disk_cache_store.read(cache_key_str)
+                if cache_val is None:
+                    return None, False
+                if len(cache_val) == 2:
+                    ret, exp = cache_val
+                    meta = {}
+                else:
+                    ret, exp, meta = cache_val
+                if now() <= exp and _meta_valid(meta, out_fns, out_sizes):
+                    return ret, True
+            except Exception as _e:
+                logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
+            return None, False
 
-                            return _async_ret() if is_coro else ret
-                except Exception as _e:
-                    logger.warning("Disk cache error reading %s: %s", cache_key_str, _e)
-
-            if is_coro:
-                ret = call_target(*args, **kwargs)
-            else:
-                ret = target(*args, **kwargs)
-
+        def _build_meta(out_fns, in_mtime):
             meta = {}
-
             if out_files:
                 for fn in out_fns:
                     if not os.path.exists(fn):
@@ -884,32 +856,51 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                             logger.warning('out file %s has mtime %s < input %s', mt, in_mtime)
                 meta['out_files_mtimes'] = {fn: os.path.getmtime(fn) if os.path.exists(fn) else 0 for fn in out_fns}
                 meta['out_files_sizes'] = {fn: os.path.getsize(fn) if os.path.exists(fn) else 0 for fn in out_fns}
+            return meta
 
+        def _store(cache_key_str, ret, meta):
             try:
-                store_val = _async_run(ret) if is_coro else ret
-
-                async def _coro():
-                    return store_val
-
-                ret = _coro() if is_coro else ret
-                disk_cache_store.write(cache_key_str, (store_val, now() + ttl, meta))
+                disk_cache_store.write(cache_key_str, (ret, now() + ttl, meta))
             except Exception as _e:
                 logger.warning('Disk cache: error storing: %s', _e)
-                pass
-
-            return ret
 
         if is_coro:
-            async def asnyc_wrapper(*args, **kwargs):
-                return await _disk_cache_wrapper(*args, **kwargs)
+            @wraps(target)
+            async def _disk_cache_wrapper(*args, **kwargs):
+                cache_key_str, out_fns, out_sizes, in_mtime, inv = _prepare(args, kwargs)
 
-            _ret_wrapper = asnyc_wrapper
+                if cache_key_str is None:
+                    return await target(*args, **kwargs)
+
+                if not inv:
+                    ret, hit = _try_read(cache_key_str, out_fns, out_sizes)
+                    if hit:
+                        return ret
+
+                ret = await target(*args, **kwargs)
+                _store(cache_key_str, ret, _build_meta(out_fns, in_mtime))
+                return ret
         else:
-            _ret_wrapper = _disk_cache_wrapper
+            # noinspection PyBroadException
+            @wraps(target)
+            def _disk_cache_wrapper(*args, **kwargs):
+                cache_key_str, out_fns, out_sizes, in_mtime, inv = _prepare(args, kwargs)
 
-        _ret_wrapper.invalidate = _invalidate
-        _ret_wrapper.cache_key = _cache_key
-        _ret_wrapper.store = disk_cache_store
+                if cache_key_str is None:
+                    return target(*args, **kwargs)
+
+                if not inv:
+                    ret, hit = _try_read(cache_key_str, out_fns, out_sizes)
+                    if hit:
+                        return ret
+
+                ret = target(*args, **kwargs)
+                _store(cache_key_str, ret, _build_meta(out_fns, in_mtime))
+                return ret
+
+        _disk_cache_wrapper.invalidate = _invalidate
+        _disk_cache_wrapper.cache_key = _cache_key
+        _disk_cache_wrapper.store = disk_cache_store
 
         return _disk_cache_wrapper
 
