@@ -1,10 +1,9 @@
 import {
 	fmtAmp,
 	fmtDate,
-	fmtFomNc,
-	fmtFomPf,
 	fmtMilliOhm,
 	fmtNanoC,
+	fmtNum,
 	fmtRatio,
 	fmtVoltage
 } from './format';
@@ -33,10 +32,10 @@ export const COLUMNS: ColumnDef[] = [
 	{ key: 'V_pl', label: 'V_pl', fmt: (p) => fmtVoltage(p.V_pl), num: true },
 	{ key: 'Vgs_th', label: 'V_GS(th)', fmt: (p) => fmtVoltage(p.Vgs_th), num: true },
 	{ key: 'QgdQgs_ratio', label: 'Q_gd/Q_gs', fmt: (p) => fmtRatio(p.QgdQgs_ratio), num: true },
-	{ key: 'FoM', label: 'FoM', fmt: (p) => fmtFomNc(p.FoM), num: true },
-	{ key: 'FoMqsw', label: 'FoM_sw', fmt: (p) => fmtFomNc(p.FoMqsw), num: true },
-	{ key: 'FoMqrr', label: 'FoM_rr', fmt: (p) => fmtFomNc(p.FoMqrr), num: true },
-	{ key: 'FoMcoss', label: 'FoM_oss', fmt: (p) => fmtFomPf(p.FoMcoss), num: true },
+	{ key: 'FoM', label: 'FoM', fmt: (p) => fmtNum(p.FoM), num: true },
+	{ key: 'FoMqsw', label: 'FoM_sw', fmt: (p) => fmtNum(p.FoMqsw), num: true },
+	{ key: 'FoMqrr', label: 'FoM_rr', fmt: (p) => fmtNum(p.FoMqrr), num: true },
+	{ key: 'FoMcoss', label: 'FoM_oss', fmt: (p) => fmtNum(p.FoMcoss), num: true },
 	{ key: 'date', label: 'Date', fmt: (p) => fmtDate(p.date) }
 ];
 

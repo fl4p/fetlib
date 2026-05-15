@@ -31,6 +31,11 @@ export function fmtRatio(v: number | null): string {
 	return num(v);
 }
 
+export function fmtNum(v: number | null): string {
+	if (v == null) return '';
+	return num(v);
+}
+
 export function fmtFomNc(v: number | null): string {
 	if (v == null) return '';
 	return num(v) + ' mΩ·nC';
