@@ -58,8 +58,9 @@
 	const truncated = $derived(rows.length > MAX_ROWS);
 </script>
 
-<div class="table-wrap">
-	<table>
+<div class="table-frame">
+	<div class="table-wrap">
+		<table>
 		<thead>
 			<tr>
 				{#each columns as col}
@@ -71,7 +72,7 @@
 				{/each}
 			</tr>
 		</thead>
-		<tbody class:pending>
+		<tbody>
 			{#each visible as p (p.mfr + '|' + p.mpn)}
 				<tr>
 					{#each columns as col}
@@ -123,11 +124,13 @@
 			{/each}
 		</tbody>
 	</table>
-	{#if truncated}
-		<div class="trunc">
-			Showing first {MAX_ROWS.toLocaleString()} of {rows.length.toLocaleString()} matches. Tighten filters to see more.
-		</div>
-	{/if}
+		{#if truncated}
+			<div class="trunc">
+				Showing first {MAX_ROWS.toLocaleString()} of {rows.length.toLocaleString()} matches. Tighten filters to see more.
+			</div>
+		{/if}
+	</div>
+	<div class="pending-overlay" class:visible={pending} aria-hidden="true"></div>
 </div>
 
 <style>
@@ -202,12 +205,25 @@
 	tbody tr:hover {
 		background: var(--bg-hover);
 	}
-	tbody.pending {
+	.table-frame {
+		flex: 1;
+		min-height: 0;
+		position: relative;
+		display: flex;
+		flex-direction: column;
+	}
+	.pending-overlay {
+		position: absolute;
+		inset: 0;
+		background: var(--bg-paper);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity 200ms ease-out;
+		z-index: 5;
+	}
+	.pending-overlay.visible {
 		opacity: 0.5;
 		transition: opacity 80ms ease-in;
-	}
-	tbody {
-		transition: opacity 120ms ease-out;
 	}
 	td a {
 		color: var(--text-accent);
