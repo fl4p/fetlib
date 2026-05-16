@@ -4,7 +4,10 @@ import math
 import pytest
 import timeout_decorator
 
+from dslib.cache import disk_cache_disable
 from dslib.field import Field
+
+disk_cache_disable(True)
 
 test_stream_todo = """
 

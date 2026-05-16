@@ -43,7 +43,7 @@ tabula_browser_concurrency = 5
 @backoff.on_exception(backoff.expo, TimeoutError, max_time=300, logger=None)
 def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
     with _tab_web_lock:
-        with acquire_file_lock(f'.tabula_browser_{random.randint(1, tabula_browser_concurrency)}.lock',
+        with acquire_file_lock(f'data/.tabula_browser_{random.randint(1, tabula_browser_concurrency)}.lock',
                                kill_holder=False, max_time=900):
 
             # with acquire_file_lock(os.path.dirname(__file__) + '/tabula-web.lock', kill_holder=False, max_time=300):
