@@ -911,10 +911,20 @@ _REWRITE_RE = re.compile(
     re.DOTALL,
 )
 
-# Inside a [...] TJ array, strings are either <hex> or (literal); ignore
-# numeric kerning offsets since they're meaningless after our rewrite.
-_ARRAY_STR_RE = re.compile(
-    rb'<([0-9A-Fa-f\s]*)>|\(((?:\\.|[^\\)])*)\)', re.DOTALL)
+# Inside a [...] TJ array we capture both strings (`<hex>` or `(literal)`) and
+# numeric kerning offsets. A large negative offset (positive forward space)
+# encodes a real visible gap — e.g. between table columns — and must turn
+# into an actual space in the decoded text or the columns merge.
+_TJ_ARRAY_TOKEN_RE = re.compile(
+    rb'<([0-9A-Fa-f\s]*)>'
+    rb'|\(((?:\\.|[^\\)])*)\)'
+    rb'|(-?\d+(?:\.\d+)?)',
+    re.DOTALL,
+)
+
+# Threshold (in 1/1000 em) above which a TJ kerning offset is treated as a
+# space-worthy gap rather than just letter-spacing/kerning. ~half an em.
+_TJ_SPACE_THRESHOLD = 200.0
 
 
 def _decode_hex_cids(hex_bytes: bytes, two_byte: bool) -> List[int]:
@@ -1065,17 +1075,31 @@ def _rewrite_content_stream(
             else:
                 cids = raw
         elif arr_s is not None:
-            for am in _ARRAY_STR_RE.finditer(arr_s):
-                h, l = am.groups()
+            # Decode strings into text fragments and watch the numeric kerning
+            # offsets between them. A large negative offset (PDF convention:
+            # negative = forward space, positive = leftward kern) indicates a
+            # real gap that has to become a space in extracted text.
+            parts: List[str] = []
+            for am in _TJ_ARRAY_TOKEN_RE.finditer(arr_s):
+                h, l, num = am.groups()
                 if h is not None:
-                    cids.extend(_decode_hex_cids(h, is_t0))
+                    parts.append(_cids_to_text(_decode_hex_cids(h, is_t0), mapping))
                 elif l is not None:
                     raw = _decode_literal_cids(l)
                     if is_t0:
-                        cids.extend((raw[i] << 8) | raw[i + 1]
-                                    for i in range(0, len(raw) - 1, 2))
+                        parts.append(_cids_to_text(
+                            [(raw[i] << 8) | raw[i + 1]
+                             for i in range(0, len(raw) - 1, 2)], mapping))
                     else:
-                        cids.extend(raw)
+                        parts.append(_cids_to_text(raw, mapping))
+                elif num is not None:
+                    try:
+                        if -float(num) >= _TJ_SPACE_THRESHOLD:
+                            parts.append(' ')
+                    except ValueError:
+                        pass
+            out.extend(_emit_text_show(''.join(parts)))
+            continue
 
         out.extend(_emit_text_show(_cids_to_text(cids, mapping)))
 
