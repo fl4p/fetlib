@@ -23,10 +23,12 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from typing import List, Optional, Tuple
 
 import numpy as np
 import pymupdf as fitz
+sys.path.insert(0, '.')
 
 from dslib.store import Part, parts_db
 
@@ -115,7 +117,7 @@ def _annotate(png_bytes: bytes,
             if vpl_x < 6:
                 vpl_x = base_x + max(10, int(W * 0.025))
         _draw_arrow(draw, vpl_x, base_y, vpl_x, y_plateau, color, width=2, head=head)
-        label = f'Vpl = {vpl:.2f} V'
+        label = f'Vpl = {vpl:.1f} V'
         # Place the label to the RIGHT of the line, inside the empty area
         # below the plateau (which sits between vpl_x and x_hi).  Fall back
         # to the LEFT side if that area is too narrow.
@@ -580,7 +582,7 @@ def main():
               'no-chart': 0, 'error': 0}
 
     if args.jobs > 1:
-        from main import run_parallel
+        from dslib.util import run_parallel
         jobs = {
             (mfr, mpn): (_process_one, mfr, mpn, ds,
                          args.out_root, args.dpi, args.quality, args.force,

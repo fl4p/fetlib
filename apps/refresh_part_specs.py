@@ -407,7 +407,7 @@ def main():
     updated: List[Part] = []
     if args.jobs > 1:
         # Parallel dispatch via main.run_parallel (multiprocessing backend).
-        from main import run_parallel
+        from dslib.util import run_parallel
         jobs = {
             (part.mfr, part.mpn): (_process_one_part, part, miss,
                                    args.no_cache, args.no_ocr, no_download)

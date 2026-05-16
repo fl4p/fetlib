@@ -35,7 +35,7 @@ def run(jobs: int = 1):
     parts = asyncio.run(discover_mosfets(no_obsolete=False))
 
     if jobs > 1:
-        from main import run_parallel
+        from dslib.util import run_parallel
         for p in parts:
             print(p.mfr, p.mpn)
         job_dict = {
