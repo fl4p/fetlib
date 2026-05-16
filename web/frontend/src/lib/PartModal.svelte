@@ -13,9 +13,14 @@
 	let { part, onclose }: Props = $props();
 
 	let qgFailed = $state(false);
+	let partImgFailed = $state(false);
 
 	const qgSrc = $derived(
 		`/api/qg-curve?mfr=${encodeURIComponent(part.mfr)}&mpn=${encodeURIComponent(part.mpn)}`
+	);
+
+	const partImgSrc = $derived(
+		`/api/part-image?mfr=${encodeURIComponent(part.mfr)}&mpn=${encodeURIComponent(part.mpn)}`
 	);
 
 	const datasheetHref = $derived(
@@ -26,6 +31,7 @@
 		// reset when part changes
 		void part;
 		qgFailed = false;
+		partImgFailed = false;
 	});
 
 	function handleKey(e: KeyboardEvent) {
@@ -76,6 +82,22 @@
 
 		<div class="modal-body">
 			<section class="props">
+				{#if !partImgFailed}
+					<a
+						class="part-img-link"
+						href={datasheetHref}
+						target="_blank"
+						rel="noopener"
+						title="open datasheet (PDF)"
+					>
+						<img
+							class="part-img"
+							src={partImgSrc}
+							alt="package photo for {part.mpn}"
+							onerror={() => (partImgFailed = true)}
+						/>
+					</a>
+				{/if}
 				<h3>Properties</h3>
 				<table>
 					<tbody>
@@ -199,6 +221,24 @@
 	}
 	.props {
 		border-right: 1px solid var(--border-thin);
+	}
+	.part-img-link {
+		display: block;
+		width: fit-content;
+		margin: 0 auto 14px;
+	}
+	.part-img-link:hover .part-img {
+		border-color: var(--text-accent);
+	}
+	.part-img {
+		display: block;
+		max-width: 100%;
+		max-height: 180px;
+		object-fit: contain;
+		background: #fff;
+		border: 1px solid var(--border-thin);
+		padding: 6px;
+		transition: border-color 120ms ease;
 	}
 	h3 {
 		margin: 0 0 12px;

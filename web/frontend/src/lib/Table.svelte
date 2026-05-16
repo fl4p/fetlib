@@ -77,7 +77,13 @@
 					{#each columns as col}
 						<td class:num={col.num}>
 							{#if col.mpnLink}
-								<a href={datasheetHref(p)} target="_blank" rel="noopener">{col.fmt(p)}</a>
+								<a
+									href={datasheetHref(p)}
+									target="_blank"
+									rel="noopener"
+									class="mpn-link"
+									title={col.fmt(p)}
+								>{col.fmt(p)}</a>
 								{#if oninfo}
 									<button
 										type="button"
@@ -211,6 +217,14 @@
 	td a:hover {
 		text-decoration: underline;
 		text-underline-offset: 2px;
+	}
+	.mpn-link {
+		display: inline-block;
+		max-width: 20ch;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		vertical-align: bottom;
 	}
 	.sim-btn {
 		margin-left: 6px;
