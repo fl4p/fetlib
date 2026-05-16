@@ -807,7 +807,7 @@ def get_cond_regex():
     num_signed = NumValReSet(True, False).val
 
     test_cond = (rf'(?P<cond_sym>{cond_sym})\s*[=≈]\s*'
-                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[-+*/]? *)+'
+                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[•-+*/]? *)+'
                  ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
                  )
     test_conds_delim_ml = (rf'(?P<conds_ml>{test_cond}\s*[;,\n\s]*)')
