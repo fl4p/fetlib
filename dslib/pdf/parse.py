@@ -80,7 +80,7 @@ def parse_date(s):
 
 
 @disk_cache(ttl='30d', file_dependencies=[0], salt='v04', hash_func_code=True)
-def extract_text(pdf_path, try_ocr=False, auto_decrypt=False) -> Tuple[str, DataSheetFileMeta]:
+def extract_text(pdf_path, try_ocr=False, auto_decrypt=True) -> Tuple[str, DataSheetFileMeta]:
     import fitz  # PyMuPDF
     pdf_document: pymupdf.Document = fitz.open(pdf_path)
 
@@ -250,19 +250,23 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False) -> 
     return fields
 
 
-def validate_datasheet_text(mfr, mpn, text):
+
+def validate_datasheet_text(mfr, mpn, text, return_reason=False):
     if len(text) < 60:
         if len(text) == 0:
             print(mfr, mpn, 'no text in PDF!')
         # print('text too short ' + str(len(text)))
-        return False
+        return 'no-text' if return_reason else False
 
     _n = lambda s: whitespaces_remove(
         strip_no_print_latin(s.lower().replace('o', '0').replace('_', '').replace('-', '')))
 
-    if _n(mpn).split(',')[0][:7] not in _n(text):
-        print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(text)[:30])
-        return False
+    mpn = _n(mpn).split(',')[0][:7]
+    mpn = re.sub('[A-Za-z]$','', mpn) # HY1920W > HY1920
+    # print(mpn)
+    if mpn not in _n(text):
+        print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(strip_no_print_latin(text))[:60])
+        return 'mpn-not-found-in-'+whitespaces_to_space(strip_no_print_latin(text))[:300] if return_reason else False
 
     return True
 
@@ -327,7 +331,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     pdf_text, meta = extract_text(pdf_path, try_ocr=False, auto_decrypt=True)
 
     if not validate_datasheet_text(mfr, mpn, pdf_text) or force_ocr:
-        methods = ['gs']  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
+        methods = ['gs', 'fix_font_enc']  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
         if not no_ocr:
             methods += ['r600_ocrmypdf', ]  # 'ocrmypdf_redo', 'ocrmypdf_r400',
 
@@ -383,7 +387,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     # Vpl
     if not math.isfinite(ds.get_max_or_min_or_typ('Vpl')):
 
-        from viz import find_vpl
+        from dslib.viz import find_vpl
         vpl = find_vpl(pdf_path)
 
         #from vpl_from_chart import vpl_from_pdf, _pick_best
