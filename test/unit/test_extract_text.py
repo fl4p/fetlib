@@ -68,6 +68,14 @@ Effective Output Capacitance (Time Related)
 Diode Characteristics
 
 
+
+
+"""
+
+##########################################
+test_stream = """
+
+
 trr
 Reverse recovery time
 ISD = 180 A, di/dt = 100 A/μs
@@ -78,7 +86,7 @@ diode recovery times)
 -
 108
 ns
-> trr=(n,n,108) # TODO TODO
+> trr=(n,n,108)
 
 
 Static drain-source on- resistance
@@ -111,13 +119,7 @@ Internal Gate Resistance
 ---
 Ω
 td(on)
-> Rg=(n,.8,n)
-
-"""
-
-##########################################
-test_stream = """
-
+> Rg=(n,800,n)
 
 
 Qgs
