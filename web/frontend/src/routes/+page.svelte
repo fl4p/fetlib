@@ -81,9 +81,6 @@
 		return init;
 	}
 
-	let suppressUrlWrite = false;
-	let lastWrittenHash = '';
-
 	onMount(async () => {
 		try {
 			theme = detectInitialTheme();
@@ -118,44 +115,32 @@
 		}
 	});
 
-	$effect(() => {
-		if (!meta || !filters || suppressUrlWrite) return;
+	const shareHref = $derived.by(() => {
+		if (!meta || !filters) return '';
 		const query = serializeState(filters, similarMode, sortKey, sortDir, meta);
-		const target = query ? '#' + query : window.location.pathname + window.location.search;
-		const next = query ? target : window.location.pathname + window.location.search;
-		if (next === lastWrittenHash) return;
-		lastWrittenHash = next;
-		const url = query
-			? window.location.pathname + window.location.search + target
-			: window.location.pathname + window.location.search;
-		history.replaceState(null, '', url);
+		return query ? '#' + query : '#';
 	});
 
 	function handleHashChange() {
 		if (!meta) return;
 		const parsed = parseState(window.location.hash);
-		suppressUrlWrite = true;
-		try {
-			let next = buildInitialFilters(meta);
-			if (parsed) {
-				next = applyParsedToFilters(parsed, next, meta);
-				if (parsed.sortKey) sortKey = parsed.sortKey;
-				if (parsed.sortDir) sortDir = parsed.sortDir;
-			} else {
-				sortKey = 'Vds_max';
-				sortDir = 'asc';
-			}
-			filters = next;
-			const wantSim = parsed?.similar ?? null;
-			const haveSim = similarMode ? { mfr: similarMode.mfr, mpn: similarMode.mpn } : null;
-			if (wantSim && (!haveSim || haveSim.mfr !== wantSim.mfr || haveSim.mpn !== wantSim.mpn)) {
-				runSimilar(wantSim.mfr, wantSim.mpn);
-			} else if (!wantSim && haveSim) {
-				similarMode = null;
-				similarError = null;
-			}
-		} finally {
-			suppressUrlWrite = false;
+		let next = buildInitialFilters(meta);
+		if (parsed) {
+			next = applyParsedToFilters(parsed, next, meta);
+			if (parsed.sortKey) sortKey = parsed.sortKey;
+			if (parsed.sortDir) sortDir = parsed.sortDir;
+		} else {
+			sortKey = 'Vds_max';
+			sortDir = 'asc';
+		}
+		filters = next;
+		const wantSim = parsed?.similar ?? null;
+		const haveSim = similarMode ? { mfr: similarMode.mfr, mpn: similarMode.mpn } : null;
+		if (wantSim && (!haveSim || haveSim.mfr !== wantSim.mfr || haveSim.mpn !== wantSim.mpn)) {
+			runSimilar(wantSim.mfr, wantSim.mpn);
+		} else if (!wantSim && haveSim) {
+			similarMode = null;
+			similarError = null;
 		}
 	}
 
@@ -365,6 +350,15 @@
 			>
 				csv
 			</button>
+			<a
+				class="hdr-btn"
+				class:disabled={!meta || !filters}
+				href={shareHref}
+				title="Shareable link to the current view (right-click to copy)"
+				aria-disabled={!meta || !filters}
+			>
+				share
+			</a>
 			<div class="cols-wrap">
 				<button
 					type="button"
@@ -690,9 +684,19 @@
 		opacity: 0.4;
 		cursor: not-allowed;
 	}
-	.hdr-btn:disabled:hover {
+	.hdr-btn:disabled:hover,
+	.hdr-btn.disabled:hover {
 		background: var(--bg);
 		color: var(--text);
+	}
+	a.hdr-btn {
+		display: inline-flex;
+		align-items: center;
+		text-decoration: none;
+	}
+	a.hdr-btn.disabled {
+		opacity: 0.4;
+		pointer-events: none;
 	}
 	.cols-menu {
 		position: absolute;

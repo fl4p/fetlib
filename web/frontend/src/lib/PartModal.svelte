@@ -1,9 +1,100 @@
 <script lang="ts">
 	import type { Part } from './types';
 	import { COLUMNS } from './columns';
+	import {
+		fmtAmp,
+		fmtMilliOhm,
+		fmtNanoC,
+		fmtNanoS,
+		fmtOhm,
+		fmtPicoF,
+		fmtVoltage
+	} from './format';
 	import { cubicOut } from 'svelte/easing';
 	import { fade } from 'svelte/transition';
 	import type { TransitionConfig } from 'svelte/transition';
+
+	interface PropRow {
+		key: string;
+		label: string;
+		fmt: (p: Part) => string;
+	}
+
+	function extra(key: string, label: string, fmt: (v: number) => string): PropRow {
+		return {
+			key,
+			label,
+			fmt: (p) => {
+				const v = p.extras?.[key];
+				return v == null ? '' : fmt(v);
+			}
+		};
+	}
+
+	const COL_BY_KEY: Record<string, (typeof COLUMNS)[number]> = Object.fromEntries(
+		COLUMNS.map((c) => [c.key, c])
+	);
+
+	function col(key: string): PropRow {
+		const c = COL_BY_KEY[key];
+		return { key, label: c.label, fmt: c.fmt };
+	}
+
+	const GROUPS: { label: string; rows: PropRow[] }[] = [
+		{
+			label: 'Identification',
+			rows: [col('mfr'), col('mpn'), col('substrate'), col('housing'), col('date')]
+		},
+		{
+			label: 'Maximum Ratings',
+			rows: [col('Vds_max'), col('Id'), extra('ID_25', 'I_D @25°C', fmtAmp)]
+		},
+		{
+			label: 'Static',
+			rows: [
+				col('Rds_on_max'),
+				extra('Rds_on_10v_max', 'R_DSon @10V', fmtMilliOhm),
+				col('Vgs_th'),
+				extra('Vgs_th_min', 'V_GS(th) min', fmtVoltage)
+			]
+		},
+		{
+			label: 'Gate Charge',
+			rows: [
+				col('Qg'),
+				extra('Qg_typ', 'Q_g typ', fmtNanoC),
+				extra('Qg_max', 'Q_g max', fmtNanoC),
+				extra('Qgs', 'Q_gs', fmtNanoC),
+				extra('Qgd', 'Q_gd', fmtNanoC),
+				extra('Qgs2', 'Q_gs2', fmtNanoC),
+				extra('Qg_th', 'Q_g(th)', fmtNanoC),
+				extra('Qg_sync', 'Q_g(sync)', fmtNanoC),
+				col('Qsw'),
+				col('V_pl'),
+				col('QgdQgs_ratio')
+			]
+		},
+		{
+			label: 'Switching Times',
+			rows: [extra('tRise', 't_r', fmtNanoS), extra('tFall', 't_f', fmtNanoS)]
+		},
+		{
+			label: 'Capacitances',
+			rows: [extra('Coss', 'C_oss', fmtPicoF)]
+		},
+		{
+			label: 'Body Diode',
+			rows: [col('Vsd'), col('Qrr'), extra('trr', 't_rr', fmtNanoS)]
+		},
+		{
+			label: 'Gate Resistance',
+			rows: [extra('Rg', 'R_g', fmtOhm)]
+		},
+		{
+			label: 'Figures of Merit',
+			rows: [col('FoM'), col('FoMqsw'), col('FoMqrr'), col('FoMcoss')]
+		}
+	];
 
 	interface Props {
 		part: Part;
@@ -101,12 +192,21 @@
 				<h3>Properties</h3>
 				<table>
 					<tbody>
-						{#each COLUMNS as col}
-							{@const val = col.fmt(part)}
-							<tr>
-								<th>{col.label}</th>
-								<td>{val || '—'}</td>
-							</tr>
+						{#each GROUPS as g}
+							{@const visible = g.rows
+								.map((r) => ({ r, val: r.fmt(part) }))
+								.filter((x) => x.val !== '')}
+							{#if visible.length > 0}
+								<tr class="group">
+									<th colspan="2">{g.label}</th>
+								</tr>
+								{#each visible as { r, val } (r.key)}
+									<tr>
+										<th>{r.label}</th>
+										<td>{val}</td>
+									</tr>
+								{/each}
+							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -262,6 +362,24 @@
 		border-bottom: 1px solid var(--border-row);
 	}
 	.props tbody tr:last-child {
+		border-bottom: none;
+	}
+	.props tr.group th {
+		text-align: left;
+		font-family: var(--mono);
+		font-size: 10px;
+		font-weight: 600;
+		letter-spacing: 0.18em;
+		text-transform: uppercase;
+		color: var(--text-strong);
+		padding: 16px 0 4px;
+		width: auto;
+		border-bottom: 1px solid var(--border-thin);
+	}
+	.props tr.group:first-child th {
+		padding-top: 0;
+	}
+	.props tr.group {
 		border-bottom: none;
 	}
 	.props th {

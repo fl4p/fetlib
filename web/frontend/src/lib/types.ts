@@ -18,6 +18,7 @@ export interface Part {
 	FoMqrr: number | null;
 	FoMcoss: number | null;
 	date: string | null;
+	extras?: Record<string, number>;
 	score?: number | null;
 }
 

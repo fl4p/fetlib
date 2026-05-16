@@ -74,6 +74,30 @@ SIMILARITY_WEIGHTS = {
 # Candidates lacking either of these are excluded — the score isn't meaningful.
 SIMILARITY_REQUIRED = ("Vds_max", "Rds_on_max")
 
+# Per-part extras served to the modal. Values are raw SI (Coulombs, seconds, Farads, Ohms,
+# Amps, Volts). Frontend applies its own unit conversion / formatting.
+EXTRAS_SPECS = ("Qgd", "Qgs", "Qgs2", "Qg_th", "Qg_sync", "tRise", "tFall", "trr", "Coss", "Rg")
+EXTRAS_BASIC = ("Vgs_th_min", "ID_25", "Rds_on_10v_max")
+
+
+def _extras(specs, basic) -> dict:
+    out: dict = {}
+    for k in EXTRAS_SPECS:
+        v = _clean(_safe_attr(specs, k))
+        if v is not None:
+            out[k] = v
+    if basic is not None:
+        for k in EXTRAS_BASIC:
+            v = _clean(_safe_attr(basic, k))
+            if v is not None:
+                out[k] = v
+        # MosfetBasicSpecs stores Qg in nC, not C — convert to SI for consistency.
+        for src, dst in (("Qg_typ_nC", "Qg_typ"), ("Qg_max_nC", "Qg_max")):
+            v = _clean(_safe_attr(basic, src))
+            if v is not None:
+                out[dst] = v * 1e-9
+    return out
+
 
 def _clean(v: Any) -> Optional[float]:
     if v is None:
@@ -152,6 +176,7 @@ def _serialize(part) -> dict:
         "FoMqrr": _clean(_safe_attr(specs, "FoMqrr")),
         "FoMcoss": _clean(_safe_attr(specs, "FoMcoss")),
         "date": date_str,
+        "extras": _extras(specs, basic),
     }
 
 

@@ -22,6 +22,7 @@ class Part(BaseModel):
     FoMqrr: Optional[float] = None
     FoMcoss: Optional[float] = None
     date: Optional[str] = None
+    extras: Dict[str, float] = {}
 
 
 class Range(BaseModel):

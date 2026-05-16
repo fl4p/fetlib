@@ -31,6 +31,21 @@ export function fmtNanoC(v: number | null): string {
 	return num(v * 1e9) + ' nC';
 }
 
+export function fmtNanoS(v: number | null): string {
+	if (v == null) return '';
+	return num(v * 1e9) + ' ns';
+}
+
+export function fmtPicoF(v: number | null): string {
+	if (v == null) return '';
+	return num(v * 1e12) + ' pF';
+}
+
+export function fmtOhm(v: number | null): string {
+	if (v == null) return '';
+	return num(v) + ' Ω';
+}
+
 export function fmtRatio(v: number | null): string {
 	if (v == null) return '';
 	return num(v);
