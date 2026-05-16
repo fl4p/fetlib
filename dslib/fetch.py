@@ -26,13 +26,19 @@ def get_datasheet_url(mfr, mpn):
             return m.group(1)
 
     if mfr == 'onsemi':
-        return f"https://www.onsemi.com/download/data-sheet/pdf/{mpn}-d.pdf"
+        return [
+            f"https://www.onsemi.com/download/data-sheet/pdf/{mpn}-d.pdf",
+            ]
 
     if mfr == 'ti':
         return f'https://www.ti.com/lit/ds/symlink/{mpn.lower()}.pdf'
 
     if mfr == 'ao':
-        return f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}.pdf'
+        return [
+            f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}.pdf',
+            f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}_0.pdf',
+            f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}_1.pdf',
+            ]
 
     # asyncio.get_event_loop().run_until_complete(download_with_chromium(
     #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
@@ -54,6 +60,10 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         ds_url_alt = ds_url
         ds_url = get_datasheet_url(mfr, mpn)
 
+    if mfr == 'ao':
+        ds_url_alt = ds_url
+        ds_url = get_datasheet_url(mfr, mpn)
+
     if mfr == 'onsemi':
         #import dslib.discovery.parts_discovery
         if not requests.head(ds_url).ok:
@@ -69,10 +79,13 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         print(mfr, 'skip url to', ds_url)
         return None
 
+    if isinstance(ds_url, str):
+        ds_url = [ds_url]
+
     print('downloading', ds_url, datasheet_path)
     dp = os.path.dirname(datasheet_path)
     os.path.isdir(dp) or os.makedirs(dp)
-    for du in (ds_url, ds_url_alt):
+    for du in [*ds_url, ds_url_alt]:
         if not du:
             continue
 
@@ -87,7 +100,11 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
                     with open(datasheet_path, 'wb') as f:
                         f.write(req.content)
                     return
-            except:
+                if req.status_code == 404:
+                    continue
+            except Exception as e:
+                if 'not found' in str(e).lower():
+                    continue
                 pass
 
             t = download_with_chromium(du, datasheet_path)
