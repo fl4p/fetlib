@@ -33,7 +33,6 @@ import os
 import traceback
 from typing import Any, List, Optional, Set, Tuple, Union
 
-import dslib.store
 from dslib.discovery import DiscoveredPart
 from dslib.field import DatasheetFields
 from dslib.store import Part, parts_db
@@ -147,6 +146,7 @@ def missing_web_fields(part: Part) -> List[str]:
     miss: List[str] = []
     #if 'IXFH120N25T' in part.mpn:
     #    miss.append('Qrr')
+    miss.append('V_pl')
     for label, where, attr, valid_range in WEB_FIELDS:
         v = _read_web_field(part, where, attr)
         if _in_range(v and abs(v), valid_range):
@@ -194,7 +194,7 @@ def _try_fill_vpl_from_chart(part: Part,
     # viz pulls in pymupdf — import lazily so callers that don't need it
     # still load the script fast.
     try:
-        from viz import find_vpl
+        from dslib.viz import find_vpl
     except Exception as e:  # pragma: no cover
         print(f'  viz unavailable: {type(e).__name__}: {e}')
         return None
@@ -447,4 +447,6 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    from wakepy import keep
+    with keep.running():
+        main()

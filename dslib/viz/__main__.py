@@ -2,9 +2,8 @@
 from __future__ import annotations
 
 import argparse
-import sys
 
-from viz import find_in_pdf
+from dslib.viz import find_in_pdf
 
 
 def main():

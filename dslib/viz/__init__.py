@@ -11,8 +11,8 @@ Quick start::
     v = find_vpl('datasheets/onsemi/FDD86367.pdf')
     print(v)  # ≈ 5.0
 """
-from viz.curve_extract import find_in_pdf, find_plateau, find_vpl
-from viz.chart_finder import ChartLocation, find_gate_charge_charts
+from dslib.viz.curve_extract import find_in_pdf, find_plateau, find_vpl
+from dslib.viz.chart_finder import ChartLocation, find_gate_charge_charts
 
 
 __all__ = [

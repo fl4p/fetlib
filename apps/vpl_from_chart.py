@@ -98,6 +98,7 @@ CHART_TITLE_REJECT_RE = re.compile(
     r'gate' + _TITLE_SEP + r'charge' + _TITLE_SEP + r'waveform'
     r'|source' + _TITLE_SEP + r'drain' + _TITLE_SEP + r'diode'
     r'|switching' + _TITLE_SEP + r'time' + _TITLE_SEP + r'test'
+    r'|output' + _TITLE_SEP + r'characteristics'
     r')'
 )
 
@@ -469,13 +470,19 @@ def _find_caption_image_pairs(page):
         return []
 
     # Collect embedded image bboxes (for the BSB-style case).
+    # Use ``get_image_rects`` rather than ``get_image_bbox``: the latter
+    # raises (and noisily logs) for images referenced in the page resource
+    # dict but not actually placed on the page; the former returns ``[]``.
     images = page.get_images(full=True)
     image_bboxes = []
     for img in images:
         try:
-            bb = page.get_image_bbox(img)
+            rects = page.get_image_rects(img)
         except Exception:  # noqa: BLE001
             continue
+        if not rects:
+            continue
+        bb = rects[0]
         if bb.is_empty:
             continue
         image_bboxes.append(bb)

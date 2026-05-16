@@ -21,7 +21,7 @@ from typing import List, Optional, Tuple
 
 import pymupdf
 
-from viz.chart_finder import ChartLocation
+from dslib.viz.chart_finder import ChartLocation
 
 
 @dataclass
@@ -516,7 +516,7 @@ def _vector_or_raster(page: pymupdf.Page,
         return hit, 'vector'
     if not enable_raster:
         return None, None
-    from viz.raster_extract import find_plateau_raster
+    from dslib.viz.raster_extract import find_plateau_raster
     rhit = find_plateau_raster(page, chart)
     if rhit is None:
         return None, None
@@ -559,8 +559,8 @@ def find_in_pdf(pdf_path: str,
     resulting text-layer-augmented PDF. The OCR retry happens at most
     once per call chain.
     """
-    from viz.chart_finder import (find_gate_charge_charts,
-                                   _find_infineon_raster_charts)
+    from dslib.viz.chart_finder import (find_gate_charge_charts,
+                                        _find_infineon_raster_charts)
     doc = pymupdf.open(pdf_path)
     out = []
     for page in doc.pages():

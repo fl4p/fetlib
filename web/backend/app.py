@@ -10,6 +10,8 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from apps.crop_charts import CROPS_OUT_ROOT
+
 REPO_ROOT = os.path.realpath(os.path.join(os.path.dirname(__file__), '..', '..'))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
@@ -280,10 +282,20 @@ def datasheet(mfr: str, mpn: str):
 def qg_curve(mfr: str, mpn: str):
     safe_mfr = os.path.basename(mfr)
     safe_mpn = os.path.basename(mpn)
-    path = os.path.join(REPO_ROOT, "crops", safe_mfr, safe_mpn, "qg.webp")
+    path = os.path.join(CROPS_OUT_ROOT, safe_mfr, safe_mpn, "qg.webp")
     if not os.path.isfile(path):
         raise HTTPException(status_code=404, detail="qg curve not found")
     return FileResponse(path, media_type="image/webp")
+
+
+@app.get("/api/part-image")
+def part_image(mfr: str, mpn: str):
+    safe_mfr = os.path.basename(mfr)
+    safe_mpn = os.path.basename(mpn)
+    path = os.path.join(CROPS_OUT_ROOT, safe_mfr, safe_mpn, "part.webp")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="part image not found")
+    return FileResponse(path, media_type="image/png")
 
 
 @app.get("/api/similar")

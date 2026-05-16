@@ -19,11 +19,11 @@ if ROOT not in sys.path:
 
 sys.path.insert(0, '/opt/homebrew/bin') # PATH="$PATH:/opt/homebrew/bin"
 
-from viz import find_vpl  # noqa: E402
+from dslib.viz import find_vpl  # noqa: E402
 
 
 def find_vpl_(pdf, enable_ocr=False):
-    from vpl_from_chart import vpl_from_pdf, _pick_best
+    from apps.vpl_from_chart import vpl_from_pdf, _pick_best
     vpl = _pick_best(vpl_from_pdf(pdf, enable_ocr=enable_ocr))
     if vpl is None:
         return None
@@ -71,6 +71,8 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/nxp/PSMN6R7-40MSD.pdf', 4.75),
     ('datasheets/st/STB55NF06LT4.pdf', 3),
     ('datasheets/agmsemi/AGM035N10D.pdf', 4.3),
+
+    #AOTF288L
 ]
 
 

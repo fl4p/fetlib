@@ -23,7 +23,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 import pymupdf
 
-from viz.chart_finder import ChartLocation
+from dslib.viz.chart_finder import ChartLocation
 
 
 @dataclass

@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from typing import List, Optional, Tuple
 
 import numpy as np
@@ -33,7 +32,7 @@ from dslib.store import Part, parts_db
 
 
 # Where the crops land.  Tweak via the CLI if needed.
-DEFAULT_OUT_ROOT = 'crops'
+CROPS_OUT_ROOT = 'data/crops'
 
 
 def _ds_path(part: Part) -> Optional[str]:
@@ -103,15 +102,28 @@ def _annotate(png_bytes: bytes,
     x_lo, x_hi, y_plateau = plateau_px
     base_x, base_y = baseline_px
 
-    # 1) Vertical Vpl dimension line just left of the chart's left edge
-    #    (or just inside if the left margin is too tight).
-    vpl_x = base_x - max(10, int(W * 0.025))
-    if vpl_x < 6:
-        vpl_x = base_x + max(10, int(W * 0.025))
+    # 1) Vertical Vpl dimension line at the Q_gs / Q_gd boundary — i.e. the
+    #    plateau's left edge.  At that x the line meets the curve's corner
+    #    cleanly, and the empty region under the plateau is the most natural
+    #    place for the Vpl label.
     if vpl is not None and y_plateau is not None and base_y is not None:
+        if x_hi > x_lo:
+            vpl_x = int(x_lo)
+        else:
+            # No plateau extent → fall back to the chart's left margin.
+            vpl_x = base_x - max(10, int(W * 0.025))
+            if vpl_x < 6:
+                vpl_x = base_x + max(10, int(W * 0.025))
         _draw_arrow(draw, vpl_x, base_y, vpl_x, y_plateau, color, width=2, head=head)
         label = f'Vpl = {vpl:.2f} V'
-        tx = vpl_x + 4 if vpl_x < base_x else vpl_x - 90
+        # Place the label to the RIGHT of the line, inside the empty area
+        # below the plateau (which sits between vpl_x and x_hi).  Fall back
+        # to the LEFT side if that area is too narrow.
+        tw = draw.textlength(label, font=font) if hasattr(draw, 'textlength') else len(label) * 7
+        if x_hi > vpl_x + tw + 8:
+            tx = vpl_x + 5
+        else:
+            tx = max(2, vpl_x - tw - 5)
         ty = (base_y + y_plateau) / 2 - 8
         draw.text((tx, ty), label, fill=color, font=font)
 
@@ -268,7 +280,7 @@ def _crop_via_viz(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
     chart axes, title-anchored Infineon images, …).
     """
     try:
-        from viz import find_in_pdf
+        from dslib.viz import find_in_pdf
     except Exception:
         return None
     try:
@@ -347,52 +359,161 @@ def _save_webp(png_bytes: bytes, out_path: str, quality: int) -> None:
     img.save(out_path, 'WEBP', quality=quality, method=4)
 
 
+# Minimum area (PDF sq points) for an image to count as a part picture.
+# Sub-1000 things are almost always logos / ornamental icons.
+_PART_IMG_MIN_AREA = 1500
+# Maximum fraction of the page an image can cover and still be a real part
+# image (anything bigger is almost certainly a rasterised page background).
+_PART_IMG_MAX_PAGE_FRACTION = 0.50
+# Images whose vertical centre sits in the top 12 % of the page are
+# treated as title-block decoration (manufacturer logo, brand badge) and
+# excluded from the part-picture bounding box.
+_PART_IMG_TITLE_BAR_FRAC = 0.12
+
+
+def _crop_part_image(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, str]]:
+    """Crop the part picture(s) off page 1 of *pdf_path* and return
+    (png_bytes, source_label).
+
+    Strategy:
+      * Read every embedded image's bbox on page 1.
+      * Drop tiny ones (logos, glyph icons) and page-spanning ones (raster
+        page backgrounds).
+      * If any survive: render their union bounding rect (with a small
+        padding margin) — this captures every housing variation / top &
+        bottom view in one shot.
+      * Otherwise: render the whole first page so we still produce *some*
+        artwork for the part (handles scanned/rasterised PDFs).
+    """
+    doc = fitz.open(pdf_path)
+    try:
+        if doc.page_count == 0:
+            return None
+        page = doc[0]
+        page_rect = page.rect
+        page_area = page_rect.width * page_rect.height
+
+        title_bar_y = page_rect.height * _PART_IMG_TITLE_BAR_FRAC
+        bboxes = []
+        for img in page.get_images(full=True):
+            # ``get_image_bbox`` raises ``IndexError`` (and emits a noisy log
+            # line via pymupdf's own exception channel before the raise) for
+            # images that are referenced in the page resource dict but never
+            # placed on the page.  ``get_image_rects`` returns an empty list
+            # in that case without the log line.
+            try:
+                rects = page.get_image_rects(img)
+            except Exception:
+                continue
+            if not rects:
+                continue
+            bb = rects[0]
+            if bb.is_empty:
+                continue
+            area = bb.width * bb.height
+            if area < _PART_IMG_MIN_AREA:
+                continue
+            if area > _PART_IMG_MAX_PAGE_FRACTION * page_area:
+                # Page-spanning raster — fall through to the page-render path.
+                continue
+            # Title-bar logos sit at the very top of the page; reject any
+            # image that STARTS inside the title-bar band so the manufacturer
+            # brand doesn't masquerade as the part photo.  (Some logos
+            # extend below the band's midpoint — using y0 rather than the
+            # centre keeps them out.)
+            if bb.y0 < title_bar_y:
+                continue
+            bboxes.append(bb)
+
+        if bboxes:
+            x0 = min(b.x0 for b in bboxes)
+            y0 = min(b.y0 for b in bboxes)
+            x1 = max(b.x1 for b in bboxes)
+            y1 = max(b.y1 for b in bboxes)
+            rect = fitz.Rect(x0 - 6, y0 - 6, x1 + 6, y1 + 6) & page_rect
+            source = f'{len(bboxes)} image(s)'
+        else:
+            # No usable embedded image: render the whole first page.
+            rect = page_rect
+            source = 'page'
+
+        scale = dpi / 72.0
+        pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale),
+                              clip=rect, alpha=False)
+        return pix.tobytes('png'), source
+    finally:
+        doc.close()
+
+
 def _process_one(mfr: str, mpn: str, ds_path: str,
                  out_root: str, dpi: int, quality: int,
-                 force: bool) -> Tuple[str, List[str]]:
+                 force: bool, do_part_image: bool = True) -> Tuple[str, List[str]]:
     """Worker: returns (status, log_lines).
 
-    ``status`` is one of:
-      'saved-vpc', 'saved-viz', 'skipped-existing', 'no-chart', or 'error'.
+    ``status`` refers to the gate-charge chart crop and is one of
+    'saved-vpc' / 'saved-viz' / 'skipped-existing' / 'no-chart' / 'error'.
+    The part-picture crop (``part.webp``) is a best-effort side product and
+    its outcome is only reported in the log lines.
     """
     log: List[str] = []
-    out_path = os.path.join(out_root, mfr, mpn, 'qg.webp')
-
-    if not force and os.path.exists(out_path):
-        return 'skipped-existing', log
+    chart_out = os.path.join(out_root, mfr, mpn, 'qg.webp')
+    part_out  = os.path.join(out_root, mfr, mpn, 'part.webp')
 
     if not os.path.isfile(ds_path):
         log.append(f'  · datasheet missing: {ds_path}')
         return 'error', log
 
-    # Try the vector pipeline first.
-    try:
-        crop = _crop_via_vpc(ds_path, dpi)
-    except Exception as exc:  # noqa: BLE001
-        crop = None
-        log.append(f'  · vpc error: {type(exc).__name__}: {exc}')
+    chart_exists = os.path.exists(chart_out)
+    part_exists  = os.path.exists(part_out)
 
-    if crop is None:
-        # Fall back to viz (covers rasterised charts + title-anchored cases).
+    # ------------- gate-charge chart -------------
+    chart_status: str
+    if chart_exists and not force:
+        chart_status = 'skipped-existing'
+    else:
+        # Try the vector pipeline first, then viz.
         try:
-            crop = _crop_via_viz(ds_path, dpi)
+            crop = _crop_via_vpc(ds_path, dpi)
         except Exception as exc:  # noqa: BLE001
             crop = None
-            log.append(f'  · viz error: {type(exc).__name__}: {exc}')
+            log.append(f'  · vpc error: {type(exc).__name__}: {exc}')
 
-    if crop is None:
-        log.append('  · no chart detected by either extractor')
-        return 'no-chart', log
+        if crop is None:
+            try:
+                crop = _crop_via_viz(ds_path, dpi)
+            except Exception as exc:  # noqa: BLE001
+                crop = None
+                log.append(f'  · viz error: {type(exc).__name__}: {exc}')
 
-    png_bytes, page_num, source = crop
-    try:
-        _save_webp(png_bytes, out_path, quality)
-    except Exception as exc:  # noqa: BLE001
-        log.append(f'  · WebP write failed: {type(exc).__name__}: {exc}')
-        return 'error', log
+        if crop is None:
+            log.append('  · no chart detected by either extractor')
+            chart_status = 'no-chart'
+        else:
+            png_bytes, page_num, source = crop
+            try:
+                _save_webp(png_bytes, chart_out, quality)
+                log.append(f'  + chart  (page {page_num}, via {source}) → {chart_out}')
+                chart_status = 'saved-vpc' if source == 'vpc' else 'saved-viz'
+            except Exception as exc:  # noqa: BLE001
+                log.append(f'  · chart WebP write failed: {type(exc).__name__}: {exc}')
+                chart_status = 'error'
 
-    log.append(f'  + saved (page {page_num}, via {source}) → {out_path}')
-    return 'saved-vpc' if source == 'vpc' else 'saved-viz', log
+    # ------------- part image (best-effort, separate file) -------------
+    if do_part_image and (force or not part_exists):
+        try:
+            res = _crop_part_image(ds_path, dpi)
+        except Exception as exc:  # noqa: BLE001
+            res = None
+            log.append(f'  · part-image error: {type(exc).__name__}: {exc}')
+        if res is not None:
+            png_bytes, src = res
+            try:
+                _save_webp(png_bytes, part_out, quality)
+                log.append(f'  + part   ({src}) → {part_out}')
+            except Exception as exc:  # noqa: BLE001
+                log.append(f'  · part WebP write failed: {type(exc).__name__}: {exc}')
+
+    return chart_status, log
 
 
 def _filter_parts(parts: dict,
@@ -410,22 +531,26 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    p.add_argument('--out-root', default=DEFAULT_OUT_ROOT,
-                   help=f'output directory (default: {DEFAULT_OUT_ROOT}/)')
+    p.add_argument('--out-root', default=CROPS_OUT_ROOT,
+                   help=f'output directory (default: {CROPS_OUT_ROOT}/)')
     p.add_argument('--mfr', help='only parts with this manufacturer')
     p.add_argument('--mpn', help='only this exact MPN')
     p.add_argument('--limit', type=int, default=0,
                    help='process at most N parts (0 = all)')
     p.add_argument('--force', action='store_true',
-                   help='overwrite existing qg.webp files')
+                   help='overwrite existing qg.webp / part.webp files')
     p.add_argument('--dpi', type=int, default=200,
                    help='rasterisation DPI for the crop (default: 200)')
     p.add_argument('--quality', type=int, default=85,
                    help='WebP quality 0-100 (default: 85)')
+    p.add_argument('--no-part-image', action='store_true',
+                   help="don't extract the part picture (part.webp) — only "
+                        "the gate-charge chart (qg.webp)")
     p.add_argument('-j', '--jobs', type=int, default=1,
                    help='number of parts to process in parallel '
                         '(1 = serial; >1 uses main.run_parallel)')
     args = p.parse_args()
+    do_part_image = not args.no_part_image
 
     print('loading parts_db...')
     parts_map = parts_db.load()
@@ -458,7 +583,8 @@ def main():
         from main import run_parallel
         jobs = {
             (mfr, mpn): (_process_one, mfr, mpn, ds,
-                         args.out_root, args.dpi, args.quality, args.force)
+                         args.out_root, args.dpi, args.quality, args.force,
+                         do_part_image)
             for mfr, mpn, ds in todo
         }
         results = run_parallel(jobs, args.jobs, 'multiprocessing', verbose=0)
@@ -477,7 +603,8 @@ def main():
         for i, (mfr, mpn, ds) in enumerate(todo, 1):
             print(f'[{i}/{len(todo)}] {mfr}/{mpn}')
             status, log_lines = _process_one(
-                mfr, mpn, ds, args.out_root, args.dpi, args.quality, args.force)
+                mfr, mpn, ds, args.out_root, args.dpi, args.quality,
+                args.force, do_part_image)
             counts[status] = counts.get(status, 0) + 1
             for line in log_lines:
                 print(line)
