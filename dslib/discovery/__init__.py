@@ -147,7 +147,7 @@ class DiscoveredPart:
         self.specs: MosfetBasicSpecs = specs
         self.mpn2 = mpn2
         self.package = package if not is_nan(package) else None  # aka case, housing
-        self.release_data = release_date
+        self.release_date = release_date
         self.status = status
 
     def get_ds_path(self):

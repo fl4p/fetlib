@@ -4,6 +4,7 @@ import traceback
 
 from discover_parts import discover_mosfets
 from dslib.field import DatasheetFields
+from dslib.pdf.tabular import tabula_is_running
 from dslib.store import Part, parts_db
 from main import compile_part_datasheet, get_fet_specs
 
@@ -67,6 +68,10 @@ if __name__ == '__main__':
                              '(1 = serial; >1 uses run_parallel from main.py)')
     args = parser.parse_args()
 
+    if not tabula_is_running():
+        raise RuntimeError('tabula is not running')
+
     from wakepy import keep
+
     with keep.running():
         run(jobs=args.jobs)
