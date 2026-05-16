@@ -133,19 +133,32 @@ Write a program that loads all parts from database (parts_db in dslib/store.py) 
 runs compile_part_datasheet(). It then generates a `Part` object similar to how `compute_part_powerloss` does it (
 without the powerloss computation). It then writes the part with the fresh specs back to parts_db.
 
-
-
 # mosfet details modal
 
 add another button next to MPN that opens a modal with more information about that mosfet.
 in the modal:
+
+* an image of the part from crops/<mfr>/<mpn>/part.webp
 * a table with all the part properties
 * an image of the gate charge curve. gate charge curves are systematically stored under crops/<mfr>/<mpn>/qg.webp .
 * a link to the pdf datasheet
 
 
+* the part image in the modal has a link to the datasheet
+* the mpn in the table is cut-off after 20 characters with an ellipses
+
+
 # for vpl-from-chart:
-* generate a script that creates the cropped charts as webp files for all parts the are in parts_db. it first tries vpc and then
-        viz method. store the image files under crops/<mfr>/<mpn>/qg.webp
+
+* generate a script that creates the cropped charts as webp files for all parts the are in parts_db. it first tries vpc
+  and then
+  viz method. store the image files under crops/<mfr>/<mpn>/qg.webp
 * in the webp, draw a vertical Dimension line for Vpl and horizontal for Qgs and Qgd.
 
+* extend crop_charts.py so it will find an image of the part. this is usually on the first page of the pdf. there can be
+  multiple images for housing variations and top and bottom view. crop them all together in one image. if the whole page
+  is rasterized or you cannot find an image, just crop the first page.
+
+
+
+* Fix this issue: In Chrome on iOS (iPad), when narrowing the results with the slider, many rows show blank and only reveal their values when hovered, clicked or the table scrolls.
