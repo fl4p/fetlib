@@ -266,7 +266,13 @@
 
 	function csvCell(v: unknown): string {
 		if (v == null) return '';
-		const s = typeof v === 'number' ? (Number.isFinite(v) ? String(v) : '') : String(v);
+		let s: string;
+		if (typeof v === 'number') {
+			if (!Number.isFinite(v)) return '';
+			s = v === 0 ? '0' : String(Number(v.toPrecision(5)));
+		} else {
+			s = String(v);
+		}
 		return /[",\n\r]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 	}
 
