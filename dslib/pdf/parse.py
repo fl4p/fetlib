@@ -11,6 +11,7 @@ import pandas as pd
 import pymupdf
 import timeout_decorator
 
+from apps.vpl_from_chart import _pick_best, vpl_from_pdf
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
 from dslib.pdf import expr
@@ -250,7 +251,6 @@ def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False) -> 
     return fields
 
 
-
 def validate_datasheet_text(mfr, mpn, text, return_reason=False):
     if len(text) < 60:
         if len(text) == 0:
@@ -262,11 +262,11 @@ def validate_datasheet_text(mfr, mpn, text, return_reason=False):
         strip_no_print_latin(s.lower().replace('o', '0').replace('_', '').replace('-', '')))
 
     mpn = _n(mpn).split(',')[0][:7]
-    mpn = re.sub('[A-Za-z]$','', mpn) # HY1920W > HY1920
+    mpn = re.sub('[A-Za-z]$', '', mpn)  # HY1920W > HY1920
     # print(mpn)
     if mpn not in _n(text):
         print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(strip_no_print_latin(text))[:60])
-        return 'mpn-not-found-in-'+whitespaces_to_space(strip_no_print_latin(text))[:300] if return_reason else False
+        return 'mpn-not-found-in-' + whitespaces_to_space(strip_no_print_latin(text))[:300] if return_reason else False
 
     return True
 
@@ -295,6 +295,27 @@ def extract_dates(pdf_text: str):
                 print('failed to parse date', m[0], d)
                 raise
     return [x[1] for x in sorted(dates, key=lambda x: x[0])]
+
+
+def read_charts(pdf_path):
+    from dslib.viz import find_vpl
+    vpl = find_vpl(pdf_path)
+    src = 'viz'
+
+    if vpl is None:
+        vpl = _pick_best(vpl_from_pdf(pdf_path))
+        if vpl is not None:
+            vpl = vpl['vpl']
+        src = 'vpc'
+
+    #mfr = pdf_path.split('/')[-2]
+    #mpn = pdf_path.split('/')[-1].split('.')[0]
+    ds:List[Field] = []
+
+    if vpl and math.isfinite(vpl):
+        ds.append(Field('Vpl', min=math.nan, typ=round(vpl, 1), max=math.nan, unit='V', source=src))
+
+    return ds
 
 
 def ocr_pdf(pdf_path, method='r600_ocrmypdf'):
@@ -386,16 +407,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
 
     # Vpl
     if not math.isfinite(ds.get_max_or_min_or_typ('Vpl')):
-
-        from dslib.viz import find_vpl
-        vpl = find_vpl(pdf_path)
-
-        #from vpl_from_chart import vpl_from_pdf, _pick_best
-        #vpl = _pick_best(vpl_from_pdf(pdf_path))
-        #if vpl:
-         #   vpl = vpl['vpl']
-        if vpl and math.isfinite(vpl):
-            ds.add(Field('Vpl', min=math.nan, typ=round(vpl, 1), max=math.nan, unit='V', source='vplFromPdf'))
+        ds.add_multiple(read_charts(pdf_path), ['read_charts'])
 
     if need_symbols:
         subsctract_needed_symbols(need_symbols, ds.keys())
@@ -592,7 +604,7 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
             # print('..done.')
         except timeout_decorator.timeout_decorator.TimeoutError:
             print("catastrophic backtracking with '%s' in %r" % (r.pattern.replace('\'', '\\\'')[:6000], s))
-            print('input="""'+s + '"""')
+            print('input="""' + s + '"""')
             raise
             continue
         except:

@@ -1,6 +1,8 @@
 """CLI entry: ``python -m dslib.v2 <datasheet.pdf>``."""
 import sys
 
+sys.path.insert(0,'.')
+
 from dslib.v2 import parse_datasheet
 
 
