@@ -1,6 +1,8 @@
 import math
 import re
 
+from dslib.field import Field
+
 
 def test_right_strip_nan():
     from dslib.pdf.parse import right_strip_nan
@@ -37,7 +39,6 @@ def test_validate_datasheet_text():
     assert validate_datasheet_text('mfr', 'HY3810NA2B', 'lorem HY3810NA2P/B ' + ('fill it' * 20))
 
 
-
 def test_parse_field_value():
     from dslib.field import parse_field_value
     assert math.isnan(parse_field_value('---', no_raise=True))
@@ -50,14 +51,13 @@ def test_parse_field_value():
 
 
 def test_parse_field():
-
     from dslib.pdf.expr import DIMENSIONS
     assert re.match(DIMENSIONS.V.head_regex, 'V (BR)DSS', re.IGNORECASE)
     assert re.match(DIMENSIONS.V.head_regex, 'V DSS', re.IGNORECASE)
 
     from dslib.pdf.parse import parse_field_csv
     field, parse_match = parse_field_csv(
-        #'Drain-source breakdown voltage,V (BR)DSS,V GS=0 V,I D=1 mA,150,-,-,V',
+        # 'Drain-source breakdown voltage,V (BR)DSS,V GS=0 V,I D=1 mA,150,-,-,V',
         'Drain-source breakdown voltage,V(BR)DSS,150,-,-,V',
         'V', field_sym='Vds',
         cond={0: 'Drain-source breakdown voltage', 1: 'V (BR)DSS', 2: 'V GS=0 V, I D=1 mA', 3: '150', 4: '-', 5: '-',
@@ -69,3 +69,22 @@ def test_parse_field():
     )
     assert field
     assert parse_match
+
+
+def test_update_field():
+    n = math.nan
+
+    f0 = Field('Rgs_on', n, 7, n, )
+    f1 = Field('Rgs_on', n, n, 9, )
+    f0.fill(f1)
+    assert f0 == (n, 7, 9)
+
+    f0 = Field('Rgs_on', n, 7, n, )
+    f1 = Field('Rgs_on', n, n, 6, )
+    f0.fill(f1)
+    assert f0 == (n, 7, n)  # f1 update is rejected
+
+    #f0 = Field('Rgs_on', n, 7, n, )
+    #f1 = Field('Rgs_on', 3, 4, 6, )
+    #f0.fill(f1)
+    #assert f0 == (3, 4, 6)  # f1 is superior

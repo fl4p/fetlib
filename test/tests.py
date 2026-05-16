@@ -308,6 +308,12 @@ def test_parse_lines():
 
 def test_pdf_parse():
 
+    d = read_sheet('datasheets/littelfuse/IXTK170N10P.pdf')
+    assert d.Rds_on == (na,7,9)
+
+    d = parse_datasheet('datasheets/ao/AON7462.pdf')
+    assert d.Qrr == 220
+
     #d = read_sheet('datasheets/littelfuse/IXFH120N25T.pdf')
     d = parse_datasheet('datasheets/littelfuse/IXFH120N25T.pdf')
     assert d.Qrr == 1.18e3 # µC!
