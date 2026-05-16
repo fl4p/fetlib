@@ -649,6 +649,7 @@ _NON_CURVE_TITLE_RE = re.compile(
     r'|gate[\s-]+charge[\s-]+waveform[\s-]+definitions?'
     r'|source[\s-]+drain[\s-]+diode[\s-]+forward[\s-]+voltage'
     r'|switching[\s-]+time[\s-]+test[\s-]+circuit'
+    r'|output[\s-]+characteristics?'
     r')'
 )
 
