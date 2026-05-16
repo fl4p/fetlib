@@ -307,17 +307,18 @@ def line_regex_variations(dim: Dimension):
     cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_ ][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
 
     # NOTE: this test_cond uses possessive quantifiers (++, ?+, {n,m}+) on
-    # the internal variable-length parts of a single test_cond. These prevent
-    # catastrophic backtracking when the surrounding pattern fails to match
-    # (e.g. unicode chars like °, μ in conds break misc_ref absorption and
-    # trigger combinatorial BT through every conds permutation). The trailing
-    # [;,\n ]* separator is INTENTIONALLY left greedy (not possessive) so it
-    # can give back a newline to the next misc_ref*\n in valid cases.
-    # rec() compiles with the `regex` module which supports these markers;
-    # do NOT reuse this string with re.compile (see get_cond_regex below for
-    # the re-compatible variant).
+    # the inner machinery to prevent catastrophic backtracking (unicode chars
+    # like °, μ in conds break misc_ref absorption and otherwise trigger
+    # combinatorial BT through every conds permutation). The cond_sym
+    # alternative inside the inner ++ loop has a negative lookahead
+    # `(?! *[=≈])` — without it, the possessive loop would gobble the leading
+    # symbol of the *next* test_cond (e.g. "TJ = 25°C  di/dt = 100A/μs"
+    # would consume "di/dt" into the first test_cond's tail instead of
+    # starting a new one). rec() compiles with the `regex` module which
+    # supports these markers; do NOT reuse this string with re.compile (see
+    # get_cond_regex below for the re-compatible variant).
     test_cond = (rf'(?P<cond_sym>{cond_sym})\s*[=≈]\s*'
-                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit})[/a-z0-9]{{0,4}}+){{0,2}}+)?+|{cond_sym}) *[-+*/]? *)++'
+                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit})[/a-z0-9]{{0,4}}+){{0,2}}+)?+|{cond_sym}(?! *[=≈])) *[-+*/]? *)++'
                  ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
                  )
     test_conds_delim_ml = (rf'(?P<conds_ml>{test_cond}\s*[;,\n\s]*)')
@@ -362,6 +363,33 @@ def line_regex_variations(dim: Dimension):
             regex.IGNORECASE
         ),
 
+        # cond_Tm_unit (strict: requires a numeric typ before max) is tried
+        # BEFORE cond_tM_unit (loose: typ optional and may include "-").
+        # Otherwise the loose pattern wins on inputs like
+        # "VGS=... ID=...\n3.9\n4.5\nmΩ" by absorbing the 3.9 line into
+        # `misc_ref*\n` and matching with typ=nan, max=4.5 instead of the
+        # intended typ=3.9 max=4.5.
+        rec((
+            rf'(?P<cond_Tm_unit>=name)?'
+            rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
+            # rf'([a-z]{{1,3}}\n)?'
+            rf'(?=([^\n]*\n){{0,16}}({rs.val})\n({rs.val_nane})\n({unit})(\n|$| *[,|]))'
+            # Optional trailing footnote-text lines after the conds block.
+            # Extras must contain a space or paren (footnote-like prose, e.g.
+            # "(see\nFigure 16. Test circuit for\ninductive load switching\ndiode recovery times)") —
+            # this prevents the regex from absorbing a single-line value/unit
+            # (e.g. "40\nnC\nQgd") which would shift typ/max onto the wrong row.
+            # The outer (...)? around the trailing block lets the engine skip
+            # it entirely so a tight head\nconds\ntyp\nunit case (e.g. Qgs
+            # with no trailing description) still matches via the typ path.
+            rf'(?P<cond>{test_conds_delim_ml}+({misc_ref}*\n((?=[^\n]*[ ()]){misc_ref}+\n){{0,3}}?)?)?'
+            rf'(?P<typ>{rs.val})\n'
+            rf'(?P<max>{rs.val_nane})\n'
+            rf'(?P<unit>{unit})'
+            rf'(\n|$| *[,|])'),
+            re.IGNORECASE
+        ),
+
         rec((
             rf'(?P<cond_tM_unit>=name)?'
             rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
@@ -371,22 +399,19 @@ def line_regex_variations(dim: Dimension):
             # number of lines ahead, not just any unit char somewhere — see
             # also the conds_mTm regex and the cond_mtmu regex above.
             rf'(?=([^\n]*\n){{0,16}}({rs.val})(\n| +)({unit})(\n|$| *[,|]))'
-            rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
+            # allow up to 3 extra misc_ref lines after the conds block (e.g.
+            # "(see\nFigure 16. Test circuit for\ninductive load switching\ndiode recovery times)\n")
+            # Optional trailing footnote-text lines after the conds block.
+            # Extras must contain a space or paren (footnote-like prose, e.g.
+            # "(see\nFigure 16. Test circuit for\ninductive load switching\ndiode recovery times)") —
+            # this prevents the regex from absorbing a single-line value/unit
+            # (e.g. "40\nnC\nQgd") which would shift typ/max onto the wrong row.
+            # The outer (...)? around the trailing block lets the engine skip
+            # it entirely so a tight head\nconds\ntyp\nunit case (e.g. Qgs
+            # with no trailing description) still matches via the typ path.
+            rf'(?P<cond>{test_conds_delim_ml}+({misc_ref}*\n((?=[^\n]*[ ()]){misc_ref}+\n){{0,3}}?)?)?'
             rf'((?P<typ>{rs.val_nane})\n)?'
             rf'(?P<max>{rs.val})(\n| +)'  # inline unit
-            rf'(?P<unit>{unit})'
-            rf'(\n|$| *[,|])'),
-            re.IGNORECASE
-        ),
-
-        rec((
-            rf'(?P<cond_Tm_unit>=name)?'
-            rf'(?P<head>{head}\s*{misc_ref}*\s*)\n'
-            # rf'([a-z]{{1,3}}\n)?'
-            rf'(?=([^\n]*\n){{0,16}}({rs.val})\n({rs.val_nane})\n({unit})(\n|$| *[,|]))'
-            rf'(?P<cond>{test_conds_delim_ml}+{misc_ref}*\n)?'
-            rf'(?P<typ>{rs.val})\n'
-            rf'(?P<max>{rs.val_nane})\n'
             rf'(?P<unit>{unit})'
             rf'(\n|$| *[,|])'),
             re.IGNORECASE
@@ -711,6 +736,12 @@ def get_field_detect_regex(mfr):
             rf'(gate[\s-]+charge\s+at\s+V[ _]?th|Pre-(Vth|threshold) Gate-to-Source Charge|gate[\s-]+charge\s+at\s+thres(hold)?|threshold gate charge|^Q[ _]?gs?\s*\(?th\)?([^-_]|$|\*){qgs1})',
             re.IGNORECASE),
                ('post-threshold', 'post-vth')),
+        # Qg_sync (infineon naming) must be matched BEFORE Qsync — both
+        # regexes match "Total Gate Charge Sync." but test_cases_from_stream
+        # expects the more specific Qg_sync symbol for that label.
+        Qg_sync=(rec(
+            rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?($|\*))',
+            re.IGNORECASE), ()),  # infineon
         Qsync=(rec(r'(total[\s-]+gate[\s-]+charge[\s-]+sync\.?|^Q[ _]?sync\.?)', re.IGNORECASE)),
         Qgd=(rec(r'(gate[\s-]+(to[\s-]+)?drain[\s-]+(\(?"*miller"*\)?[\s-]+)?charge|^Q[ _]?gd)', re.IGNORECASE),
              ('sync',)),
@@ -718,9 +749,6 @@ def get_field_detect_regex(mfr):
             rf'(gate[\s-]+(to[\s-]+)?source[\s-]+(gate[\s-]+)?charge|Gate[\s-]+Charge[\s-]+Gate[\s-]+to[\s-]+Source|^{qgs})',
             re.IGNORECASE), ('Qgd', 'pre-vth', 'post-Vth')),
         Qsw=(rec(r'(gate[\s-]+switch[\s-]+charge|switching[\s-]+charge|^Q[ _]?sw($|\*))', re.IGNORECASE), ('Qg',)),
-        Qg_sync=(rec(
-            rf'(total[\s-]+gate[\s-]+charge[ -]+sync\.?|^Q[ _]?g?sync\.?([\s_]?\(?(tota?l?|on)\)?)?($|\*))',
-            re.IGNORECASE), ()),  # infineon
         Qoss=(rec(
             rf'(^Q[ _]?oss($|\s|\*)|output charge)',
             re.IGNORECASE), ()),
