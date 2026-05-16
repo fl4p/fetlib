@@ -142,3 +142,10 @@ in the modal:
 * a table with all the part properties
 * an image of the gate charge curve. gate charge curves are systematically stored under crops/<mfr>/<mpn>/qg.webp .
 * a link to the pdf datasheet
+
+
+# for vpl-from-chart:
+* generate a script that creates the cropped charts as webp files for all parts the are in parts_db. it first tries vpc and then
+        viz method. store the image files under crops/<mfr>/<mpn>/qg.webp
+* in the webp, draw a vertical Dimension line for Vpl and horizontal for Qgs and Qgd.
+

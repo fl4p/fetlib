@@ -577,8 +577,10 @@ _CHART_TITLE_RE = re.compile(
     r"|"
     # E) ``Gate charge characteristic[s]`` followed by anything
     # (parenthetical conditions, comma-separated qualifiers).
-    # Infineon F3L3 / IGBT-module datasheets use this style; the
-    # caption-line variation isn't covered by D's ``$`` anchor.
+    # Optionally preceded by a section number ("6.3.") — Toshiba
+    # datasheets use that as the chart's anchor heading. Infineon
+    # F3L3 / IGBT-module datasheets use the unprefixed variant.
+    r"(?:[0-9]+(?:\.[0-9]+)*\.?\s+)?"
     r"Gate[\s-]+Charge\s+Characteristics?\b.*"
     r")",
     re.IGNORECASE,
@@ -634,7 +636,20 @@ _FOOTNOTE_START_RE = re.compile(r'^(\*+\)|[0-9]+\)|See\b|see\b|cf\.)')
 # Captions that mention "gate charge" but refer to a *circuit* / timing
 # waveform diagram, not the V_GS-vs-Q_G curve.
 _NON_CURVE_TITLE_RE = re.compile(
-    r'(?i)(test\s+circuit|circuit\s*&\s*waveform|circuit\s+and\s+waveform)'
+    r'(?i)('
+    r'test[\s-]+circuit'
+    r'|circuit\s*&\s*waveform'
+    r'|circuit\s+and\s+waveform'
+    # Caption variants we never want to anchor on:
+    #   - "Fig. 13. Gate charge waveform definitions"   (test waveform)
+    #   - "Source-Drain Diode Forward Voltage"           (V_SD vs I_F)
+    #   - "Switching Time Test Circuit"                  (timing diagram)
+    # Word separators may be spaces *or* dashes/hyphens, so ``[\s-]+``
+    # is used uniformly between tokens.
+    r'|gate[\s-]+charge[\s-]+waveform[\s-]+definitions?'
+    r'|source[\s-]+drain[\s-]+diode[\s-]+forward[\s-]+voltage'
+    r'|switching[\s-]+time[\s-]+test[\s-]+circuit'
+    r')'
 )
 
 
@@ -660,7 +675,19 @@ def _find_chart_title_lines(words: List[_Word]
             continue
         if _NON_CURVE_TITLE_RE.search(text):
             continue
-        if _CHART_TITLE_RE.search(text):
+        # Some PDFs (CRTT, certain Chinese-mfr datasheets) draw caption
+        # text in three overlapping passes for a bold-stroke effect.
+        # Pdfminer surfaces every glyph, so the joined line text comes
+        # out as "Fig Fig Fig 7: 7: 7: Gate Gate Gate Charge ...". Dedup
+        # consecutive identical tokens so the title regex can still
+        # match.
+        toks = text.split()
+        deduped = []
+        for t in toks:
+            if not deduped or deduped[-1] != t:
+                deduped.append(t)
+        text_dedup = ' '.join(deduped)
+        if _CHART_TITLE_RE.search(text) or _CHART_TITLE_RE.search(text_dedup):
             out.append(line)
     if len(out) >= 2:
         non_wave = [l for l in out
@@ -822,7 +849,8 @@ def _find_curve_top_y(page: pymupdf.Page,
 
 def _find_chart_wireframe(page: pymupdf.Page,
                           title_bbox: pymupdf.Rect,
-                          starts_with_fig: bool
+                          starts_with_fig: bool,
+                          header_only: bool = False
                           ) -> Optional[Tuple[pymupdf.Rect, pymupdf.Rect]]:
     """Detect a wireframe-style chart (vector rectangle frame, no text
     labels) adjacent to ``title_bbox``.
@@ -917,9 +945,13 @@ def _find_chart_wireframe(page: pymupdf.Page,
         return None
 
     # Prefer the side implied by the caption prefix, but fall back to
-    # the other side when nothing fits.
+    # the other side when nothing fits. Section-number headings only
+    # ever have their content below the heading line.
     title_cx = 0.5 * (title_bbox.x0 + title_bbox.x1)
-    sides = (starts_with_fig, not starts_with_fig)
+    if header_only:
+        sides = (False,)
+    else:
+        sides = (starts_with_fig, not starts_with_fig)
     best: Optional[Tuple[float, pymupdf.Rect]] = None
     best_side: Optional[bool] = None
     for try_caption in sides:
@@ -1009,6 +1041,17 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
         # default ordering: try caption side first if "Fig"/"Figure"
         # prefix is present, otherwise try header side first
         starts_with_fig = bool(re.match(r'(?i)\s*Fig', title_text))
+        # A bare section-number prefix like "6.3. Gate Charge
+        # Characteristics" is always a *header* (the chart, table, or
+        # text body for that section sits below it). Treat these as
+        # header-only — don't fall back to probing the caption side,
+        # because the content above a section heading belongs to the
+        # *previous* section (e.g. Toshiba TK024Z60Z1 page 3, where
+        # the Switching Time Test Circuit schematic sits directly
+        # above the "6.3. Gate Charge Characteristics" heading and
+        # would otherwise be mistaken for the heading's chart).
+        starts_with_section = bool(re.match(
+            r'\s*[0-9]+(?:\.[0-9]+)+\.?\s', title_text))
 
         title_cx = 0.5 * (title_bbox.x0 + title_bbox.x1)
 
@@ -1040,8 +1083,14 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
             # (caption style), ``side==+1`` is "image below title"
             # (header style). Within the same side preference, take the
             # closer image. We try the title's prefix-implied side first
-            # so the right interpretation wins on the typical case.
-            for try_caption in (starts_with_fig, not starts_with_fig):
+            # so the right interpretation wins on the typical case. For
+            # section-number headings ("6.3. Gate Charge ..."), the
+            # chart can only be below — never look above.
+            if starts_with_section:
+                sides_to_try = (False,)
+            else:
+                sides_to_try = (starts_with_fig, not starts_with_fig)
+            for try_caption in sides_to_try:
                 if try_caption:
                     if r.y1 > title_bbox.y0:
                         continue
@@ -1092,7 +1141,11 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
         # so re-scanning inside it later would miss them.
         primary_ticks: List[Tuple[float, float]] = []
         if page_rect is not None:
-            ordered_sides = (starts_with_fig, not starts_with_fig)
+            if starts_with_section:
+                # Section-number heading — header side only.
+                ordered_sides = (False,)
+            else:
+                ordered_sides = (starts_with_fig, not starts_with_fig)
             for try_caption in ordered_sides:
                 if try_caption:
                     search_y0 = max(page_rect.y0, title_bbox.y0 - 260)
@@ -1150,7 +1203,8 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
             # glyphs (not text), so neither image-based nor tick-column
             # search yields anything; the only signal is the plot
             # frame's outline.
-            wf = _find_chart_wireframe(page, title_bbox, starts_with_fig)
+            wf = _find_chart_wireframe(page, title_bbox, starts_with_fig,
+                                       header_only=starts_with_section)
             if wf is None:
                 continue
             _outer, inner = wf

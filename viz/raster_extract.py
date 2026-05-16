@@ -119,9 +119,17 @@ def _find_plateau_run(trace: np.ndarray,
                       min_run_px: int) -> Optional[Tuple[int, int, float]]:
     """Return (x_start, x_end, plateau_y) for the longest x-span where the
     trace's local variation stays within ``flatness_px``.
+
+    A run is rejected when both endpoints sit at the chart's left/right
+    edges with no rising-curve continuation — that pattern indicates a
+    gridline extending past the curve (e.g. a V_GS = 8 V reference line
+    drawn across the full plot width while the actual curve only covers
+    the left half), not a Miller plateau bracketed by the rising curve.
+    A real plateau has the curve approaching from below it on one side
+    *and* continuing above it on the other.
     """
     n = trace.shape[0]
-    best: Optional[Tuple[int, int, float]] = None
+    candidates: List[Tuple[int, int, float]] = []
 
     i = 0
     while i < n:
@@ -140,10 +148,60 @@ def _find_plateau_run(trace: np.ndarray,
             j += 1
         if (j - i) >= min_run_px:
             plateau_y = float(np.median(run_vals))
-            if best is None or (j - i) > (best[1] - best[0]):
-                best = (i, j, plateau_y)
+            candidates.append((i, j, plateau_y))
         i = j if j > i else i + 1
-    return best
+
+    if not candidates:
+        return None
+
+    # Probe just outside each candidate to decide whether it sits on a
+    # real Miller plateau or on a tail-end gridline. A V_GS-vs-Q_g curve
+    # rises monotonically, so the trace immediately before the plateau
+    # should sit *at or below* the plateau's y (i.e. lower V → larger y)
+    # and the trace immediately after should sit *at or above* it
+    # (higher V → smaller y). A gridline drawn past the curve's right
+    # edge fails this: the curve has already left the plot at a
+    # *much lower* y (high V) before the gridline begins, so the
+    # immediate-left sample is well *above* the plateau's y in the
+    # "wrong direction".
+    probe_span = max(min_run_px, 10)
+    diff_tol = max(flatness_px * 2.0, 4.0)
+
+    def is_plausible_plateau(run: Tuple[int, int, float]) -> bool:
+        i_, j_, py = run
+        # Sample the closest valid trace value on each side.
+        left_y: Optional[float] = None
+        for k in range(i_ - 1, max(-1, i_ - probe_span) - 1, -1):
+            v = trace[k]
+            if not math.isnan(v):
+                left_y = float(v)
+                break
+        right_y: Optional[float] = None
+        for k in range(j_, min(n, j_ + probe_span)):
+            v = trace[k]
+            if not math.isnan(v):
+                right_y = float(v)
+                break
+        # If the curve never appears next to this run, it's at the
+        # data's edge — accept (the plateau may genuinely hug the
+        # left/right of the chart).
+        if left_y is None and right_y is None:
+            return True
+        # Plateau-shape check: left side at *or below* (greater-or-
+        # equal y in image coords), right side at *or above* (smaller-
+        # or-equal y). Allow ``diff_tol`` slack for stroke-rounding.
+        if left_y is not None and left_y < py - diff_tol:
+            return False
+        if right_y is not None and right_y > py + diff_tol:
+            return False
+        return True
+
+    valid = [r for r in candidates if is_plausible_plateau(r)]
+    if not valid:
+        valid = candidates
+
+    valid.sort(key=lambda r: r[1] - r[0], reverse=True)
+    return valid[0]
 
 
 def _calibrate_y(chart: ChartLocation,
