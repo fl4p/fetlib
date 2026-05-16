@@ -11,10 +11,6 @@ from dslib.pdf.expr import any_unit, DIMENSIONS, Dimension
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 
 
-def first(a):
-    return next((x for x in a if x and not math.isnan(x)), math.nan)
-
-
 def get_value_with_unit(s):
     if not isinstance(s, str) or not s:
         return s, None
@@ -59,7 +55,7 @@ class Field():
             mul = 1000
             unit = 'nC'
 
-        if unit in {'nF', 'μF'}:
+        if unit in {'nF'}:
             assert mul == 1
             mul = 1e3
             unit = 'pF'
@@ -205,14 +201,16 @@ class Field():
             # TODO min, max updates?
 
         # if f has more values, use all of them
-        is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
+        # todo this is questionable
+        #is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
+        is_sup = False
 
         nz = self.symbol in self.not_zero_symbols
         lower = 0 if nz else -float('inf')
 
         for s in Field.StatKeys:
             if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))
-                          and getattr(self, s) >= lower) or (nz and getattr(self, s) == 0):
+                          and getattr(f, s) >= lower) or (nz and getattr(self, s) == 0):
                 setattr(self, s, getattr(f, s))
                 self._sources[s] = f._sources[s]
             if not math.isnan(getattr(self, s)):
