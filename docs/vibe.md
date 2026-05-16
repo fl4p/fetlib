@@ -169,6 +169,7 @@ Most mosfet datasheets don't specify the Miller-Plateu Voltage Vpl in the tabula
 It can be determined by finding the miller plateau of the Gate Charge curve.
 The gate charge curve usually starts at 0 and increases linearely, until it reaches the miller plateu (y=Vpl).
 After the mostly flat part (sometimes with slight inclination) it starts to linearely increase again.
+Vpl valid range is (-1, 10).
 
 Write a program that finds the Gate Charge Curve chart in a PDF and determines Vpl.
 Notice the different styling of the charts across manufactureres. The curves look all quite similar.
@@ -179,47 +180,174 @@ Find charts by their caption with this regular expression (case insensitive):
 r"(([0-9]*\s*typ(\.|ycal)\s+)?gate[\s-]+charge\s+(curve|vs|waveforms?).*|(Fig.?(ure)?)\s*[0-9]+\s*[.:]\s*Gate[\s-]
 +Charge.*)"
 
-In case you find captions in the PDF texts that you might think should match  (curve, diagram, ...) in the pdf text tha
+Are there any captions you have seen in the text that you might think should match? e.g. using synonyms for "curve" or
+"diagram"? then optimize the regex to match these synonyms
 
-* are there any captions you have seen in the text that you might think should match? e.g. using synomys for "curve" or
-  "diagram"? then optimize the regex to match these synonym
 
-Now use the refresh script to find missing Vpl using the chart-extractor.
-If a value
-
-* Vpl valid range is (-1, 10)
-*
-
-use this to get an
 
 * the chart in BSB056N10NN3GXUMA2.pdf is rastered with a caption "14 Typ. gate charge". at caption based chart detection
   with regex for matching similar captions
 * in BSZ084N08NS5ATMA1.pdf there are actually 3 curves hardly distinguishable from each other. The curves have small
   labels next to them. Ignore the labels as they might interfere with finding the plateau.
+* take a look at st/STB55NF06LT4.pdf . here the chart is inside a wireframe box, and the caption is above the
+  box
+* the chart in NVTFWS010N10MCLTAG.pdf has Dimension lines with arrow termination, labeled Qgs and Qgd. Ignore these. 
 
-the regular expression (python):
-r'(?P<conds_mTm>=name)?^([^\n]*\n){0,2}[-    _.,;:#*"\'()\[\]a-z0-9]{,30}(capacitance|C[ _]?[a-z]{1,3})
-*[-    _.,;:#*"\'()\[\]a-z0-9]* *\n((?P<conds_ml>(?P<cond_sym>([a-z]{1,2}([/a-z0-9]*|[_ ][a-z]{1,3})(\([a-z0-9]
-{1,6}\))?)) *[=≈] *(((?P<cond_val>(-?[0-9]+(\.[0-9]+)?)) *(?P<cond_unit>((([uμnm]s|㎱|㎲|㎳)|[uμnp]F|[m]?Vv?|[uμnp]
-?C|[muμn]?A|[mkM]?(Ω|Ω|O|Q|Ohm|W)|[k]?(S)|(°C|℃)/W|(°[CF]|K|℃|℉)|[Mk]?Hz)[/a-z0-9]{0,4}){0,2})?|([a-z]
-{1,2}([/a-z0-9]*|[_ ][a-z]{1,3})(\([a-z0-9]{1,6}\))?)) *[-+*/]? *)+( +to +(?P<cond_val_to>(-?[0-9]+(\.[0-9]+)?)) *(?P<
-cond_unit2>([uμnm]s|㎱|㎲|㎳)|[uμnp]F|[m]?Vv?|[uμnp]?C|[muμn]?A|[mkM]?(Ω|Ω|O|Q|Ohm|W)|[k]?(S)|(°C|℃)/W|(°[CF]|K|℃|℉)|[Mk]
-?Hz)?)? *[;,\n ]*)+[-    _.,;:#*"\'()\[\]a-z0-9]*\n)?(?P<min>[-~=._]+|nan|[0-9]+(\.[0-9]+)?)\n(?P<typ>[0-9]+(\.[0-9]+)?)
-\n(?P<max>[-~=._]+|nan|[0-9]+(\.[0-9]+)?)\n(\n|$)' in 'Ciss\nCoss\nCrss\nVGS=0V ,
-f=1MHz\nCiss=Cgs+Cgd\nCoss=Cds+Cgd\nCrss=Cgd\nVDS=520V\nVDS=325V\nVDS=130V\nFigure 10 Typical Theshold Voltage vs
-Junction Temperature\nFigure 11 Typical Breakdown Voltage vs Junction Temperature'
-causes catastrophic backtracking on this input:
-input="""Ciss
-Coss
-Crss
-VGS=0V , f=1MHz
-Ciss=Cgs+Cgd
-Coss=Cds+Cgd
-Crss=Cgd
-VDS=520V
-VDS=325V
-VDS=130V
-Figure 10 Typical Theshold Voltage vs Junction Temperature
-Figure 11 Typical Breakdown Voltage vs Junction Temperature"""
+* AOMR62818 has a genuinely smooth knee — no horizontal plateau exists in
+   the chart. The detector correctly returns None rather than picking a wrong row. The previous wrong 7.14 V is
+  now an honest miss; recovering the implied 3.0 V would need an inflection-point algorithm (look at d²V/dQ²),
+  which is a different approach altogether.
 
-can you fix the regex?
+
+```
+{
+  "datasheets/agmsemi/AGM15T13D.pdf": {
+    "ref": 4.2,
+    "comment": "line has a bright blue"
+  },
+  "datasheets/ao/AOMR62818.pdf": {
+    "ref": 3,
+    "comment": "the plateau starts smoothly"
+  },
+  "datasheets/ao/AOT286L.pdf": {
+    "ref": 4.2,
+    "comment": "the line has noise"
+  },
+  "datasheets/infineon/IPW65R019C7.pdf": {
+    "ref": 5.4
+  },
+  "datasheets/infineon/IRF540NL.pdf": {
+    "ref": 4.6,
+    "comment": "there is an overlapping text box \"FOR TEST...\""
+  },
+  "datasheets/nxp/PSMN1R2-55SLH.pdf": {
+    "ref": 2.4
+  },
+  "datasheets/onsemi/NVMFS5C468NLT1G.pdf": {
+    "ref": 3.5,
+    "comment": "dimension lines with Qgs,Qgd labels"
+  },
+  "datasheets/onsemi/NVMYS029N08LHTWG.pdf": {
+    "ref": 3,
+    "comment": "dimension lines with Qgs,Qgd labels"
+  },
+  "datasheets/onsemi/NVTFWS010N10MCLTAG.pdf": {
+    "ref": 2.6,
+    "comment": "dimension lines with Qgs,Qgd labels"
+  },
+  "datasheets/agmsemi/AGM025N13LL.pdf": {
+    "ref": 4.3,
+    "comment": "rasterized"
+  },
+  "datasheets/agmsemi/AGM150P10AP.pdf": {
+    "ref": 3.1,
+    "comment": "rasterized"
+  },
+  "datasheets/hxy/R6509KND3TL1-HXY.pdf": {
+    "ref": 8,
+    "comment": "rasterized"
+  },
+  "datasheets/hxy/SIHD6N65ET4-GE3-HXY.pdf": {
+    "ref": 2.9,
+    "comment": "rasterized"
+  },
+  "datasheets/infineon/IAUC28N08S5L230ATMA1.pdf": {
+    "ref": 3.1,
+    "comment": "rasterized"
+  },
+  "datasheets/infineon/F3L3MR12W3M1HH11BPSA1.pdf": {
+    "ref": 7.25
+  },
+  "datasheets/infineon/IPW60R041C6.pdf": {
+    "ref": 4.1,
+    "comment": "rasterized"
+  },
+  "datasheets/nce/NCE01P05S.pdf": {
+    "ref": 2.7,
+    "comment": "rasterized"
+  },
+  "datasheets/siliup/SP015N05GHTQ.pdf": {
+    "ref": 5.1,
+    "comment": "rasterized"
+  },
+  "datasheets/st/STL70N4LLF5.pdf": {
+    "ref": 3,
+    "comment": "rasterized"
+  },
+  "datasheets/toshiba/TK057V60Z1.pdf": {
+    "ref": 5.2,
+    "comment": "the chart caption is \"Dynamic Input/Output Characteristics\". the chart contains a Vds-curve too. It starts at 400V and has a sharp drop to zero right before Qg reaches the miller plateau. Ignore this curve. Also ignore the left axis, as it is labeled Vds. The right axis is the one for Vgs, which is what we are looking for"
+  },
+  "datasheets/htcsemi/HT100NF80ASZ.pdf": {
+    "comment": "missing chart"
+  },
+  "datasheets/toshiba/TPN1200APL.pdf": {
+    "comment": "missing chart"
+  }
+}
+{
+  "datasheets/ao/AOB284L.pdf": {
+    "ref": 3.95,
+    "comment": "noisy line"
+  },
+  "datasheets/ao/AOTL66518Q.pdf": {
+    "ref": 5.5,
+    "comment": "smooth knee"
+  },
+  "datasheets/infineon/IQDH35N03LM5SC.pdf": {
+    "ref": 2.2,
+    "comment": "multiple curves"
+  },
+  "datasheets/nxp/PSMN1R0-30YLD.pdf": {
+    "ref": 2.6
+  },
+  "datasheets/goford/11N10.pdf": {
+    "ref": 4.5,
+    "comment": "rasterized"
+  },
+  "datasheets/huayi/HYG016N04LS1B.pdf": {
+    "ref": 3.6,
+    "comment": "rasterized"
+  },
+  "datasheets/hxy/MCU655N65FH-HXY.pdf": {
+    "ref": 8.5,
+    "comment": "long plateau with a slop"
+  },
+  "datasheets/hxy/SIHH14N65EF-T1-GE3-HXY.pdf": {
+    "ref": 7.5,
+    "comment": "long plateau with a slop"
+  },
+  "datasheets/hxy/SIS444DN-T1-GE3-HXY.pdf": {
+    "ref": 3
+  },
+  "datasheets/nce/NCE82H140LL.pdf": {
+    "ref": 4.5
+  },
+  "datasheets/nce/NCEP070N12.pdf": {
+    "ref": 5
+  },
+  "datasheets/nce/NCEP1545AK.pdf": {
+    "ref": 0
+  },
+  "datasheets/st/STB140NF75.pdf": {
+    "ref": 5.9
+  },
+  "datasheets/crmicro/CRTT020N04N.pdf": {
+    "ref": 5
+  },
+  "datasheets/agmsemi/AGM1075MNA.pdf": {
+    "ref": 3
+  },
+  "datasheets/infineon/IMT65R020M2H.pdf": {
+    "ref": 9,
+    "comment": "plateau has slope, quite steep and a \"400V\" label (ignore)"
+  },
+  "datasheets/siliup/SP85N01BGHTO.pdf": {
+    "ref": 0.9
+  }
+}
+```
+
+
+# optimizing
+*

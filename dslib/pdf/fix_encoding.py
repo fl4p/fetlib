@@ -694,6 +694,152 @@ def _build_to_unicode_cmap(mapping: Dict[int, str], two_byte: bool) -> bytes:
     return '\n'.join(lines).encode('ascii')
 
 
+# Capture `/Fname size Tf` plus the very next `Tm <hex> Tj` triple. Used to
+# learn, per CID, the actual on-page horizontal advance to the next character.
+_TM_TJ_CID_RE = re.compile(
+    rb'/(\w+)\s+(\S+)\s+Tf'
+    rb'|(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+'
+    rb'(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+Tm'
+    rb'\s*<([0-9A-Fa-f\s]+)>\s*Tj',
+    re.DOTALL,
+)
+
+
+def _actual_advances(doc: pymupdf.Document, font_xrefs: Set[int]
+                     ) -> Dict[int, Dict[int, float]]:
+    """For each font xref in `font_xrefs`, return {cid → max-observed advance
+    in glyph units (1/1000 em)} based on `Tm <hex> Tj` triples in any page's
+    content stream. Only consecutive triples on the same baseline with the
+    same font size contribute. CIDs not seen as the first char of a triple
+    don't appear in the output."""
+    advances: Dict[int, Dict[int, List[float]]] = {}
+
+    for pno in range(len(doc)):
+        # Build name → (xref, is_type0) for this page's resource scope.
+        names: Dict[str, Tuple[int, bool]] = {}
+        for xref, _e, typ, _b, fname, _en in doc.get_page_fonts(pno):
+            if xref in font_xrefs:
+                names[fname] = (xref, typ == 'Type0')
+        if not names:
+            continue
+
+        contents = doc[pno].read_contents()
+        cur_xref: Optional[int] = None
+        cur_size = 1.0
+        is_t0 = False
+        records: List[Tuple[int, float, float, float, int]] = []
+        # records: (font_xref, font_size, tm_x, tm_y, first_cid)
+
+        for m in _TM_TJ_CID_RE.finditer(contents):
+            if m.group(1):
+                name = m.group(1).decode('ascii', errors='ignore')
+                if name in names:
+                    cur_xref, is_t0 = names[name]
+                    try:
+                        cur_size = float(m.group(2))
+                    except (ValueError, TypeError):
+                        cur_size = 1.0
+                else:
+                    cur_xref = None
+                continue
+            if cur_xref is None:
+                continue
+            try:
+                tm_x = float(m.group(7))
+                tm_y = float(m.group(8))
+            except ValueError:
+                continue
+            hex_str = bytes(c for c in m.group(9)
+                            if c not in b' \r\n\t').decode('ascii', 'ignore')
+            step = 4 if is_t0 else 2
+            if len(hex_str) < step:
+                continue
+            try:
+                cid = int(hex_str[:step], 16)
+            except ValueError:
+                continue
+            records.append((cur_xref, cur_size, tm_x, tm_y, cid))
+
+        # Sort per (font, descending y, ascending x) and pair consecutive
+        # records on the same line + same font + same size.
+        records.sort(key=lambda r: (r[0], -r[3], r[2]))
+        for i in range(len(records) - 1):
+            cur, nxt = records[i], records[i + 1]
+            if cur[0] != nxt[0] or cur[1] != nxt[1]:
+                continue
+            if abs(cur[3] - nxt[3]) > 0.5:
+                continue  # different baseline
+            dx = nxt[2] - cur[2]
+            if dx <= 0:
+                continue  # reverse positioning — ignore
+            units = dx * 1000.0 / cur[1]
+            advances.setdefault(cur[0], {}).setdefault(cur[4], []).append(units)
+
+    # Use the MEDIAN advance per CID, not max. Max picks up cross-paragraph
+    # and end-of-line jumps (20000+ glyph units), and using those as the
+    # declared width causes extractors to overlap adjacent chars and wrap
+    # mid-word. The median is the typical intra-word advance to the next
+    # character — exactly what `/Widths` is meant to declare.
+    def _median(xs: List[float]) -> float:
+        s = sorted(xs)
+        return s[len(s) // 2]
+    return {xref: {cid: _median(advs) for cid, advs in cid_advs.items()}
+            for xref, cid_advs in advances.items()}
+
+
+def _override_widths(doc: pymupdf.Document, font_xref: int,
+                     cid_to_width: Dict[int, float], is_type0: bool) -> None:
+    """Replace the font's declared widths with the measured advances.
+
+    Type0: rewrite the descendant CIDFont's `/W` array.
+    Simple: rewrite the font dict's `/Widths` array, keeping `/FirstChar` and
+    `/LastChar` intact.
+    """
+    if not cid_to_width:
+        return
+
+    if is_type0:
+        obj = doc.xref_object(font_xref)
+        m = re.search(r'/DescendantFonts\s*\[\s*(\d+)\s+0\s+R', obj)
+        if not m:
+            return
+        desc_xref = int(m.group(1))
+        items = sorted(cid_to_width.items())
+        # Sparse [cid [w]] form, one entry per CID. Simple and exact.
+        w_str = '[ ' + ' '.join(f'{cid} [{int(round(w))}]'
+                                 for cid, w in items) + ' ]'
+        desc_obj = doc.xref_object(desc_xref)
+        if re.search(r'/W\s*\[', desc_obj):
+            new_desc = re.sub(r'/W\s*\[[^\]]*\]', f'/W {w_str}', desc_obj)
+        else:
+            new_desc = desc_obj.rstrip()
+            if new_desc.endswith('>>'):
+                new_desc = new_desc[:-2].rstrip() + f' /W {w_str}\n>>'
+            else:
+                return
+        doc.update_object(desc_xref, new_desc)
+        return
+
+    # Simple font: /Widths array indexed from /FirstChar.
+    obj = doc.xref_object(font_xref)
+    m_fc = re.search(r'/FirstChar\s+(\d+)', obj)
+    m_w = re.search(r'/Widths\s*\[([^\]]*)\]', obj)
+    if not m_fc or not m_w:
+        return
+    first = int(m_fc.group(1))
+    try:
+        widths = [int(round(float(n))) for n in m_w.group(1).split()]
+    except ValueError:
+        return
+    for cid, w in cid_to_width.items():
+        idx = cid - first
+        if 0 <= idx < len(widths):
+            widths[idx] = int(round(w))
+    new_w_str = '[ ' + ' '.join(str(w) for w in widths) + ' ]'
+    new_obj = re.sub(r'/Widths\s*\[[^\]]*\]', f'/Widths {new_w_str}', obj)
+    doc.update_object(font_xref, new_obj)
+
+
 def _set_font_to_unicode(doc: pymupdf.Document, font_xref: int, cmap_bytes: bytes) -> None:
     """Attach `cmap_bytes` as the font's /ToUnicode stream, replacing any prior one."""
     new_xref = doc.get_new_xref()
@@ -1109,9 +1255,16 @@ def fix_pdf_font_encoding(
         fixed_any = _rewrite_pdf_streams(doc, suspect_info)
     else:
         fixed_any = False
+        # Measure each CID's actual on-page advance. Overriding the font's
+        # widths to match these prevents PDF viewers (Preview / Adobe /
+        # Chrome) from inserting a space at every per-char Tm gap when you
+        # copy text out.
+        widths = _actual_advances(doc, set(mappings))
         for xref, (fi, m) in mappings.items():
             _set_font_to_unicode(
                 doc, xref, _build_to_unicode_cmap(m, two_byte=fi.is_type0))
+            if xref in widths:
+                _override_widths(doc, xref, widths[xref], fi.is_type0)
             fixed_any = True
 
     if not fixed_any:
