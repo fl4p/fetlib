@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import Sidebar from '$lib/Sidebar.svelte';
 	import Table from '$lib/Table.svelte';
+	import PartModal from '$lib/PartModal.svelte';
 	import { fetchMeta, fetchParts, fetchSimilar } from '$lib/api';
 	import { SLIDER_KEYS, applyFilters, initialFilters, sliderBounds, sortParts } from '$lib/filters';
 	import { type ColorMap, cycle, loadColors, saveColors } from '$lib/colors';
@@ -36,6 +37,7 @@
 	let columnsMenuOpen = $state(false);
 	let columnsBtnEl: HTMLButtonElement | undefined = $state();
 	let columnsMenuEl: HTMLDivElement | undefined = $state();
+	let infoPart = $state<Part | null>(null);
 
 	function loadStoredRanges(): Record<string, [number, number]> | null {
 		try {
@@ -209,6 +211,14 @@
 
 	function onFindSimilar(p: Part) {
 		return runSimilar(p.mfr, p.mpn);
+	}
+
+	function onInfo(p: Part) {
+		infoPart = p;
+	}
+
+	function closeInfo() {
+		infoPart = null;
 	}
 
 	function onColorClick(p: Part) {
@@ -455,6 +465,7 @@
 					pending={tablePending}
 					showScore={!!similarMode}
 					onfindSimilar={onFindSimilar}
+					oninfo={onInfo}
 					{colors}
 					oncolorClick={onColorClick}
 					visibleColumns={columnVisibility}
@@ -463,6 +474,10 @@
 		{/if}
 	</main>
 </div>
+
+{#if infoPart}
+	<PartModal part={infoPart} onclose={closeInfo} />
+{/if}
 
 <style>
 	:global(:root) {

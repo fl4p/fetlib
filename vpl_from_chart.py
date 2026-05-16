@@ -87,6 +87,20 @@ CAPTION_PREFIX_RE = re.compile(
     r')'
 )
 
+# Chart titles whose axes look like a gate-charge chart but whose CONTENT is
+# something else: the Q_GS/Q_GD/Q_SW definition schematic, the body-diode
+# V_SD curve, or the switching-time test schematic.  Words may be separated
+# by spaces, hyphens, underscores, NBSP, or stray control chars (PDF tooling
+# emits all of these).
+_TITLE_SEP = r'[\s\-_\x00-\x1f\xa0]+'
+CHART_TITLE_REJECT_RE = re.compile(
+    r'(?i)('
+    r'gate' + _TITLE_SEP + r'charge' + _TITLE_SEP + r'waveform'
+    r'|source' + _TITLE_SEP + r'drain' + _TITLE_SEP + r'diode'
+    r'|switching' + _TITLE_SEP + r'time' + _TITLE_SEP + r'test'
+    r')'
+)
+
 
 @dataclass
 class AxisAP:
@@ -302,6 +316,15 @@ def find_gate_charge_charts(doc) -> List[ChartFrame]:
                 x_ok = _has_any(x_label.lower() + ' ' + title.lower(), X_AXIS_KEYWORDS)
                 y_ok = _has_any(y_label.lower() + ' ' + title.lower(), Y_AXIS_KEYWORDS)
                 if not (x_ok and y_ok):
+                    continue
+                # Reject charts whose title matches a known non-plateau diagram
+                # (gate-charge waveform definitions, body-diode V_SD curve, or
+                # the switching-time test schematic) — they pass the keyword
+                # check but don't carry the parametric V_GS(Q_g) curve.
+                # Check only the TITLE band (text above the chart); sibling
+                # diagrams below sometimes share keywords with the reject list
+                # and would otherwise cause false rejections.
+                if CHART_TITLE_REJECT_RE.search(title.lower()):
                     continue
                 results.append(ChartFrame(
                     x_axis=h, y_axis=v,

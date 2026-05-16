@@ -11,6 +11,7 @@
 		pending?: boolean;
 		showScore?: boolean;
 		onfindSimilar?: (p: Part) => void;
+		oninfo?: (p: Part) => void;
 		colors?: ColorMap;
 		oncolorClick?: (p: Part) => void;
 		visibleColumns?: ColumnVisibility;
@@ -24,6 +25,7 @@
 		pending = false,
 		showScore = false,
 		onfindSimilar,
+		oninfo,
 		colors = {},
 		oncolorClick,
 		visibleColumns = {}
@@ -76,6 +78,15 @@
 						<td class:num={col.num}>
 							{#if col.mpnLink}
 								<a href={datasheetHref(p)} target="_blank" rel="noopener">{col.fmt(p)}</a>
+								{#if oninfo}
+									<button
+										type="button"
+										class="info-btn"
+										title="More info"
+										aria-label="show part details"
+										onclick={() => oninfo?.(p)}
+									>ⓘ</button>
+								{/if}
 								{#if oncolorClick}
 									{@const idx = colors[partKey(p)] ?? 0}
 									{@const fill = TAG_COLORS[idx]}
@@ -219,6 +230,24 @@
 	.sim-btn:hover {
 		border-color: var(--border-thin);
 	}
+	.info-btn {
+		margin-left: 6px;
+		padding: 1px 4px;
+		font-family: var(--serif);
+		font-size: 12px;
+		line-height: 1;
+		color: var(--text-muted);
+		background: transparent;
+		border: 1px solid transparent;
+		border-radius: 0;
+		cursor: pointer;
+	}
+	tbody tr:hover .info-btn {
+		color: var(--text);
+	}
+	.info-btn:hover {
+		border-color: var(--border-thin);
+	}
 	.tag-btn {
 		display: inline-block;
 		width: 11px;
@@ -250,6 +279,11 @@
 		.sim-btn {
 			font-size: 16px;
 			padding: 2px 8px;
+			margin-left: 8px;
+		}
+		.info-btn {
+			font-size: 15px;
+			padding: 2px 7px;
 			margin-left: 8px;
 		}
 		.tag-btn {

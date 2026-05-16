@@ -276,6 +276,16 @@ def datasheet(mfr: str, mpn: str):
     return FileResponse(path, media_type="application/pdf", filename=f"{mpn}.pdf", content_disposition_type='inline')
 
 
+@app.get("/api/qg-curve")
+def qg_curve(mfr: str, mpn: str):
+    safe_mfr = os.path.basename(mfr)
+    safe_mpn = os.path.basename(mpn)
+    path = os.path.join(REPO_ROOT, "crops", safe_mfr, safe_mpn, "qg.webp")
+    if not os.path.isfile(path):
+        raise HTTPException(status_code=404, detail="qg curve not found")
+    return FileResponse(path, media_type="image/webp")
+
+
 @app.get("/api/similar")
 def similar(mfr: str, mpn: str, limit: int = 20):
     query = app.state.part_index.get((mfr, mpn))
