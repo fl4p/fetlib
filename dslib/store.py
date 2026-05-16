@@ -134,7 +134,7 @@ class ObjectDatabase(Generic[K, T]):
 
     def add_background(self, items: Union[Dict[K, T], List[T]], overwrite=True):
         assert overwrite == True
-        items = self._items_to_dict(items)
+        #items = self._items_to_dict(items)
         self._buffer.add(items)
 
 

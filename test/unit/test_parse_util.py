@@ -32,8 +32,10 @@ def test_right_strip_nan():
 def test_validate_datasheet_text():
     from dslib.pdf.parse import validate_datasheet_text
 
+    assert validate_datasheet_text('mfr', 'HY3208B', 'HY3208P/M/B')
     assert not validate_datasheet_text('mfr', 'HY3810C', 'lorem HY3810NA2P/B ' + ('fill it' * 20))
     assert validate_datasheet_text('mfr', 'HY3810NA2B', 'lorem HY3810NA2P/B ' + ('fill it' * 20))
+
 
 
 def test_parse_field_value():

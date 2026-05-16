@@ -3,9 +3,8 @@ import os
 import pathlib
 from typing import Literal, Union
 
-
-
 from dslib.cache import disk_cache
+from dslib.pdf.fix_encoding import fix_pdf_font_encoding
 
 _log = logging.getLogger('ocrmypdf._pipeline')
 _log.setLevel(logging.ERROR)
@@ -51,7 +50,7 @@ def rasterize_pdf(in_path, out_path, dpi=400, fitz_method=False):
         target.ez_save(out_path)  # targetname = parameter
     else:
         from pdf2image import convert_from_path
-        images = convert_from_path(in_path, dpi=dpi,fmt='png') # rm dpi?
+        images = convert_from_path(in_path, dpi=dpi, fmt='png')  # rm dpi?
         assert images
         images[0].save(
             out_path, "PDF", resolution=float(dpi), save_all=True, append_images=images[1:]
@@ -78,7 +77,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
     cfg_file = (pwd + '/tesseract-stuff/tesseract.cfg')  # os.path.realpath
     assert os.path.isfile(cfg_file)
 
-    uw_file = pwd+'/tesseract-stuff/mosfet.user-words'
+    uw_file = pwd + '/tesseract-stuff/mosfet.user-words'
     assert os.path.isfile(uw_file)
 
     # TESSDATA_PREFIX
@@ -205,6 +204,8 @@ def pdf2pdf(in_path, out_path, method):
             check=True,
             stdout=subprocess.DEVNULL, ),  # TODO try decrypt
         cups=cups,
+
+        fix_font_enc=lambda: fix_pdf_font_encoding(in_path, out_path, rewrite_streams=False),
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),
         ocrmypdf_r250=lambda: ocrmypdf(in_path, out_path, rasterize=250),
