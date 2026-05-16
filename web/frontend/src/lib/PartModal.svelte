@@ -1,6 +1,9 @@
 <script lang="ts">
 	import type { Part } from './types';
 	import { COLUMNS } from './columns';
+	import { cubicOut } from 'svelte/easing';
+	import { fade } from 'svelte/transition';
+	import type { TransitionConfig } from 'svelte/transition';
 
 	interface Props {
 		part: Part;
@@ -32,6 +35,18 @@
 	function onBackdropClick(e: MouseEvent) {
 		if (e.target === e.currentTarget) onclose();
 	}
+
+	function zoom(
+		_node: Element,
+		{ duration = 500, delay = 0 }: { duration?: number; delay?: number } = {}
+	): TransitionConfig {
+		return {
+			duration,
+			delay,
+			easing: cubicOut,
+			css: (t) => `transform: scale(${t});`
+		};
+	}
 </script>
 
 <svelte:window onkeydown={handleKey} />
@@ -41,8 +56,16 @@
 	role="presentation"
 	onclick={onBackdropClick}
 	onkeydown={(e) => e.key === 'Escape' && onclose()}
+	transition:fade={{ duration: 250, easing: cubicOut }}
 >
-	<div class="modal" role="dialog" aria-modal="true" aria-labelledby="part-modal-title">
+	<div
+		class="modal"
+		role="dialog"
+		aria-modal="true"
+		aria-labelledby="part-modal-title"
+		in:zoom={{ duration: 250 }}
+		out:zoom={{ duration: 250 }}
+	>
 		<header class="modal-head">
 			<div class="title-block">
 				<span class="mfr-label">{part.mfr}</span>
