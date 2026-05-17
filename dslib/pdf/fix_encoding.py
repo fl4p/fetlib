@@ -42,9 +42,9 @@ from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import pymupdf
+from PIL import Image, ImageDraw, ImageFont
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.tables._c_m_a_p import CmapSubtable
-from PIL import Image, ImageDraw, ImageFont
 
 # fontTools emits noisy "'created' timestamp seems very low" warnings when
 # loading subset embedded fonts whose head timestamps are stripped — silence them.
@@ -81,14 +81,14 @@ _REF_FONT_CANDIDATES: List[Tuple[str, str]] = [
 # of DejaVu look too similar to plain Latin letters at this raster size and
 # cause systematic false matches if included.
 _COMMON_GLYPHS: List[str] = (
-    list("abcdefghijklmnopqrstuvwxyz")
-    + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-    + list("0123456789")
-    + list(" .,;:!?'\"()[]{}/<>=+-*&%#@$~^_|\\`")
-    + list("°±×÷")
-    + list("•≤≥≠≈∞")
-    + ['Ω', 'μ']
-    + ['™', '®', '©', '€', '℃', '℉']
+        list("abcdefghijklmnopqrstuvwxyz")
+        + list("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        + list("0123456789")
+        + list(" .,;:!?'\"()[]{}/<>=+-*&%#@$~^_|\\`")
+        + list("°±×÷")
+        + list("•≤≥≠≈∞")
+        + ['Ω', 'μ']
+        + ['™', '®', '©', '€', '℃', '℉']
 )
 
 _REF_CACHE: Optional[Dict[str, List[np.ndarray]]] = None
@@ -173,7 +173,7 @@ def _ink_bbox(img: Image.Image, threshold: int = 220) -> Optional[Tuple[int, int
 
 
 def _normalize_glyph_bitmap(img: Image.Image, baseline_y: int,
-                             size: int = _GLYPH_SIZE) -> Optional[np.ndarray]:
+                            size: int = _GLYPH_SIZE) -> Optional[np.ndarray]:
     """Normalize a rendered glyph (with known baseline pixel-y) to a
     size×size float array, preserving baseline-relative vertical placement.
     """
@@ -231,9 +231,11 @@ def _reference_glyphs() -> Dict[str, List[np.ndarray]]:
     if _REF_CACHE is not None:
         return _REF_CACHE
     reg_src, bold_src = _find_reference_fonts()
+
     def _load(src):
         return ImageFont.truetype(io.BytesIO(src) if isinstance(src, bytes) else src,
                                   _GLYPH_SIZE)
+
     fonts = [_load(reg_src), _load(bold_src)]
     # Skip duplicate when fallback returned the same source for both weights.
     if reg_src == bold_src:
@@ -559,10 +561,10 @@ def _gather_type3_resources(doc: pymupdf.Document, font_xref: int) -> Optional[_
 
 
 def _render_type3_glyph(
-    src_doc: pymupdf.Document,
-    charproc_xref: int,
-    res: _Type3Resources,
-    size: int = _GLYPH_SIZE,
+        src_doc: pymupdf.Document,
+        charproc_xref: int,
+        res: _Type3Resources,
+        size: int = _GLYPH_SIZE,
 ) -> Optional[np.ndarray]:
     """Render one Type3 glyph to a baseline-anchored normalized inked array.
 
@@ -657,6 +659,7 @@ def _cid_to_gid_lookup(font_bytes: bytes, is_type0: bool) -> Callable[[int], Opt
     def lookup(cid: int) -> Optional[int]:
         gname = cmap.get(cid)
         return name_to_gid.get(gname) if gname else None
+
     return lookup
 
 
@@ -783,6 +786,7 @@ def _actual_advances(doc: pymupdf.Document, font_xrefs: Set[int]
     def _median(xs: List[float]) -> float:
         s = sorted(xs)
         return s[len(s) // 2]
+
     return {xref: {cid: _median(advs) for cid, advs in cid_advs.items()}
             for xref, cid_advs in advances.items()}
 
@@ -807,7 +811,7 @@ def _override_widths(doc: pymupdf.Document, font_xref: int,
         items = sorted(cid_to_width.items())
         # Sparse [cid [w]] form, one entry per CID. Simple and exact.
         w_str = '[ ' + ' '.join(f'{cid} [{int(round(w))}]'
-                                 for cid, w in items) + ' ]'
+                                for cid, w in items) + ' ]'
         desc_obj = doc.xref_object(desc_xref)
         if re.search(r'/W\s*\[', desc_obj):
             new_desc = re.sub(r'/W\s*\[[^\]]*\]', f'/W {w_str}', desc_obj)
@@ -852,317 +856,6 @@ def _set_font_to_unicode(doc: pymupdf.Document, font_xref: int, cmap_bytes: byte
     doc.update_object(font_xref, obj)
 
 
-# ----- content-stream rewrite (replace suspect font with Helvetica) -----
-
-# WinAnsi reverse map: unicode codepoint → WinAnsi byte, for chars outside
-# ASCII but inside WinAnsiEncoding's coverage.
-_WINANSI_MAP: Dict[int, int] = {
-    0x20AC: 0x80, 0x201A: 0x82, 0x0192: 0x83, 0x201E: 0x84, 0x2026: 0x85,
-    0x2020: 0x86, 0x2021: 0x87, 0x02C6: 0x88, 0x2030: 0x89, 0x0160: 0x8A,
-    0x2039: 0x8B, 0x0152: 0x8C, 0x017D: 0x8E, 0x2018: 0x91, 0x2019: 0x92,
-    0x201C: 0x93, 0x201D: 0x94, 0x2022: 0x95, 0x2013: 0x96, 0x2014: 0x97,
-    0x02DC: 0x98, 0x2122: 0x99, 0x0161: 0x9A, 0x203A: 0x9B, 0x0153: 0x9C,
-    0x017E: 0x9E, 0x0178: 0x9F,
-}
-
-# Plain-text fallback for chars not representable in WinAnsi at all.
-_WINANSI_FALLBACK: Dict[str, str] = {
-    'Ω': 'Ohm', '≤': '<=', '≥': '>=', '≠': '!=', '≈': '~',
-    '∞': 'inf', '℃': 'degC', '℉': 'degF',
-}
-
-
-def _encode_winansi(text: str) -> bytes:
-    out = bytearray()
-    for c in text:
-        cp = ord(c)
-        if cp < 0x80 or 0xA0 <= cp <= 0xFF:
-            out.append(cp)
-        elif cp in _WINANSI_MAP:
-            out.append(_WINANSI_MAP[cp])
-        elif c in _WINANSI_FALLBACK:
-            out.extend(_WINANSI_FALLBACK[c].encode('ascii'))
-        else:
-            out.append(ord('?'))
-    return bytes(out)
-
-
-def _escape_pdf_literal(data: bytes) -> bytes:
-    out = bytearray()
-    for b in data:
-        if b in (0x28, 0x29, 0x5C):  # ( ) backslash
-            out.append(0x5C)
-            out.append(b)
-        elif b < 0x20 or b == 0x7F:
-            out.extend(f'\\{b:03o}'.encode('ascii'))
-        else:
-            out.append(b)
-    return bytes(out)
-
-
-# Tokens we need to recognize in a content stream. The order matters: we want
-# `Tf` to match before generic operators, hex-string + Tj before bare hex, etc.
-# Groups: (Tf-name, Tf-size, hex-string Tj, literal-string Tj, array-string TJ).
-_REWRITE_RE = re.compile(
-    rb'/(\w+)\s+(\S+)\s+Tf'                  # /Name size Tf
-    rb'|<([0-9A-Fa-f\s]*)>\s*Tj'              # <hex> Tj
-    rb'|\(((?:\\.|[^\\)])*)\)\s*Tj'           # (literal) Tj
-    rb'|\[(.*?)\]\s*TJ',                      # [array] TJ
-    re.DOTALL,
-)
-
-# Inside a [...] TJ array we capture both strings (`<hex>` or `(literal)`) and
-# numeric kerning offsets. A large negative offset (positive forward space)
-# encodes a real visible gap — e.g. between table columns — and must turn
-# into an actual space in the decoded text or the columns merge.
-_TJ_ARRAY_TOKEN_RE = re.compile(
-    rb'<([0-9A-Fa-f\s]*)>'
-    rb'|\(((?:\\.|[^\\)])*)\)'
-    rb'|(-?\d+(?:\.\d+)?)',
-    re.DOTALL,
-)
-
-# Threshold (in 1/1000 em) above which a TJ kerning offset is treated as a
-# space-worthy gap rather than just letter-spacing/kerning. ~half an em.
-_TJ_SPACE_THRESHOLD = 200.0
-
-
-def _decode_hex_cids(hex_bytes: bytes, two_byte: bool) -> List[int]:
-    clean = bytes(c for c in hex_bytes if c not in b' \r\n\t').decode('ascii', 'ignore')
-    step = 4 if two_byte else 2
-    return [int(clean[i:i + step], 16)
-            for i in range(0, len(clean) - step + 1, step)]
-
-
-def _decode_literal_cids(lit: bytes) -> List[int]:
-    out: List[int] = []
-    i = 0
-    while i < len(lit):
-        b = lit[i]
-        if b == 0x5C and i + 1 < len(lit):  # backslash escape
-            nxt = lit[i + 1]
-            if nxt in b'nrtbf()\\':
-                out.append({b'n': 10, b'r': 13, b't': 9, b'b': 8, b'f': 12,
-                            b'(': 40, b')': 41, b'\\': 92}[bytes([nxt])])
-                i += 2
-                continue
-            if 0x30 <= nxt <= 0x37:
-                j = i + 1
-                while j < len(lit) and j < i + 4 and 0x30 <= lit[j] <= 0x37:
-                    j += 1
-                out.append(int(lit[i + 1:j], 8) & 0xFF)
-                i = j
-                continue
-            i += 2
-            continue
-        out.append(b)
-        i += 1
-    return out
-
-
-def _cids_to_text(cids: List[int], mapping: Dict[int, str]) -> str:
-    return ''.join(mapping.get(c, ' ') for c in cids)
-
-
-def _emit_text_show(text: str) -> bytes:
-    """Re-emit decoded text as a PDF literal-string `Tj` operation."""
-    return b'(' + _escape_pdf_literal(_encode_winansi(text)) + b') Tj'
-
-
-_TJ_LIT_RE = re.compile(rb'\(((?:\\.|[^\\)])*)\)\s*Tj')
-_TD_RE = re.compile(rb'(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+T[Dd]\b')
-_BASELINE_BREAK_RE = re.compile(rb'\b(BT|ET|T\*|Tm)\b')
-
-
-def _gap_breaks_baseline(gap: bytes) -> bool:
-    """True if `gap` (the bytes between two consecutive `(text) Tj` operations)
-    contains an operator that moves the text baseline. Conservative: any `Tm`
-    or `BT`/`ET`/`T*` breaks the run; `Td`/`TD` breaks only if its dy is
-    non-zero. State operators (Tc, Tw, Tz, Tr, Ts, TL, Tf, q, Q, …) are fine."""
-    if _BASELINE_BREAK_RE.search(gap):
-        return True
-    for m in _TD_RE.finditer(gap):
-        try:
-            if abs(float(m.group(2))) > 1e-6:
-                return True
-        except ValueError:
-            return True
-    return False
-
-
-def _collapse_text_runs(contents: bytes) -> bytes:
-    """Merge consecutive `(literal) Tj` shows whose intervening operators don't
-    move the text baseline. Drops the intermediate positioning operators —
-    visual layout shifts, but the merged text extracts as one string per run."""
-    matches = list(_TJ_LIT_RE.finditer(contents))
-    if not matches:
-        return contents
-
-    out = bytearray()
-    last_end = 0
-    i = 0
-    while i < len(matches):
-        out.extend(contents[last_end:matches[i].start()])
-
-        parts = [matches[i].group(1)]
-        run_end = matches[i].end()
-        j = i + 1
-        while j < len(matches):
-            if _gap_breaks_baseline(contents[run_end:matches[j].start()]):
-                break
-            parts.append(matches[j].group(1))
-            run_end = matches[j].end()
-            j += 1
-
-        out.extend(b'(' + b''.join(parts) + b') Tj')
-        last_end = run_end
-        i = j
-
-    out.extend(contents[last_end:])
-    return bytes(out)
-
-
-def _rewrite_content_stream(
-    contents: bytes,
-    suspect_by_name: Dict[str, Dict],
-    helv_name: str,
-) -> bytes:
-    """Walk the stream. Replace each suspect-font `Tf` with a Helvetica one,
-    and rewrite each subsequent text-show operator (`<hex> Tj`, `(literal) Tj`,
-    `[…] TJ`) to a single `(decoded) Tj` carrying the visually-matched unicode.
-
-    Positioning operators (`Tm`, `TD`, `Td`, …) are passed through untouched.
-    Visual layout shifts (Helvetica metrics differ) but text extraction is
-    perfect: copy-paste yields the right characters."""
-    out = bytearray()
-    pos = 0
-    active: Optional[Dict] = None  # the {mapping, is_type0} dict of the active suspect font
-    for m in _REWRITE_RE.finditer(contents):
-        # Copy everything between our last emit and this match unchanged.
-        out.extend(contents[pos:m.start()])
-        pos = m.end()
-
-        tf_name, tf_size, hex_s, lit_s, arr_s = m.groups()
-
-        if tf_name is not None:
-            name = tf_name.decode('ascii', 'ignore')
-            size = tf_size.decode('ascii', 'ignore')
-            if name in suspect_by_name:
-                active = suspect_by_name[name]
-                out.extend(f'/{helv_name} {size} Tf'.encode('ascii'))
-            else:
-                active = None
-                out.extend(m.group(0))
-            continue
-
-        if active is None:
-            out.extend(m.group(0))
-            continue
-
-        is_t0 = active['is_type0']
-        mapping = active['mapping']
-        cids: List[int] = []
-
-        if hex_s is not None:
-            cids = _decode_hex_cids(hex_s, is_t0)
-        elif lit_s is not None:
-            # Literal strings in a simple font are 1-byte codes; in a Type0
-            # font they're (rare here) 2-byte big-endian sequences.
-            raw = _decode_literal_cids(lit_s)
-            if is_t0:
-                cids = [(raw[i] << 8) | raw[i + 1]
-                        for i in range(0, len(raw) - 1, 2)]
-            else:
-                cids = raw
-        elif arr_s is not None:
-            # Decode strings into text fragments and watch the numeric kerning
-            # offsets between them. A large negative offset (PDF convention:
-            # negative = forward space, positive = leftward kern) indicates a
-            # real gap that has to become a space in extracted text.
-            parts: List[str] = []
-            for am in _TJ_ARRAY_TOKEN_RE.finditer(arr_s):
-                h, l, num = am.groups()
-                if h is not None:
-                    parts.append(_cids_to_text(_decode_hex_cids(h, is_t0), mapping))
-                elif l is not None:
-                    raw = _decode_literal_cids(l)
-                    if is_t0:
-                        parts.append(_cids_to_text(
-                            [(raw[i] << 8) | raw[i + 1]
-                             for i in range(0, len(raw) - 1, 2)], mapping))
-                    else:
-                        parts.append(_cids_to_text(raw, mapping))
-                elif num is not None:
-                    try:
-                        if -float(num) >= _TJ_SPACE_THRESHOLD:
-                            parts.append(' ')
-                    except ValueError:
-                        pass
-            out.extend(_emit_text_show(''.join(parts)))
-            continue
-
-        out.extend(_emit_text_show(_cids_to_text(cids, mapping)))
-
-    out.extend(contents[pos:])
-    return bytes(out)
-
-
-def _rewrite_pdf_streams(
-    doc: pymupdf.Document,
-    suspect_xref_info: Dict[int, Dict],
-) -> bool:
-    """For every page, swap suspect-font text for Helvetica + decoded unicode.
-
-    Returns True if at least one page was modified.
-    """
-    changed = False
-    for pno in range(len(doc)):
-        page = doc[pno]
-        page_suspects: Dict[str, Dict] = {}
-        for xref, _ext, _typ, _bf, fname, _enc in doc.get_page_fonts(pno):
-            if xref in suspect_xref_info:
-                page_suspects[fname] = suspect_xref_info[xref]
-        if not page_suspects:
-            continue
-
-        helv_xref = page.insert_font(fontname='helv')
-        helv_name = None
-        for xref, _e, _t, _b, name, _en in doc.get_page_fonts(pno):
-            if xref == helv_xref:
-                helv_name = name
-                break
-        if helv_name is None:
-            continue
-
-        contents = page.read_contents()
-        new_contents = _rewrite_content_stream(contents, page_suspects, helv_name)
-        new_contents = _collapse_text_runs(new_contents)
-        if new_contents == contents:
-            continue
-
-        # Collapse the page's /Contents (which may be an array of streams)
-        # into a single new stream. Pymupdf's update_stream replaces an
-        # existing stream xref; for an array we create a fresh one and
-        # repoint the page object.
-        xrefs = page.get_contents()
-        if len(xrefs) == 1:
-            doc.update_stream(xrefs[0], new_contents)
-        else:
-            new_xref = doc.get_new_xref()
-            doc.update_object(new_xref, '<<>>')
-            doc.update_stream(new_xref, new_contents, new=True)
-            page_obj = doc.xref_object(page.xref)
-            if '/Contents' in page_obj:
-                page_obj = re.sub(
-                    r'/Contents\s+\d+\s+0\s+R',
-                    f'/Contents {new_xref} 0 R', page_obj)
-                page_obj = re.sub(
-                    r'/Contents\s*\[[^\]]*\]',
-                    f'/Contents {new_xref} 0 R', page_obj)
-                doc.update_object(page.xref, page_obj)
-        changed = True
-    return changed
-
 
 # ----- public API -------------------------------------------------------
 
@@ -1178,10 +871,10 @@ def has_custom_font_encoding(pdf_path: str) -> bool:
 
 
 def _build_font_mapping(
-    doc: pymupdf.Document,
-    fi: _FontInfo,
-    ref_items: List[Tuple[str, List[np.ndarray]]],
-    min_similarity: float,
+        doc: pymupdf.Document,
+        fi: _FontInfo,
+        ref_items: List[Tuple[str, List[np.ndarray]]],
+        min_similarity: float,
 ) -> Optional[Dict[int, str]]:
     """For a single suspect font, render each used CID and pick the best
     matching reference char. Returns {cid: unicode_str} or None on failure.
@@ -1191,6 +884,7 @@ def _build_font_mapping(
         res = _gather_type3_resources(doc, fi.xref)
         if res is None:
             return None
+
         def render(cid: int) -> Optional[np.ndarray]:
             xr = res.code_to_charproc_xref.get(cid)
             return _render_type3_glyph(doc, xr, res) if xr else None
@@ -1205,6 +899,7 @@ def _build_font_mapping(
         if pil_font is None:
             return None
         cid_to_gid = _cid_to_gid_lookup(font_bytes, fi.is_type0)
+
         def render(cid: int) -> Optional[np.ndarray]:
             gid = cid_to_gid(cid)
             if gid is None or gid == 0:
@@ -1229,25 +924,17 @@ def _build_font_mapping(
 
 
 def fix_pdf_font_encoding(
-    pdf_path: str,
-    out_path: Optional[str] = None,
-    min_similarity: float = 0.30,
-    rewrite_streams: bool = False,
+        pdf_path: str,
+        out_path: Optional[str] = None,
+        min_similarity: float = 0.30,
+        raise_if_no_bad_fonts=False,
 ) -> str:
     """Detect custom font encodings in `pdf_path` and repair them.
 
-    Two strategies:
-
-    - Default (`rewrite_streams=False`): inject a fresh `/ToUnicode` CMap for
+    - Inject a fresh `/ToUnicode` CMap for
       each suspect font. The page renders pixel-identically; only text
       extraction tools see different unicode. Punctuation rendering is
       preserved.
-    - `rewrite_streams=True`: replace every suspect-font `Tf` in each page's
-      content stream with a Helvetica reference and collapse the per-char
-      `Tm`/`Tj` pattern into one `Tj` per visible line, encoded as WinAnsi
-      text. **Visual layout shifts** because Helvetica's metrics differ;
-      text extraction is cleaner because chars on a line are no longer
-      separated by inserted spaces.
 
     Returns the path to the saved PDF. If no problematic font is found, the
     original `pdf_path` is returned unchanged and no new file is written.
@@ -1256,6 +943,8 @@ def fix_pdf_font_encoding(
     bad_fonts = _scan_fonts(doc)
     if not bad_fonts:
         doc.close()
+        if raise_if_no_bad_fonts:
+            raise ValueError('no bad fonts nothing to fix')
         return pdf_path
 
     refs = _reference_glyphs()
@@ -1271,25 +960,18 @@ def fix_pdf_font_encoding(
         doc.close()
         return pdf_path
 
-    if rewrite_streams:
-        suspect_info = {
-            xref: {'is_type0': fi.is_type0, 'mapping': m}
-            for xref, (fi, m) in mappings.items()
-        }
-        fixed_any = _rewrite_pdf_streams(doc, suspect_info)
-    else:
-        fixed_any = False
-        # Measure each CID's actual on-page advance. Overriding the font's
-        # widths to match these prevents PDF viewers (Preview / Adobe /
-        # Chrome) from inserting a space at every per-char Tm gap when you
-        # copy text out.
-        widths = _actual_advances(doc, set(mappings))
-        for xref, (fi, m) in mappings.items():
-            _set_font_to_unicode(
-                doc, xref, _build_to_unicode_cmap(m, two_byte=fi.is_type0))
-            if xref in widths:
-                _override_widths(doc, xref, widths[xref], fi.is_type0)
-            fixed_any = True
+    fixed_any = False
+    # Measure each CID's actual on-page advance. Overriding the font's
+    # widths to match these prevents PDF viewers (Preview / Adobe /
+    # Chrome) from inserting a space at every per-char Tm gap when you
+    # copy text out.
+    widths = _actual_advances(doc, set(mappings))
+    for xref, (fi, m) in mappings.items():
+        _set_font_to_unicode(
+            doc, xref, _build_to_unicode_cmap(m, two_byte=fi.is_type0))
+        if xref in widths:
+            _override_widths(doc, xref, widths[xref], fi.is_type0)
+        fixed_any = True
 
     if not fixed_any:
         doc.close()
@@ -1327,11 +1009,6 @@ def _cli(argv: Optional[List[str]] = None) -> int:
                         metavar='X',
                         help='minimum visual-similarity score required to '
                              'commit a glyph→unicode mapping (default: 0.30)')
-    parser.add_argument('-r', '--rewrite', action='store_true',
-                        help='rewrite content streams: swap suspect fonts for '
-                             'Helvetica and collapse per-char Tj into one Tj '
-                             'per line. Breaks visual layout; cleans up text '
-                             'extraction')
     parser.add_argument('-q', '--quiet', action='store_true',
                         help='suppress per-file progress; only print output paths')
     args = parser.parse_args(argv)
@@ -1368,8 +1045,7 @@ def _cli(argv: Optional[List[str]] = None) -> int:
         try:
             out = fix_pdf_font_encoding(
                 path, out_path=args.output,
-                min_similarity=args.threshold,
-                rewrite_streams=args.rewrite)
+                min_similarity=args.threshold)
         except Exception as e:
             print(f'{path}: fix error: {e}', file=sys.stderr)
             rc = 2
@@ -1386,5 +1062,5 @@ def _cli(argv: Optional[List[str]] = None) -> int:
 
 if __name__ == '__main__':
     import sys
-    sys.exit(_cli())
 
+    sys.exit(_cli())
