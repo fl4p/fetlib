@@ -13,10 +13,12 @@ Here are two samples that have custom font encoding:
 datasheets/huayi/HY3912W.pdf
 datasheets/infineon/IPP057N08N3GHKSA1.pdf
 datasheets/infineon/BSC190N15NS3_G.pdf
-HY1920W.pdf
-HY0910D.pdf
-IPP028N08N3_G
-IPW60R041C6
+datasheets/huayi/HY1920W.pdf
+datasheets/infineon/IPP028N08N3_G.pdf
+datasheets/infineon/IPW60R041C6.pdf
+
+NEGATIVES:
+datasheets/huayi/HY0910D.pdf
 
 use the python interpreter at /home/parallels/miniconda3/envs/crunch/bin/python3
 If there is a missing software package you would like to use and you cannot install it yourself, let me know.
