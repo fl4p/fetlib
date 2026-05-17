@@ -150,9 +150,9 @@ def Rds_on(mf: MosfetSpecs, Id, Tj):
     if math.isnan(Tj):
         # this is a rough approximation from looking at various datasheets from different mfn
         # TODO temp rise?
-        #if mf.part.specs.isGaN:
+        # if mf.part.specs.isGaN:
         return mf.Rds_on * 1.22
-        #return mf.Rds_on * 1.35
+        # return mf.Rds_on * 1.35
 
     assert Tj == 25
     return mf.Rds_on
@@ -165,12 +165,10 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     # https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
 
     assert mf.Qg is not None, 'Qg must be set ' + mf.__repr__()
-    assert mf.Qrr is not None, 'Qrr must be set ' + mf.__repr__()
     assert math.isnan(dc.Iripple) or dc.Iripple > 0
 
     if gd.rg_total < mf.Rg or gd.rg_total_dis < mf.Rg:
         warnings.warn('Rg_total %.1f < MF internal Rg %.1f' % (gd.rg_total, mf.Rg))
-
 
     i_rms2 = dc.D_buck * dc.Io_mean_squared_on
 
@@ -242,6 +240,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     """
 
     assert dc.tDead and not math.isnan(dc.tDead), "no dead-time specified %s" % dc.tDead
+    assert mf.Qrr is not None, 'Qrr must be set ' + mf.__repr__()
 
     if not mf.Vsd or math.isnan(mf.Vsd):
         # warnings.warn('no Vsd specified, assuming 1 V')
