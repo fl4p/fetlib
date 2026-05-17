@@ -22,6 +22,7 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 from typing import List, Optional, Tuple
@@ -31,6 +32,29 @@ import pymupdf as fitz
 sys.path.insert(0, '.')
 
 from dslib.store import Part, parts_db
+
+
+def _isnum(x) -> bool:
+    """True iff x is a finite (non-NaN) number."""
+    return x is not None and isinstance(x, (int, float)) and not math.isnan(x)
+
+
+def _specs_chart_values(part: Part) -> Tuple[float, float, float]:
+    """Return (Qgs_nC, Qgd_nC, Vpl_V) sourced from parts_db.
+
+    Each entry is NaN when not stored — the annotation step uses that to
+    hide the corresponding dimension line.
+    """
+    specs = getattr(part, 'specs', None)
+    if specs is None:
+        return math.nan, math.nan, math.nan
+    qgs_C = getattr(specs, 'Qgs', math.nan)
+    qgd_C = getattr(specs, 'Qgd', math.nan)
+    vpl_V = getattr(specs, 'V_pl', math.nan)
+    qgs_nC = qgs_C * 1e9 if _isnum(qgs_C) else math.nan
+    qgd_nC = qgd_C * 1e9 if _isnum(qgd_C) else math.nan
+    vpl    = vpl_V        if _isnum(vpl_V) else math.nan
+    return qgs_nC, qgd_nC, vpl
 
 
 # Where the crops land.  Tweak via the CLI if needed.
@@ -85,14 +109,22 @@ def _load_font(size: int):
 
 
 def _annotate(png_bytes: bytes,
-              plateau_px: Tuple[float, float, float],   # (x_lo, x_hi, y)
-              baseline_px: Tuple[float, float],         # (x, y) of (Q=0, V=0)
-              vpl: float,
-              qgs_value: float,
-              qgd_value: float) -> bytes:
-    """Draw Vpl + Q_gs + Q_gd dimension lines on the crop and return WebP-
-    ready PNG bytes.  All px coordinates are in the rasterised crop's
-    coordinate system."""
+              base_x_px: float, base_y_px: float,
+              qgs_x_px: Optional[float],
+              qgd_x_px: Optional[float],
+              vpl_y_px: Optional[float],
+              vpl_val: float,
+              qgs_val: float,
+              qgd_val: float) -> bytes:
+    """Draw Vpl + Q_gs + Q_gd dimension lines on the crop, in the rasterised
+    crop's pixel coordinate system.
+
+    Each dimension is independently hidden when its pixel position is None:
+      * Vpl vertical line — drawn iff ``vpl_y_px`` is not None
+      * Qgs horizontal bar — drawn iff ``qgs_x_px`` is not None
+      * Qgd horizontal bar — drawn iff both ``qgs_x_px`` and ``qgd_x_px``
+        are not None (it needs the plateau's left edge to anchor against)
+    """
     from io import BytesIO
     from PIL import Image, ImageDraw
     img = Image.open(BytesIO(png_bytes)).convert('RGB')
@@ -101,58 +133,50 @@ def _annotate(png_bytes: bytes,
     color = (200, 30, 30)        # red
     head = max(6, int(W * 0.012))
     font = _load_font(max(11, int(W * 0.025)))
-    x_lo, x_hi, y_plateau = plateau_px
-    base_x, base_y = baseline_px
+    small = _load_font(max(10, int(W * 0.022)))
 
-    # 1) Vertical Vpl dimension line at the Q_gs / Q_gd boundary — i.e. the
-    #    plateau's left edge.  At that x the line meets the curve's corner
-    #    cleanly, and the empty region under the plateau is the most natural
-    #    place for the Vpl label.
-    if vpl is not None and y_plateau is not None and base_y is not None:
-        if x_hi > x_lo:
-            vpl_x = int(x_lo)
+    # 1) Vertical Vpl dimension line.  Anchor x at the plateau's left edge
+    #    (Q_gs end) when available; otherwise fall back to the chart's left
+    #    margin so the Vpl label still has somewhere sensible to live.
+    if vpl_y_px is not None:
+        if qgs_x_px is not None:
+            vpl_x = int(qgs_x_px)
         else:
-            # No plateau extent → fall back to the chart's left margin.
-            vpl_x = base_x - max(10, int(W * 0.025))
+            vpl_x = int(base_x_px - max(10, int(W * 0.025)))
             if vpl_x < 6:
-                vpl_x = base_x + max(10, int(W * 0.025))
-        _draw_arrow(draw, vpl_x, base_y, vpl_x, y_plateau, color, width=2, head=head)
-        label = f'Vpl = {vpl:.1f} V'
-        # Place the label to the RIGHT of the line, inside the empty area
-        # below the plateau (which sits between vpl_x and x_hi).  Fall back
-        # to the LEFT side if that area is too narrow.
+                vpl_x = int(base_x_px + max(10, int(W * 0.025)))
+        _draw_arrow(draw, vpl_x, base_y_px, vpl_x, vpl_y_px, color, width=2, head=head)
+        label = f'Vpl = {vpl_val:.1f} V'
         tw = draw.textlength(label, font=font) if hasattr(draw, 'textlength') else len(label) * 7
-        if x_hi > vpl_x + tw + 8:
+        # Prefer the label to the right of the line — inside the empty region
+        # below the plateau, between Qgs end and Qgd end.  Fall back left.
+        right_edge = qgd_x_px if qgd_x_px is not None else (W - 4)
+        if right_edge > vpl_x + tw + 8:
             tx = vpl_x + 5
         else:
             tx = max(2, vpl_x - tw - 5)
-        ty = (base_y + y_plateau) / 2 - 8
+        ty = (base_y_px + vpl_y_px) / 2 - 8
         draw.text((tx, ty), label, fill=color, font=font)
 
-    # 2) Horizontal Q_gs + Q_gd dimension bars, drawn well *above* the plateau
-    #    so they don't overlap the curve.  Use whichever gap is more generous:
-    #    25 % of the plateau-to-baseline span, or a fixed minimum.  Both bars
-    #    sit at the same y so they read as one continuous dimension chain.
-    if x_hi > x_lo and qgs_value > 0:
-        gap = max(int(W * 0.06), int((base_y - y_plateau) * 0.25))
-        ann_y = int(y_plateau - gap)
-        # Stay safely inside the visible area.
-        ann_y = max(ann_y, int(H * 0.04))
+    # 2) Horizontal Q_gs + Q_gd dimension bars, drawn *above* the plateau so
+    #    they don't overlap the curve.  Both bars sit at the same y so they
+    #    read as one continuous dimension chain.
+    plateau_y_ref = vpl_y_px if vpl_y_px is not None else int(H * 0.30)
+    gap = max(int(W * 0.06), int((base_y_px - plateau_y_ref) * 0.25))
+    ann_y = max(int(plateau_y_ref - gap), int(H * 0.04))
 
-        small = _load_font(max(10, int(W * 0.022)))
-
-        # Q_gs bar from baseline x to plateau start x.
-        _draw_arrow(draw, base_x, ann_y, x_lo, ann_y, color, width=2, head=head)
-        qgs_label = f'Qgs ≈ {qgs_value:.0f} nC'
+    if qgs_x_px is not None:
+        _draw_arrow(draw, base_x_px, ann_y, qgs_x_px, ann_y, color, width=2, head=head)
+        qgs_label = f'Qgs = {qgs_val:.0f} nC'
         tw = draw.textlength(qgs_label, font=small) if hasattr(draw, 'textlength') else len(qgs_label)*6
-        tx = (base_x + x_lo) / 2 - tw / 2
+        tx = (base_x_px + qgs_x_px) / 2 - tw / 2
         draw.text((tx, ann_y - int(W * 0.03)), qgs_label, fill=color, font=small)
 
-        # Q_gd bar from plateau start to plateau end.
-        _draw_arrow(draw, x_lo, ann_y, x_hi, ann_y, color, width=2, head=head)
-        qgd_label = f'Qgd ≈ {qgd_value:.0f} nC'
+    if qgs_x_px is not None and qgd_x_px is not None:
+        _draw_arrow(draw, qgs_x_px, ann_y, qgd_x_px, ann_y, color, width=2, head=head)
+        qgd_label = f'Qgd = {qgd_val:.0f} nC'
         tw = draw.textlength(qgd_label, font=small) if hasattr(draw, 'textlength') else len(qgd_label)*6
-        tx = (x_lo + x_hi) / 2 - tw / 2
+        tx = (qgs_x_px + qgd_x_px) / 2 - tw / 2
         draw.text((tx, ann_y + 4), qgd_label, fill=color, font=small)
 
     buf = BytesIO()
@@ -160,12 +184,16 @@ def _annotate(png_bytes: bytes,
     return buf.getvalue()
 
 
-def _crop_via_vpc(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
+def _crop_via_vpc(pdf_path: str, dpi: int,
+                  qgs_nC: float, qgd_nC: float, vpl_V: float
+                  ) -> Optional[Tuple[bytes, int, str]]:
     """Try ``vpl_from_chart`` to find the gate-charge chart and return a
     (png_bytes, page_num, 'vpc') tuple, or None when no chart is found.
 
-    The crop is annotated with Vpl / Q_gs / Q_gd dimension lines when a
-    plateau is detected.
+    The crop is annotated with Vpl / Q_gs / Q_gd dimension lines using the
+    *datasheet* values from parts_db (``qgs_nC``, ``qgd_nC``, ``vpl_V``).
+    A NaN value hides that particular dimension.  The chart's own axis
+    transform places each line at the correct chart-coordinate location.
     """
     import vpl_from_chart as vpc
     from vpl_from_chart import _pick_best
@@ -176,27 +204,20 @@ def _crop_via_vpc(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
         if not charts:
             return None
 
-        # Run the full pipeline so we can choose the best chart AND keep the
-        # plateau coordinates of the chosen candidate for annotation.
-        evaluated = []   # list of (ChartFrame, vpl, plateau_seg_pixels)
+        # Score each chart using the existing plateau detector so we keep the
+        # same "best gate-charge chart" selection heuristic.  We use the
+        # detector only for selection — the annotation values come from
+        # parts_db.
+        evaluated = []
         for c in charts:
             page = doc[c.page_index]
             try:
                 inner, tr, dbg = vpc.extract_curves(page, c, dpi=300)
-                vpl = vpc.find_plateau_vpl(inner, tr, debug=dbg)
+                vpl_det = vpc.find_plateau_vpl(inner, tr, debug=dbg)
             except Exception:
-                vpl, dbg = None, None
-            seg = dbg.get('plateau_segment') if dbg else None  # (y, x_lo, x_hi) in inner-mask coords
-            inner_off = dbg.get('inner_origin') if dbg else (0, 0)
-            scale_render = dbg.get('scale', 300/72) if dbg else 300/72
-            evaluated.append({
-                'chart': c, 'vpl': vpl, 'seg': seg,
-                'inner_off': inner_off, 'scale_render': scale_render,
-                'render_x0_pdf': dbg['pdf_rect'][0] if dbg else None,
-                'render_y0_pdf': dbg['pdf_rect'][1] if dbg else None,
-            })
+                vpl_det = None
+            evaluated.append({'chart': c, 'vpl': vpl_det})
 
-        # Pick the best the same way _pick_best does for refreshing specs.
         results = [{
             'vpl': e['vpl'], 'page': e['chart'].page_index + 1,
             'x_axis_values': e['chart'].x_axis.values,
@@ -214,8 +235,6 @@ def _crop_via_vpc(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
                 evaluated[0],
             )
         chart = chosen['chart']
-        vpl = chosen['vpl']
-        seg = chosen['seg']
         page = doc[chart.page_index]
 
         # Axis transform: Qg = a_x * pdf_x + b_x;  Vgs = a_y * pdf_y + b_y
@@ -242,44 +261,36 @@ def _crop_via_vpc(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
                               clip=crop_rect, alpha=False)
         png = pix.tobytes('png')
 
-        # If we have a plateau segment, annotate.
-        if vpl is not None and seg is not None:
-            seg_y, seg_x_lo, seg_x_hi = seg
-            inner_x, inner_y = chosen['inner_off']
-            render_x0 = chosen['render_x0_pdf']
-            render_y0 = chosen['render_y0_pdf']
-            render_scale = chosen['scale_render']
-            # plateau in PDF coords
-            pl_pdf_y = (seg_y + inner_y) / render_scale + render_y0
-            pl_pdf_x_lo = (seg_x_lo + inner_x) / render_scale + render_x0
-            pl_pdf_x_hi = (seg_x_hi + inner_x) / render_scale + render_x0
-            # baseline (Q=0, V=0) in PDF coords
-            base_pdf_y = (0.0 - b_y) / a_y
-            base_pdf_x = (0.0 - b_x) / a_x
+        def to_px(p_pdf, axis):
+            if axis == 'x':
+                return (p_pdf - crop_rect.x0) * scale
+            return (p_pdf - crop_rect.y0) * scale
 
-            def to_px(p_pdf, axis):
-                if axis == 'x':
-                    return (p_pdf - crop_rect.x0) * scale
-                return (p_pdf - crop_rect.y0) * scale
+        base_x_px = to_px((0.0 - b_x) / a_x, 'x')
+        base_y_px = to_px((0.0 - b_y) / a_y, 'y')
+        qgs_x_px = to_px((qgs_nC - b_x) / a_x, 'x') if _isnum(qgs_nC) else None
+        qgd_x_px = (to_px((qgs_nC + qgd_nC - b_x) / a_x, 'x')
+                    if _isnum(qgs_nC) and _isnum(qgd_nC) else None)
+        vpl_y_px = to_px((vpl_V - b_y) / a_y, 'y') if _isnum(vpl_V) else None
 
-            pl_px = (to_px(pl_pdf_x_lo, 'x'),
-                     to_px(pl_pdf_x_hi, 'x'),
-                     to_px(pl_pdf_y, 'y'))
-            base_px = (to_px(base_pdf_x, 'x'),
-                       to_px(base_pdf_y, 'y'))
-            qgs_value = a_x * pl_pdf_x_lo + b_x
-            qgd_value = a_x * (pl_pdf_x_hi - pl_pdf_x_lo)
-            png = _annotate(png, pl_px, base_px,
-                            float(vpl), float(qgs_value), float(qgd_value))
+        if qgs_x_px is not None or qgd_x_px is not None or vpl_y_px is not None:
+            png = _annotate(png, base_x_px, base_y_px,
+                            qgs_x_px, qgd_x_px, vpl_y_px,
+                            vpl_V, qgs_nC, qgd_nC)
 
         return png, chart.page_index + 1, 'vpc'
     finally:
         doc.close()
 
 
-def _crop_via_viz(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
+def _crop_via_viz(pdf_path: str, dpi: int,
+                  qgs_nC: float, qgd_nC: float, vpl_V: float
+                  ) -> Optional[Tuple[bytes, int, str]]:
     """Fall back to ``viz.find_in_pdf`` for charts that vpc can't see (raster
     chart axes, title-anchored Infineon images, …).
+
+    Annotation values come from parts_db (``qgs_nC``, ``qgd_nC``, ``vpl_V``);
+    NaN entries hide their corresponding dimension line.
     """
     try:
         from dslib.viz import find_in_pdf
@@ -310,10 +321,10 @@ def _crop_via_viz(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, alpha=False)
         png = pix.tobytes('png')
 
-        # Annotate if we have a plateau hit and at least two tick anchors per axis.
-        if (hit is not None and hit.segment is not None
-                and len(chart.y_ticks) >= 2 and len(chart.x_ticks) >= 2):
-            # Linear fit: value = a * pdf + b  using the tick (value, pdf) pairs.
+        # Annotate when we have at least two tick anchors per axis to build
+        # the value→pdf transform.  Annotation values are sourced from
+        # parts_db rather than the detected plateau.
+        if len(chart.y_ticks) >= 2 and len(chart.x_ticks) >= 2:
             y_vals = np.array([v for v, _ in chart.y_ticks])
             y_pdf  = np.array([p for _, p in chart.y_ticks])
             x_vals = np.array([v for v, _ in chart.x_ticks])
@@ -325,27 +336,22 @@ def _crop_via_viz(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, int, str]]:
             a_y, b_y = float(ay[0]), float(ay[1])
             a_x, b_x = float(ax[0]), float(ax[1])
 
-            seg = hit.segment
-            pl_pdf_x_lo = min(seg.x0, seg.x1)
-            pl_pdf_x_hi = max(seg.x0, seg.x1)
-            pl_pdf_y = hit.y_pdf
-            base_pdf_y = (0.0 - b_y) / a_y if a_y != 0 else bbox.y1
-            base_pdf_x = (0.0 - b_x) / a_x if a_x != 0 else bbox.x0
-
             def to_px(p_pdf, axis):
                 if axis == 'x':
                     return (p_pdf - rect.x0) * scale
                 return (p_pdf - rect.y0) * scale
 
-            pl_px = (to_px(pl_pdf_x_lo, 'x'),
-                     to_px(pl_pdf_x_hi, 'x'),
-                     to_px(pl_pdf_y, 'y'))
-            base_px = (to_px(base_pdf_x, 'x'),
-                       to_px(base_pdf_y, 'y'))
-            qgs_value = a_x * pl_pdf_x_lo + b_x
-            qgd_value = a_x * (pl_pdf_x_hi - pl_pdf_x_lo)
-            png = _annotate(png, pl_px, base_px,
-                            float(hit.v_pl), float(qgs_value), float(qgd_value))
+            base_x_px = to_px((0.0 - b_x) / a_x, 'x') if a_x != 0 else (bbox.x0 - rect.x0) * scale
+            base_y_px = to_px((0.0 - b_y) / a_y, 'y') if a_y != 0 else (bbox.y1 - rect.y0) * scale
+            qgs_x_px = to_px((qgs_nC - b_x) / a_x, 'x') if _isnum(qgs_nC) and a_x != 0 else None
+            qgd_x_px = (to_px((qgs_nC + qgd_nC - b_x) / a_x, 'x')
+                        if _isnum(qgs_nC) and _isnum(qgd_nC) and a_x != 0 else None)
+            vpl_y_px = to_px((vpl_V - b_y) / a_y, 'y') if _isnum(vpl_V) and a_y != 0 else None
+
+            if qgs_x_px is not None or qgd_x_px is not None or vpl_y_px is not None:
+                png = _annotate(png, base_x_px, base_y_px,
+                                qgs_x_px, qgd_x_px, vpl_y_px,
+                                vpl_V, qgs_nC, qgd_nC)
 
         return png, chart.page_num + 1, source or 'viz'
     finally:
@@ -448,6 +454,7 @@ def _crop_part_image(pdf_path: str, dpi: int) -> Optional[Tuple[bytes, str]]:
 
 
 def _process_one(mfr: str, mpn: str, ds_path: str,
+                 qgs_nC: float, qgd_nC: float, vpl_V: float,
                  out_root: str, dpi: int, quality: int,
                  force: bool, do_part_image: bool = True) -> Tuple[str, List[str]]:
     """Worker: returns (status, log_lines).
@@ -475,14 +482,14 @@ def _process_one(mfr: str, mpn: str, ds_path: str,
     else:
         # Try the vector pipeline first, then viz.
         try:
-            crop = _crop_via_vpc(ds_path, dpi)
+            crop = _crop_via_vpc(ds_path, dpi, qgs_nC, qgd_nC, vpl_V)
         except Exception as exc:  # noqa: BLE001
             crop = None
             log.append(f'  · vpc error: {type(exc).__name__}: {exc}')
 
         if crop is None:
             try:
-                crop = _crop_via_viz(ds_path, dpi)
+                crop = _crop_via_viz(ds_path, dpi, qgs_nC, qgd_nC, vpl_V)
             except Exception as exc:  # noqa: BLE001
                 crop = None
                 log.append(f'  · viz error: {type(exc).__name__}: {exc}')
@@ -562,12 +569,15 @@ def main():
     print(f'after mfr/mpn filter: {len(candidates)} candidates')
 
     # Pre-filter parts that have a datasheet on disk.
-    todo: List[Tuple[str, str, str]] = []   # (mfr, mpn, ds_path)
+    # Each todo entry carries the parts_db chart values so the annotation
+    # step can hide dimensions for parts missing Qgs/Qgd/Vpl.
+    todo: List[Tuple[str, str, str, float, float, float]] = []
     for part in candidates:
         ds = _ds_path(part)
         if ds is None:
             continue
-        todo.append((part.mfr, part.mpn, ds))
+        qgs_nC, qgd_nC, vpl_V = _specs_chart_values(part)
+        todo.append((part.mfr, part.mpn, ds, qgs_nC, qgd_nC, vpl_V))
 
     print(f'parts with a datasheet PDF: {len(todo)} / {len(candidates)}')
     if args.limit and len(todo) > args.limit:
@@ -585,9 +595,10 @@ def main():
         from dslib.util import run_parallel
         jobs = {
             (mfr, mpn): (_process_one, mfr, mpn, ds,
+                         qgs, qgd, vpl,
                          args.out_root, args.dpi, args.quality, args.force,
                          do_part_image)
-            for mfr, mpn, ds in todo
+            for mfr, mpn, ds, qgs, qgd, vpl in todo
         }
         results = run_parallel(jobs, args.jobs, 'multiprocessing', verbose=0)
         for (mfr, mpn), result in results.items():
@@ -602,10 +613,11 @@ def main():
                 for line in log_lines:
                     print(line)
     else:
-        for i, (mfr, mpn, ds) in enumerate(todo, 1):
+        for i, (mfr, mpn, ds, qgs, qgd, vpl) in enumerate(todo, 1):
             print(f'[{i}/{len(todo)}] {mfr}/{mpn}')
             status, log_lines = _process_one(
-                mfr, mpn, ds, args.out_root, args.dpi, args.quality,
+                mfr, mpn, ds, qgs, qgd, vpl,
+                args.out_root, args.dpi, args.quality,
                 args.force, do_part_image)
             counts[status] = counts.get(status, 0) + 1
             for line in log_lines:
