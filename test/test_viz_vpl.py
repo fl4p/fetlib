@@ -71,6 +71,7 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/nxp/PSMN6R7-40MSD.pdf', 4.75),
     ('datasheets/st/STB55NF06LT4.pdf', 3),
     ('datasheets/agmsemi/AGM035N10D.pdf', 4.3),
+    ('datasheets/toshiba/XPQR8308QB.pdf', 5.5), # double axis, Vds curves
 
     #AOTF288L
 ]

@@ -555,7 +555,7 @@ def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
     if isGaN:
-        assert  math.isnan(hs.Qsw) or hs.Qsw < 10e-9, hs.Qsw
+        assert math.isnan(hs.Qsw) or hs.Qsw < 10e-9, hs.Qsw
         assert von < 6
 
     vpl = (gd.fallback_V_pl / 2 if isGaN else gd.fallback_V_pl) if math.isnan(hs.V_pl) else hs.V_pl
