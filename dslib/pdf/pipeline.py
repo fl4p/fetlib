@@ -205,7 +205,7 @@ def pdf2pdf(in_path, out_path, method):
             stdout=subprocess.DEVNULL, ),  # TODO try decrypt
         cups=cups,
 
-        fix_font_enc=lambda: fix_pdf_font_encoding(in_path, out_path, rewrite_streams=False, raise_if_no_bad_fonts=True),
+        fix_font_enc=lambda: fix_pdf_font_encoding(in_path, out_path, raise_if_no_bad_fonts=True),
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),
         ocrmypdf_r250=lambda: ocrmypdf(in_path, out_path, rasterize=250),

@@ -41,8 +41,8 @@ class DcDcLoadParams:
         """
         assert 1000 < f < 2e6, f
 
-        self.Vi = vi
-        self.Vo = vo
+        self.Vi:float = vi
+        self.Vo:float = vo
 
         if ii is not None:
             assert pin is None and io is None
