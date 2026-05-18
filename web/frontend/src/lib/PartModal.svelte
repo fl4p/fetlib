@@ -18,6 +18,7 @@
 		key: string;
 		label: string;
 		fmt: (p: Part) => string;
+		labelOf?: (p: Part) => string;
 	}
 
 	function extra(key: string, label: string, fmt: (v: number) => string): PropRow {
@@ -80,7 +81,20 @@
 		},
 		{
 			label: 'Capacitances',
-			rows: [extra('Coss', 'C_oss', fmtPicoF)]
+			rows: [
+				{
+					key: 'Coss',
+					label: 'C_oss',
+					labelOf: (p) => {
+						const vds = p.extras?.Coss_Vds;
+						return vds == null ? 'C_oss' : `C_oss @ V_DS=${fmtVoltage(vds)}`;
+					},
+					fmt: (p) => {
+						const c = p.extras?.Coss;
+						return c == null ? '' : fmtPicoF(c);
+					}
+				}
+			]
 		},
 		{
 			label: 'Body Diode',
@@ -202,7 +216,7 @@
 								</tr>
 								{#each visible as { r, val } (r.key)}
 									<tr>
-										<th>{r.label}</th>
+										<th>{r.labelOf ? r.labelOf(part) : r.label}</th>
 										<td>{val}</td>
 									</tr>
 								{/each}

@@ -76,7 +76,7 @@ SIMILARITY_REQUIRED = ("Vds_max", "Rds_on_max")
 
 # Per-part extras served to the modal. Values are raw SI (Coulombs, seconds, Farads, Ohms,
 # Amps, Volts). Frontend applies its own unit conversion / formatting.
-EXTRAS_SPECS = ("Qgd", "Qgs", "Qgs2", "Qg_th", "Qg_sync", "tRise", "tFall", "trr", "Coss", "Rg")
+EXTRAS_SPECS = ("Qgd", "Qgs", "Qgs2", "Qg_th", "Qg_sync", "tRise", "tFall", "trr", "Coss", "Coss_Vds", "Rg")
 EXTRAS_BASIC = ("Vgs_th_min", "ID_25", "Rds_on_10v_max")
 
 
