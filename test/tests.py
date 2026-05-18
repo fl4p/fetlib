@@ -308,6 +308,9 @@ def test_parse_lines():
 
 def test_pdf_parse():
 
+    d = read_sheet('datasheets/crmicro/CRTD10DN10L.pdf')
+    assert d.Rds_on == (na,67,100)
+
     d = read_sheet('datasheets/littelfuse/IXTK170N10P.pdf')
     assert d.Rds_on == (na,7,9)
 
