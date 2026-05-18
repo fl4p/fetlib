@@ -10,28 +10,31 @@ class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, trr=None, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None,
                  Qsw=None,
-                 Vpl=None, Vsd=None, Coss=math.nan, Rg=math.nan, Id=math.nan, part=None):
+                 Vpl=None, Vsd=None,
+                 Coss=math.nan, Coss_Vds=None,
+                 Rg=math.nan, Id=math.nan, part=None):
         """
 
-        :param Vds_max:
-        :param Rds_on:
+        :param Vds_max: Vds break-down voltage (also referred as `BVdss` or `V (BR)DSS`), in volt
+        :param Rds_on: Rds_on max at Tj=25°C and full gate drive voltage (Si: Vgs=10V, GaN: Vgs=5V)
         :param Qg: total gate charge
-        :param tRise:
-        :param tFall:
+        :param tRise: Vds rise-time under given conditions (conditions not given, tRise unused)
+        :param tFall: Vds fall-time under given conditions (conditions not given, tFall unused)
         :param Qrr: reverse recovery charge (german: Sperrverzugsladung)
         :param Qgd: gate-drain charge across miller plateau
-        :param Qgs: gate-source charge until the start of miller plateau (toshiba: before and after MP)
-        :param Qgs2: charge between Qg_th and start of MP (toshiba: charger after MP)
+        :param Qgs: gate-source charge until the start of miller plateau (Toshiba: before + after MP)
+        :param Qgs2: charge between Qg_th and start of MP (Toshiba: charger after MP)
         :param Qg_th: charge until V_th (Qg_th + Qgs2 = Qgs)
         :param Qsw: Qgs2 + Qgd
         :param Vpl: miller plateau voltage
         :param Vsd: body diode forward voltage
         :param Coss: output capacity (eff. energy related)
+        :param Coss_Vds: Vds at which Coss was calculated or measured (test condition)
         """
         self.part = part
         if Vds_max and not math.isnan(Vds_max) and int(Vds_max) == Vds_max:
             Vds_max = int(Vds_max)
-        self.Vds = Vds_max
+        self.Vds:float = Vds_max
 
         if isinstance(Rds_on, str):
             if Rds_on.endswith('mOhm'):
@@ -101,6 +104,7 @@ class MosfetSpecs:
             Vsd /= 10
 
         self.Coss = Coss # Vds = Vin
+        self.Coss_Vds = Coss_Vds
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
@@ -201,7 +205,11 @@ class MosfetSpecs:
         return self.Qg - self.Qgd - self.Qgs
 
     def __str__(self):
-        return f'MosfetSpecs({round_to_n_dec(self.Vds, 3)}V,{round_to_n_dec(self.Rds_on, 3)}Ω Qg={round_to_n_dec(self.Qg, 3)} Qsw={round_to_n_dec(self.Qsw, 3)} trf={round_to_n_dec(self.tRise, 3)}/{round_to_n_dec(self.tFall, 3)} Qrr={round_to_n_dec(self.Qrr, 3)})'
+        coss_vds = self.Coss_Vds if hasattr(self, 'Coss_Vds') else None
+        return (f'MosfetSpecs({round_to_n_dec(self.Vds, 3)}V,{round_to_n_dec(self.Rds_on, 3)}Ω '
+                f'Qg={round_to_n_dec(self.Qg, 3)} Qsw={round_to_n_dec(self.Qsw, 3)} '
+                f'trf={round_to_n_dec(self.tRise, 3)}/{round_to_n_dec(self.tFall, 3)} '
+                f'Qrr={round_to_n_dec(self.Qrr, 3)} Coss@{round_to_n_dec(coss_vds or "nan",3)}={round_to_n_dec(self.Coss,3)})')
 
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
@@ -238,6 +246,23 @@ class MosfetSpecs:
         :return:
         """
         return self.Qgd / self.Qgs
+
+    @property
+    def Coss_V0(self):
+        mf = self
+        coss_vds = mf.Coss_Vds
+        if coss_vds is not None and math.isfinite(coss_vds) and coss_vds > 0:
+            coss_v0 = mf.Coss_Vds
+            assert not (abs((mf.Vds / 2) - coss_v0) / mf.Vds > 0.2), (coss_v0, mf.Vds)
+        else:
+            # Fallback: assume Coss specified at ~half Vds (common datasheet practice)
+            vds = mf.Vds
+            if vds is not None and math.isfinite(vds) and vds > 0:
+                coss_v0 = vds / 2
+            else:
+                coss_v0 = math.nan
+
+        return coss_v0 or math.nan
 
 
 class GateDrive:
