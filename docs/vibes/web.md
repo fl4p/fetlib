@@ -162,3 +162,6 @@ in the modal:
 
 
 * Fix this issue: In Chrome on iOS (iPad), when narrowing the results with the slider, many rows show blank and only reveal their values when hovered, clicked or the table scrolls.
+
+
+The table in the parts modal displays the Coss_Vds test condition for Coss. Display the test condition after the symbol name 
