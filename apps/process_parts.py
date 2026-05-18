@@ -24,6 +24,10 @@ def _process_one_part(part: Part, no_cache=False, no_ocr=False, no_download=Fals
         ds: DatasheetFields = compile_part_datasheet(
             part, need_symbols, no_cache=no_cache,
             no_ocr=no_ocr, no_download=no_download)
+        if not part.discovered.release_date:
+            dates = list(*filter(bool, [ds.date_from_text, ds.date_from_meta]))
+            if dates:
+                part.discovered.release_date = min(*dates)
         part.specs = get_fet_specs(ds)
         return part, None
     except Exception as e:

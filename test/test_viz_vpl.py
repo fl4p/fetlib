@@ -1,6 +1,5 @@
 """
-Validation for ``viz.find_vpl`` using the Vpl reference values that appear
-in ``test/tests.py`` and ``dslib/manual_fields.py``.
+Validation for ``dslib.viz.find_vpl``
 
 Run::
 
@@ -71,7 +70,7 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/nxp/PSMN6R7-40MSD.pdf', 4.75),
     ('datasheets/st/STB55NF06LT4.pdf', 3),
     ('datasheets/agmsemi/AGM035N10D.pdf', 4.3),
-    ('datasheets/toshiba/XPQR8308QB.pdf', 5.5), # double axis, Vds curves
+    ('datasheets/toshiba/XPQR8308QB.pdf', 5.5), # double axis, chart has 3 additional Vds curves overlapping the gate charge curve
 
     #AOTF288L
 ]
