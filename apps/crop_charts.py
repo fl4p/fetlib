@@ -321,37 +321,71 @@ def _crop_via_viz(pdf_path: str, dpi: int,
         pix = page.get_pixmap(matrix=fitz.Matrix(scale, scale), clip=rect, alpha=False)
         png = pix.tobytes('png')
 
-        # Annotate when we have at least two tick anchors per axis to build
-        # the value→pdf transform.  Annotation values are sourced from
-        # parts_db rather than the detected plateau.
-        if len(chart.y_ticks) >= 2 and len(chart.x_ticks) >= 2:
+        def to_px(p_pdf, axis):
+            if axis == 'x':
+                return (p_pdf - rect.x0) * scale
+            return (p_pdf - rect.y0) * scale
+
+        # Y-axis transform from tick anchors (Vpl line needs it).
+        a_y = b_y = None
+        if len(chart.y_ticks) >= 2:
             y_vals = np.array([v for v, _ in chart.y_ticks])
             y_pdf  = np.array([p for _, p in chart.y_ticks])
-            x_vals = np.array([v for v, _ in chart.x_ticks])
-            x_pdf  = np.array([p for _, p in chart.x_ticks])
             if y_vals.max() <= 0:
                 y_vals = -y_vals
             ay = np.polyfit(y_pdf, y_vals, 1)
-            ax = np.polyfit(x_pdf, x_vals, 1)
             a_y, b_y = float(ay[0]), float(ay[1])
+
+        # X-axis transform: prefer tick anchors, else fall back to using the
+        # detected plateau segment as the Qgs / Qgs+Qgd anchors when parts_db
+        # supplies both — this keeps annotations working on charts whose
+        # x-axis tick labels couldn't be parsed.
+        a_x = b_x = None
+        if len(chart.x_ticks) >= 2:
+            x_vals = np.array([v for v, _ in chart.x_ticks])
+            x_pdf  = np.array([p for _, p in chart.x_ticks])
+            ax = np.polyfit(x_pdf, x_vals, 1)
             a_x, b_x = float(ax[0]), float(ax[1])
+        elif _isnum(qgs_nC) and _isnum(qgd_nC) and qgd_nC != 0 and hit is not None:
+            # Calibrate the x-axis from the detected plateau extent, mapping
+            # the plateau's left/right edges to Qgs and Qgs+Qgd.  The vector
+            # ``PlateauHit`` exposes ``segment`` in PDF coordinates; the
+            # raster ``RasterPlateauHit`` exposes ``plateau_run`` as pixel
+            # coordinates relative to ``chart.bbox`` at dpi=300.
+            seg_lo_pdf = seg_hi_pdf = None
+            seg = getattr(hit, 'segment', None)
+            if seg is not None:
+                seg_lo_pdf = min(seg.x0, seg.x1)
+                seg_hi_pdf = max(seg.x0, seg.x1)
+            else:
+                run = getattr(hit, 'plateau_run', None)
+                if run is not None:
+                    raster_zoom = 300.0 / 72.0
+                    seg_lo_pdf = bbox.x0 + min(run) / raster_zoom
+                    seg_hi_pdf = bbox.x0 + max(run) / raster_zoom
+            if seg_lo_pdf is not None and seg_hi_pdf > seg_lo_pdf:
+                a_x = qgd_nC / (seg_hi_pdf - seg_lo_pdf)
+                b_x = qgs_nC - a_x * seg_lo_pdf
 
-            def to_px(p_pdf, axis):
-                if axis == 'x':
-                    return (p_pdf - rect.x0) * scale
-                return (p_pdf - rect.y0) * scale
+        # Default Q=0 baseline: the plot area's left edge.
+        base_x_px = (to_px((0.0 - b_x) / a_x, 'x')
+                     if (a_x is not None and a_x != 0)
+                     else (bbox.x0 - rect.x0) * scale)
+        # Default V=0 baseline: the plot area's bottom edge.
+        base_y_px = (to_px((0.0 - b_y) / a_y, 'y')
+                     if (a_y is not None and a_y != 0)
+                     else (bbox.y1 - rect.y0) * scale)
+        qgs_x_px = (to_px((qgs_nC - b_x) / a_x, 'x')
+                    if _isnum(qgs_nC) and a_x else None)
+        qgd_x_px = (to_px((qgs_nC + qgd_nC - b_x) / a_x, 'x')
+                    if _isnum(qgs_nC) and _isnum(qgd_nC) and a_x else None)
+        vpl_y_px = (to_px((vpl_V - b_y) / a_y, 'y')
+                    if _isnum(vpl_V) and a_y else None)
 
-            base_x_px = to_px((0.0 - b_x) / a_x, 'x') if a_x != 0 else (bbox.x0 - rect.x0) * scale
-            base_y_px = to_px((0.0 - b_y) / a_y, 'y') if a_y != 0 else (bbox.y1 - rect.y0) * scale
-            qgs_x_px = to_px((qgs_nC - b_x) / a_x, 'x') if _isnum(qgs_nC) and a_x != 0 else None
-            qgd_x_px = (to_px((qgs_nC + qgd_nC - b_x) / a_x, 'x')
-                        if _isnum(qgs_nC) and _isnum(qgd_nC) and a_x != 0 else None)
-            vpl_y_px = to_px((vpl_V - b_y) / a_y, 'y') if _isnum(vpl_V) and a_y != 0 else None
-
-            if qgs_x_px is not None or qgd_x_px is not None or vpl_y_px is not None:
-                png = _annotate(png, base_x_px, base_y_px,
-                                qgs_x_px, qgd_x_px, vpl_y_px,
-                                vpl_V, qgs_nC, qgd_nC)
+        if qgs_x_px is not None or qgd_x_px is not None or vpl_y_px is not None:
+            png = _annotate(png, base_x_px, base_y_px,
+                            qgs_x_px, qgd_x_px, vpl_y_px,
+                            vpl_V, qgs_nC, qgd_nC)
 
         return png, chart.page_num + 1, source or 'viz'
     finally:
