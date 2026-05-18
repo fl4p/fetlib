@@ -38,6 +38,8 @@ from maglib.wire import d2awg, MaterialResistivity, acr_factor_micrometals, skin
 
 µ0 = 4 * math.pi * 1e-7
 
+Qrr_temp_rise_default = 1.2
+
 
 class SwitchPowerLoss():
     def __init__(self, P_cl, P_gd, P_sw=math.nan, P_coss=math.nan, P_rr=math.nan, P_dt=math.nan, cond=None):
@@ -158,14 +160,14 @@ def Rds_on(mf: MosfetSpecs, Id, Tj):
     return mf.Rds_on
 
 
-def p_coss_hs(dc: DcDcLoadParams, mf: MosfetSpecs) -> Tuple[float, float]:
+def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs) -> Tuple[float, float]:
     # for Coss the HS contribution is the energy stored in Coss
     # which is wasted in its own channel during turn-on
     # mf.Coss is Coss at ~V_bus. Coss is ~1/sqrt(V)
     # https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
 
     # Use getattr for safety in case Coss_V0 property is missing or Vds is invalid
-    coss_v0 = getattr(mf, 'Coss_V0', math.nan)
+    coss_v0 = mf.Coss_V0
     if not math.isfinite(coss_v0) or coss_v0 <= 0:
         # Fallback: assume Coss specified at ~half Vds (common datasheet practice)
         vds = getattr(mf, 'Vds', None)
@@ -239,7 +241,7 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
 
-    P_coss, qoss = p_coss_hs(dc, mf)
+    P_coss, qoss = p_coss_eoss(dc, mf)
 
     return SwitchPowerLoss(
         P_cl=i_rms2 * rds,  # conduction loss
@@ -263,7 +265,9 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     )
 
 
-def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan, Qrr_temp_rise=1.2, isGaN=False):
+def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
+                 Qrr_temp_rise=Qrr_temp_rise_default,
+                 isGaN=False):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -301,7 +305,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
 
-    P_coss, qoss = p_coss_hs(dc, mf)
+    P_coss, qoss = p_coss_eoss(dc, mf)
 
     return SwitchPowerLoss(
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
