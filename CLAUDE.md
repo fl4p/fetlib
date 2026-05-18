@@ -106,3 +106,8 @@ Largely independent of the FET pipeline; pulled in via `dclib.powerloss` for AC-
 - `out/` (gitignored) is where generated CSVs land (`fets-buck-…-csv`, etc.).
 - The `data/cache/` directory (gitignored) can grow large. `disk_cache` has TTL semantics — see `disk_cache(ttl, ignore_kwargs=, file_dependencies=, out_files=, salt=)`.
 - The Chromium profile under `dslib/chromium-user-data-dir/` is checked in for `Preferences` only; the rest is gitignored. Don't commit cookies or auth state from it.
+
+
+## Agent Instructions
+In case you cannot find a tool or software package try to install it, if you cannot install let me know.
+Do the same when you encounter a dependency issue or ModuleNotFound error.
