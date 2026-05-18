@@ -337,9 +337,8 @@ def _detect_plot_border(arr: np.ndarray,
         groups = out
         if not groups:
             return -1, -1
-        top = int(sum(groups[0]) / len(groups[0]))
-        bot = int(sum(groups[-1]) / len(groups[-1]))
-        return top, bot
+        centers = [int(sum(g) / len(g)) for g in groups]
+        return centers[0], centers[-1]
 
     def _pick_bounds_cols(groups: List[List[int]], max_v: int,
                           bin_img: np.ndarray) -> Tuple[int, int]:
@@ -429,6 +428,147 @@ def _mask_inchart_text(page: pymupdf.Page,
     return arr
 
 
+def _mask_grid_lines_strict(bin_img: np.ndarray,
+                            ratio: float = 0.5,
+                            thickness: int = 2) -> np.ndarray:
+    """Like ``_mask_grid_lines`` but with a lower coverage threshold and
+    a small thickness dilation. Toshiba "Dynamic Input/Output" charts
+    draw a horizontal gridline every 1 V; the gridline crossing a curve
+    boosts the row's coverage above the strict-mask threshold while the
+    coverage of the pure curve segments stays well below it. The
+    thickness pass extends each masked row/column by ``thickness`` px
+    on each side so an anti-aliased gridline's faint shoulder pixels
+    don't leak through and confuse the trace.
+    """
+    h, w = bin_img.shape
+    out = bin_img.copy()
+    rc = (bin_img > 0).sum(axis=1)
+    bad_rows = rc > ratio * w
+    bad_rows_d = bad_rows.copy()
+    for d in range(1, thickness + 1):
+        bad_rows_d[d:] |= bad_rows[:-d]
+        bad_rows_d[:-d] |= bad_rows[d:]
+    out[bad_rows_d, :] = 0
+    cc = (bin_img > 0).sum(axis=0)
+    bad_cols = cc > ratio * h
+    bad_cols_d = bad_cols.copy()
+    for d in range(1, thickness + 1):
+        bad_cols_d[d:] |= bad_cols[:-d]
+        bad_cols_d[:-d] |= bad_cols[d:]
+    out[:, bad_cols_d] = 0
+    return out
+
+
+def _trace_rising_curve(bin_img: np.ndarray,
+                        max_dy: int = 15,
+                        seed_search_frac: float = 0.5,
+                        seed_top_frac: float = 0.15,
+                        seed_min_support: int = 3,
+                        edge_skip: int = 2) -> np.ndarray:
+    """Trace a monotonically-rising VGS-vs-Qg curve.
+
+    Walks leftward from a top-right seed (where V_GS = V_drive at the
+    curve's right end). At each step the chosen pixel must sit at or
+    below the previous y (in image coords), so the trace cannot back-
+    track upward into a horizontal gridline or text label above the
+    curve. The seed is the first column from the right whose topmost
+    dark stretch sits in the top ``seed_top_frac`` slice of the plot
+    (V_GS ≳ 0.85·V_drive) — restrictive enough to skip an in-chart
+    "V_DD ≈ 16, 32, 64 V" annotation that floats at V≈6 in the upper-
+    right of Toshiba "Dynamic Input/Output" charts.
+
+    Suitable for charts with multiple overlapping curves where the
+    largest-dark-run trace gets distracted by V_DS curves crossing
+    the V_GS curve.
+    """
+    h, w = bin_img.shape
+    trace = np.full(w, np.nan, dtype=np.float64)
+    seed_x = None
+    seed_y = None
+    for x in range(w - 1 - edge_skip,
+                   max(0, w - int(seed_search_frac * w)) - 1, -1):
+        col = bin_img[:, x] > 0
+        ys = np.where(col)[0]
+        if len(ys) == 0:
+            continue
+        top_y = int(ys[0])
+        if top_y > seed_top_frac * h:
+            continue
+        support = 0
+        i = top_y
+        while i < h and col[i]:
+            support += 1
+            i += 1
+        if support >= seed_min_support:
+            seed_y = float(top_y)
+            seed_x = x
+            break
+    if seed_x is None:
+        return trace
+    trace[seed_x] = seed_y
+    cur_y = seed_y
+    for x in range(seed_x - 1, -1, -1):
+        ys = np.where(bin_img[:, x] > 0)[0]
+        if len(ys) == 0:
+            continue
+        # only accept y >= cur_y (curve only descends as x decreases);
+        # tolerate ~2 px of aliasing jitter
+        ok = ys[ys >= cur_y - 2]
+        if len(ok) == 0:
+            continue
+        diffs = np.abs(ok - cur_y)
+        i = int(np.argmin(diffs))
+        if diffs[i] > max_dy:
+            continue
+        trace[x] = float(ok[i])
+        cur_y = max(cur_y, trace[x])
+    return trace
+
+
+def _fill_short_nan_gaps(trace: np.ndarray, max_gap: int = 4) -> np.ndarray:
+    """Linearly interpolate across NaN runs of length ≤ ``max_gap``.
+
+    Vertical-gridline masking leaves single-column NaN gaps in the
+    trace that break ``_find_plateau_run``'s contiguous-run scan even
+    when the surrounding samples sit at the same y. Filling short gaps
+    lets the scan see the plateau as one run.
+    """
+    n = trace.shape[0]
+    out = trace.copy()
+    i = 0
+    while i < n:
+        if not math.isnan(out[i]):
+            i += 1
+            continue
+        j = i
+        while j < n and math.isnan(out[j]):
+            j += 1
+        gap_len = j - i
+        if gap_len <= max_gap and i > 0 and j < n \
+                and not math.isnan(out[i - 1]) and not math.isnan(out[j]):
+            y0, y1 = out[i - 1], out[j]
+            for k in range(i, j):
+                t = (k - (i - 1)) / (j - (i - 1))
+                out[k] = y0 + t * (y1 - y0)
+        i = j
+    return out
+
+
+def _title_is_dual_axis(title: Optional[str]) -> bool:
+    """Detect chart titles that flag a dual-y-axis V_GS / V_DS plot.
+
+    Toshiba's "Dynamic Input/Output Characteristics" charts plot V_GS
+    (right axis) and V_DS (left axis) against Q_g on the same frame
+    with three V_DS curves at different V_DD values overlapping the
+    single V_GS curve. The default per-column "largest dark run" trace
+    can't separate them; a monotonic-descent trace can.
+    """
+    if not title:
+        return False
+    t = title.lower()
+    return 'dynamic input/output' in t or 'dynamic input / output' in t
+
+
 def find_plateau_raster(page: pymupdf.Page,
                         chart: ChartLocation,
                         dpi: int = 300) -> Optional[RasterPlateauHit]:
@@ -484,10 +624,18 @@ def find_plateau_raster(page: pymupdf.Page,
     thresh = max(60, int(np.mean(arr) * 0.65))
     bin_img = ((arr < thresh).astype(np.uint8)) * 255
 
-    # strip long horizontal / vertical lines (grid, border, axis)
-    bin_no_grid = _mask_grid_lines(bin_img)
+    dual_axis = _title_is_dual_axis(chart.title)
 
-    trace = _trace_curve(bin_no_grid)
+    if dual_axis:
+        # Aggressive gridline masking (every 1 V on Toshiba charts) plus
+        # a monotonic-descent trace from the top-right seed: the V_GS
+        # curve is the only one that reaches V≈V_drive at the rightmost
+        # extent and rises monotonically into the seed.
+        bin_no_grid = _mask_grid_lines_strict(bin_img)
+        trace = _trace_rising_curve(bin_no_grid)
+    else:
+        bin_no_grid = _mask_grid_lines(bin_img)
+        trace = _trace_curve(bin_no_grid)
     if np.isnan(trace).all():
         return None
 
@@ -495,10 +643,15 @@ def find_plateau_raster(page: pymupdf.Page,
     # curves (probably a V_th-vs-something plot that happens to share
     # the 0..10 V y-axis). The real V_GS curve sweeps from ~0 V to the
     # drive voltage, so the trace spans nearly the full plot height.
+    # Dual-axis Toshiba charts get a looser threshold because the strict
+    # gridline mask carves out segments below the plateau where the
+    # rising-curve trace can't bridge — the trace typically covers
+    # V≈V_drive..V_plateau (~45-50% of plot height).
     valid_trace = trace[~np.isnan(trace)]
+    min_span_frac = 0.4 if dual_axis else 0.5
     if valid_trace.size > 0:
         trace_span = float(valid_trace.max() - valid_trace.min())
-        if trace_span / max(h, 1) < 0.5:
+        if trace_span / max(h, 1) < min_span_frac:
             return None
 
     # Tolerate ~0.5% of plot height of vertical wander; plateaus are
@@ -508,8 +661,29 @@ def find_plateau_raster(page: pymupdf.Page,
     flatness_px = max(2.0, 0.005 * h)
     min_run_px = max(10, int(0.03 * w))
 
-    run = _find_plateau_run(trace, flatness_px=flatness_px,
+    # The strict gridline mask leaves single-column NaN gaps where
+    # vertical gridlines were stripped; without bridging those gaps the
+    # plateau-run scan splits one plateau into many short segments.
+    scan_trace = _fill_short_nan_gaps(trace, max_gap=4) if dual_axis else trace
+    run = _find_plateau_run(scan_trace, flatness_px=flatness_px,
                             min_run_px=min_run_px)
+    if run is None and not dual_axis:
+        # Default per-column "largest dark run" trace gets distracted
+        # by in-chart text annotations ("Id=20A Vds=20V") whose dense
+        # glyph strokes outscore the thin curve in their columns,
+        # breaking the plateau into short fragments. Fall back to the
+        # monotonic rising-curve walk used for Toshiba dual-axis
+        # charts: it walks down the curve from a top-right seed and
+        # rejects any column whose trace would jump upward into the
+        # annotation, leaving the plateau intact.
+        rising_trace = _trace_rising_curve(bin_no_grid)
+        if not np.isnan(rising_trace).all():
+            valid_r = rising_trace[~np.isnan(rising_trace)]
+            if valid_r.size > 0 and (valid_r.max() - valid_r.min()) / h >= 0.5:
+                rising_scan = _fill_short_nan_gaps(rising_trace, max_gap=4)
+                run = _find_plateau_run(rising_scan,
+                                        flatness_px=flatness_px,
+                                        min_run_px=min_run_px)
     if run is None:
         return None
     x0, x1, plateau_y_px = run

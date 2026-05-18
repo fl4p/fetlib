@@ -42,10 +42,15 @@ def find_vpl_enc(pdf, enable_ocr):
 # References are copied from test/tests.py (test_pdf_parse / test_pdf_ocr /
 # tests_failing) and dslib/manual_fields.reference_data.
 SAMPLES: List[Tuple[str, float]] = [
+    ('datasheets/xnrusemi/XR150N04.pdf', 3.1),
+    ('datasheets/hxy/AM9435SA-HXY.pdf', 3.5),
+    ('datasheets/siliup/SP30N01AGHNP.pdf', 4.8),  # needs ocr
+
     ('datasheets/ti/CSD19532KTT.pdf', 4.8), # very soft plateau
     ('datasheets/diotec/DI110N15PQ.pdf', 3.2),
     ('datasheets/huayi/HYG009N06NS1C2.pdf', 4.9),
     ('datasheets/good_ark/GSFP1080.pdf', 5),
+
 
     ('datasheets/infineon/BSB056N10NN3GXUMA2.pdf', 4.2),  # chart title: "14 Typ. gate charge"
     ('datasheets/infineon/IPT025N15NM6ATMA1.pdf', 5.4),
@@ -89,10 +94,13 @@ SAMPLES: List[Tuple[str, float]] = [
     #AOTF288L
 ]
 
+# SAMPLES = SAMPLES[:20]
 
 def test_main():
     tol = float(os.environ.get('VPL_TOL', 0.5))
     enable_ocr = os.environ.get('VPL_OCR', '').lower() in ('1', 'true', 'yes')
+    if enable_ocr:
+        print('ocr enabled')
 
     n_ok = 0
     n_ref = 0

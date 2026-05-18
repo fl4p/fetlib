@@ -582,6 +582,13 @@ _CHART_TITLE_RE = re.compile(
     # F3L3 / IGBT-module datasheets use the unprefixed variant.
     r"(?:[0-9]+(?:\.[0-9]+)*\.?\s+)?"
     r"Gate[\s-]+Charge\s+Characteristics?\b.*"
+    r"|"
+    # F) ``Dynamic Input/Output Characteristics`` — Toshiba convention
+    # for gate charge charts. Optionally preceded by a figure prefix.
+    r"(?:Diagram|Figure|Fig\.?)\s*[0-9]+(?:[-\.][0-9]+)?\s*[.:\-]?\s+"
+    r"Dynamic\s+Input/Output\s+Characteristics?.*"
+    r"|"
+    r"Dynamic\s+Input/Output\s+Characteristics?\b.*"
     r")",
     re.IGNORECASE,
 )
@@ -649,7 +656,6 @@ _NON_CURVE_TITLE_RE = re.compile(
     r'|gate[\s-]+charge[\s-]+waveform[\s-]+definitions?'
     r'|source[\s-]+drain[\s-]+diode[\s-]+forward[\s-]+voltage'
     r'|switching[\s-]+time[\s-]+test[\s-]+circuit'
-    r'|output[\s-]+characteristics?'
     r')'
 )
 
@@ -696,6 +702,55 @@ def _find_chart_title_lines(words: List[_Word]
         if non_wave:
             return non_wave
     return out
+
+
+def _scan_numeric_tick_row(words: List[_Word],
+                           search_bbox: pymupdf.Rect
+                           ) -> List[Tuple[float, float, float]]:
+    """Find a horizontal row of numeric tick labels inside ``search_bbox``.
+
+    Returns ``[(value, cx, cy), ...]`` sorted by cx, or ``[]`` if no
+    plausible run is found.
+
+    Companion to ``_scan_numeric_tick_column``. Used by the title-
+    anchored chart finder for OCRed PDFs whose vertical Y-axis label
+    is illegible: the chart's horizontal extent and its position
+    relative to the title can be read off the x-axis tick numbers
+    instead (``0  40  80  120`` under the curve gives both the chart
+    width and the orientation, which the bare ``"Gate Charge"``
+    caption alone can't).
+    """
+    nums = [w for w in words
+            if _NUM_RE.match(w.text)
+            and search_bbox.x0 <= w.cx <= search_bbox.x1
+            and search_bbox.y0 <= w.cy <= search_bbox.y1]
+
+    y_clusters = _cluster(nums, lambda w: w.cy, 4.0)
+    best_run: Optional[List[_Word]] = None
+    for cl in y_clusters:
+        if len(cl) < 3:
+            continue
+        sorted_cl = sorted(cl, key=lambda w: w.cx)
+        for run in _all_equispaced_runs(sorted_cl, pos=lambda w: w.cx):
+            run = _longest_linear_subrun(run, key_pos=lambda w: w.cx)
+            if len(run) < 3:
+                continue
+            try:
+                _vals = [float(w.text) for w in run]
+            except ValueError:
+                continue
+            # X-axis ticks are typically monotonic-increasing left-to-
+            # right. _longest_linear_subrun already checks slope sign;
+            # additionally span at least ~20% of search_bbox width.
+            span = run[-1].cx - run[0].cx
+            if span < 0.2 * (search_bbox.x1 - search_bbox.x0):
+                continue
+            if best_run is None or len(run) > len(best_run):
+                best_run = run
+    if not best_run:
+        return []
+    return [(float(w.text), w.cx, w.cy)
+            for w in sorted(best_run, key=lambda w: w.cx)]
 
 
 def _scan_numeric_tick_column(words: List[_Word],
@@ -1066,6 +1121,7 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
         is_caption = starts_with_fig
         best_d = float('inf')
         full_page_image: Optional[pymupdf.Rect] = None
+        extra_charts: List[ChartLocation] = []
         for img in (images or []):
             b = img.get('bbox')
             if not b:
@@ -1117,10 +1173,121 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
             # title's rightmost character.
             col_x0 = max(page_rect.x0, title_bbox.x0 - 8)
             col_x1 = min(page_rect.x1, title_bbox.x1 + 110)
-            chart_h = 260.0
+            chart_h = 220.0
+            # If we can find an X-axis tick row near the title, use it
+            # to (1) decide caption vs header orientation (which side
+            # of the title the chart sits on) and (2) set the bbox's
+            # x range from the tick run's leftmost / rightmost cx —
+            # the title is sometimes off-centre relative to the chart
+            # (siliup centres the caption under the *x-axis-label*,
+            # not under the plot frame), so anchoring to the title's
+            # own x extent miscrops the rendered chart.
+            tick_search_pad_x = 80.0
+            tick_search_pad_y = chart_h + 20.0
+            x_tick_above = _scan_numeric_tick_row(words, pymupdf.Rect(
+                max(page_rect.x0, title_bbox.x0 - tick_search_pad_x),
+                max(page_rect.y0, title_bbox.y0 - tick_search_pad_y),
+                min(page_rect.x1, title_bbox.x1 + tick_search_pad_x),
+                title_bbox.y0 - 2))
+            x_tick_below = _scan_numeric_tick_row(words, pymupdf.Rect(
+                max(page_rect.x0, title_bbox.x0 - tick_search_pad_x),
+                title_bbox.y1 + 2,
+                min(page_rect.x1, title_bbox.x1 + tick_search_pad_x),
+                min(page_rect.y1, title_bbox.y1 + tick_search_pad_y)))
+
+            def _has_gc_axis_label_near(tick_y: float, max_dist: float = 30.0
+                                        ) -> bool:
+                """True if a Q_g/charge axis label sits near ``tick_y``.
+
+                The Gate Charge chart's x-axis label uniquely says
+                ``"Q_G — Gate Charge (nC)"`` (or vendor variants like
+                ``"Qg-Total Gate Charge (nC)"``). No other chart on
+                a MOSFET datasheet uses ``"Charge"`` / ``"(nC)"`` /
+                ``"Qg"`` / ``"Q_G"`` near its axis. Picking the tick
+                row that has this label nearby unambiguously selects
+                the gate-charge chart's tick row even when a
+                neighbouring chart's ticks are closer to the title.
+                """
+                for ow in words:
+                    if abs(ow.cy - tick_y) > max_dist:
+                        continue
+                    txt = (ow.text or '').lower().strip(' .,:;')
+                    if not txt:
+                        continue
+                    if txt in ('charge', 'gate', '(nc)', 'qg', 'qg-total',
+                               'q_g', 'qe', 'qe-total', 'q_g-total'):
+                        return True
+                    if txt.endswith('-total') or txt.startswith('q_g'):
+                        return True
+                    if 'charge' in txt and ('q' in txt or '(nc' in txt):
+                        return True
+                return False
+
+            above_has_label = (bool(x_tick_above)
+                               and _has_gc_axis_label_near(
+                                   max(t[2] for t in x_tick_above)))
+            below_has_label = (bool(x_tick_below)
+                               and _has_gc_axis_label_near(
+                                   min(t[2] for t in x_tick_below)))
+
+            chosen_tick_row: Optional[List[Tuple[float, float, float]]] = None
+            if above_has_label and not below_has_label:
+                chosen_tick_row, is_caption = x_tick_above, True
+            elif below_has_label and not above_has_label:
+                chosen_tick_row, is_caption = x_tick_below, False
+            elif above_has_label and below_has_label:
+                # Both flagged — pick the row closer to the title.
+                above_dist = title_bbox.y0 - max(t[2] for t in x_tick_above)
+                below_dist = min(t[2] for t in x_tick_below) - title_bbox.y1
+                if above_dist <= below_dist:
+                    chosen_tick_row, is_caption = x_tick_above, True
+                else:
+                    chosen_tick_row, is_caption = x_tick_below, False
+            # Neither side carries the gate-charge axis label —
+            # leave the default ``is_caption`` and ``col_x0/col_x1``
+            # untouched. The synthesizer's existing title-anchored
+            # bbox handles the "Fig N. Gate Charge" / "Diagram N. Typ.
+            # gate charge" charts where the axis label may have been
+            # OCR'd into unrecognisable fragments.
+            if chosen_tick_row:
+                xs = [t[1] for t in chosen_tick_row]
+                # widen by a tick-spacing on each side so the chart's
+                # plot frame (which sits a tick-spacing past the first
+                # / last labelled tick on charts that start at 0) is
+                # included.
+                if len(xs) >= 2:
+                    tick_step = (max(xs) - min(xs)) / (len(xs) - 1)
+                else:
+                    tick_step = 20.0
+                pad = max(20.0, 0.5 * tick_step)
+                col_x0 = max(page_rect.x0, min(xs) - pad)
+                col_x1 = min(page_rect.x1, max(xs) + pad)
             if is_caption:
                 cy0 = max(page_rect.y0, title_bbox.y0 - chart_h - 4)
                 cy1 = title_bbox.y0 - 2
+                # If another chart's caption (any "Fig N." / "Figure N.")
+                # sits above us within the chart_h window, that's the
+                # previous chart's bottom — clip cy0 to just below it so
+                # the bbox can't bleed into the chart above. Without
+                # this, the synthetic bbox can include the previous
+                # chart's plot frame and the raster pipeline picks its
+                # bottom edge as the gate-charge chart's top, miscaling
+                # the y-axis.
+                for ow in words:
+                    txt = (ow.text or '').strip()
+                    if not txt:
+                        continue
+                    if not re.match(r'(?i)^(?:figure|fig\.?)$', txt):
+                        continue
+                    if ow.y1 >= title_bbox.y0 - 4:
+                        continue
+                    if ow.y1 <= cy0:
+                        continue
+                    # vertically aligned with our title (allow generous
+                    # horizontal overlap — captions are usually centred)
+                    if ow.x1 < title_bbox.x0 - 30 or ow.x0 > title_bbox.x1 + 30:
+                        continue
+                    cy0 = max(cy0, ow.y1 + 2)
             else:
                 cy0 = title_bbox.y1 + 2
                 cy1 = min(page_rect.y1, title_bbox.y1 + chart_h + 4)
@@ -1135,7 +1302,6 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
         # both reject charts whose curve doesn't sweep most of the
         # vertical range, so a flat reference chart can't outscore the
         # real V_GS curve.
-        extra_charts: List[ChartLocation] = []
         # Carry the ticks discovered while searching for a tick column
         # *outside* the eventual chart bbox — the chart bbox uses a
         # narrower x-range that may exclude the y-axis tick labels,
@@ -1187,6 +1353,16 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
                 if img_rect is None:
                     img_rect = candidate_bbox
                     is_caption = try_caption
+                    primary_ticks = ticks
+                elif try_caption == is_caption and not primary_ticks:
+                    # img_rect was set by the full-page-image synthesizer
+                    # earlier; this tick-column scan probed the same side
+                    # as our title, so its tick list is the most accurate
+                    # calibration we'll get for our chart. Use it as
+                    # primary_ticks instead of adding a redundant
+                    # extra_chart with a wider bbox. The wider bbox tends
+                    # to pull the raster trace away from the real plateau
+                    # because it includes neighbouring chart chrome.
                     primary_ticks = ticks
                 else:
                     extra_charts.append(ChartLocation(
@@ -1240,6 +1416,109 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
             y_ticks = _scan_numeric_tick_column(words, img_rect)
             if not y_ticks:
                 y_ticks = [(10.0, img_rect.y0), (0.0, img_rect.y1)]
+
+        # OCR often only catches a contiguous run of the V_GS axis ticks
+        # — typically the lower half (e.g. 0/2/4 for siliup, where 6/8/10
+        # are OCR'd as garbled glyphs and excluded by the equispaced-run
+        # filter). The plot interior bbox in ``raster_extract`` then
+        # crops to the detected ticks' y-range, missing the upper plot
+        # area where the Miller plateau lives.
+        #
+        # Recover the missing top tick by:
+        #   1. Searching the y-axis column for an OCR'd ``"10"`` (or
+        #      similar V_drive value) above the detected ticks at the
+        #      same x. This is the most accurate anchor — the label
+        #      position is read straight from the page.
+        #   2. Falling back to linear extrapolation from the existing
+        #      ticks when no usable OCR label is found.
+        if (len(y_ticks) >= 2 and len(y_ticks) < 6
+                and img_rect is not None):
+            vs = sorted(y_ticks)
+            ys = [y for _, y in y_ticks]
+            ys_v = [v for v, _ in y_ticks]
+            # Establish the y-axis column's x extent from the detected
+            # tick labels (each y-tick label sits next to its tick line).
+            # We use it to filter the search for additional labels.
+            tick_cxs = []
+            for ow in words:
+                txt = (ow.text or '').strip()
+                if not txt:
+                    continue
+                try:
+                    val = float(txt)
+                except ValueError:
+                    continue
+                # match this OCR label against an existing y_tick by cy
+                for v, y in y_ticks:
+                    if abs(ow.cy - y) < 3.0 and abs(val - v) < 0.1:
+                        tick_cxs.append(ow.cx)
+                        break
+            if tick_cxs:
+                cx_min = min(tick_cxs) - 8.0
+                cx_max = max(tick_cxs) + 8.0
+            else:
+                cx_min = img_rect.x0
+                cx_max = img_rect.x1
+
+            extrapolated: List[Tuple[float, float]] = list(y_ticks)
+
+            # Search for OCR labels at typical V_drive values that lie
+            # above the topmost detected tick (smaller y) in the same
+            # x column. The y-axis labels usually appear at the same
+            # x as the detected tick run.
+            top_y = min(ys)
+            for target_v in (10.0, 20.0):
+                if any(abs(v - target_v) < 0.1 for v, _ in y_ticks):
+                    continue
+                best_w = None
+                for ow in words:
+                    txt = (ow.text or '').strip()
+                    if not txt:
+                        continue
+                    try:
+                        val = float(txt)
+                    except ValueError:
+                        continue
+                    if abs(val - target_v) > 0.5:
+                        continue
+                    if not (cx_min <= ow.cx <= cx_max):
+                        continue
+                    # Must sit ABOVE (smaller y) the topmost detected
+                    # tick by at least a tick-spacing — guards against
+                    # picking the existing top tick as itself.
+                    if ow.cy >= top_y - 5.0:
+                        continue
+                    if ow.cy < img_rect.y0 - 30:
+                        continue
+                    if best_w is None or ow.cy > best_w.cy:
+                        best_w = ow
+                if best_w is not None:
+                    extrapolated.append((target_v, best_w.cy))
+                    break
+
+            # Linear-fit fallback for V=10 / V=0 endpoints not yet
+            # covered. Uses least squares on the detected ticks.
+            try:
+                n = len(y_ticks)
+                sx = sum(ys_v)
+                sy = sum(ys)
+                sxx = sum(v * v for v in ys_v)
+                sxy = sum(v * y for v, y in zip(ys_v, ys))
+                denom = n * sxx - sx * sx
+                if denom != 0:
+                    m = (n * sxy - sx * sy) / denom
+                    c = (sy - m * sx) / n
+                    for target_v in (0.0, 10.0):
+                        if any(abs(v - target_v) < 0.1 for v, _ in extrapolated):
+                            continue
+                        target_y = m * target_v + c
+                        if img_rect.y0 - 30 <= target_y <= img_rect.y1 + 30:
+                            extrapolated.append((target_v, target_y))
+            except (ValueError, ZeroDivisionError):
+                pass
+
+            if len(extrapolated) > len(y_ticks):
+                y_ticks = sorted(extrapolated, key=lambda t: -t[0])
 
         loc = ChartLocation(
             page_num=page.number,
