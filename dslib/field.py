@@ -7,7 +7,8 @@ from copy import copy
 from typing import List, Iterable, Dict, Literal, Tuple, Union, cast, Optional
 
 from dslib import round_to_n_dec
-from dslib.pdf.expr import any_unit, DIMENSIONS, Dimension
+from dslib.conditions import normalize_conditions
+from dslib.pdf.expr import any_unit
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
 
 
@@ -75,7 +76,6 @@ class Field():
                 mul = 1000
                 unit = 'mΩ'
 
-
         min = parse_field_value(min, no_raise=True) * mul
         typ = parse_field_value(typ, no_raise=True) * mul
         max = parse_field_value(max, no_raise=True) * mul
@@ -135,7 +135,7 @@ class Field():
 
         self.unit = unit
 
-        self.cond = cond
+        self.cond: dict = cond
 
         self.timestamp = time.time()
 
@@ -202,7 +202,7 @@ class Field():
 
         # if f has more values, use all of them
         # todo this is questionable
-        #is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
+        # is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
         is_sup = False
 
         nz = self.symbol in self.not_zero_symbols
@@ -447,6 +447,17 @@ class DatasheetFields():
         if math.isnan(Id):
             Id = ds.get_typ_or_max_or_min('Id', False)
 
+        def _select_cond_values(symbol, cond_sym):
+            cond = []
+            for f in self.fields_lists.get(symbol, []):
+                v = normalize_conditions(f.cond).get(cond_sym)
+                if v:
+                    cond.append(v)
+            return cond
+
+        # Some datasheet only show Coss at given Vds
+        coss_cond = _select_cond_values('Coss', 'Vds') or _select_cond_values('Qoss', 'Vds')
+
         from dslib.mosfet import MosfetSpecs
         return MosfetSpecs(
             Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
@@ -457,6 +468,7 @@ class DatasheetFields():
             tFall=ds.get_typ_or_max_or_min('tFall') * 1e-9,
             **{k: field_mul(k, ds.get_typ_or_max_or_min(k), ds.get_unit(k)) for k in mf_fields},
             Vpl=ds.get_typ_or_max_or_min('Vpl'),
+            Coss_Vds=max(coss_cond) if coss_cond else None,  # small numbers are usually wrong
             part=self.part,
         )
 
