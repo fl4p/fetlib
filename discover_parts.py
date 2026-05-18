@@ -18,7 +18,7 @@ import dslib.discovery.tw
 import dslib.discovery.vishay
 from dslib import mfr_tag
 from dslib.discovery import DiscoveredPart, benchmark_mpns
-from dslib.fetch import fetch_datasheet, close_browser
+from dslib.fetch import fetch_datasheet, close_browser, get_datasheet_url
 
 
 def unique_parts(parts: List[DiscoveredPart]):
@@ -122,7 +122,7 @@ async def main():
 
     from dslib.spec_models import DcDcLoadParams
     dcdc_params = DcDcLoadParams.default()
-    parts = dcdc_params.select_mosfets(parts, max_parallel=10)
+    #parts = dcdc_params.select_mosfets(parts, max_parallel=10)
 
     #parts = [p for p in parts if (p.specs.ID_25 >= 2 and p.specs.Rds_on_10v_max < 20e-3)]
         #        or (p.specs.Vds_max >= 200 and p.specs.Vds_max <= 800 and p.specs.ID_25 >= 10)
@@ -158,6 +158,19 @@ async def main():
                 # os.remove(op)
 
     download = [p for p in parts if not os.path.exists(p.get_ds_path()) and p.ds_url]
+
+    def manual_dl_only(p:DiscoveredPart):
+        if p.mfr == 'st':
+            return True
+        return False
+
+    man = []
+    for d in download:
+        if manual_dl_only(d):
+            man.append(d.ds_url or get_datasheet_url(d.mfr, d.mpn))
+
+    if man:
+        print('manual dl parts:', (man))
 
     from wakepy import keep
     with keep.running():
