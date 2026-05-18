@@ -166,15 +166,8 @@ def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs) -> Tuple[float, float]:
     # mf.Coss is Coss at ~V_bus. Coss is ~1/sqrt(V)
     # https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
 
-    # Use getattr for safety in case Coss_V0 property is missing or Vds is invalid
     coss_v0 = mf.Coss_V0
-    if not math.isfinite(coss_v0) or coss_v0 <= 0:
-        # Fallback: assume Coss specified at ~half Vds (common datasheet practice)
-        vds = getattr(mf, 'Vds', None)
-        if vds is not None and math.isfinite(vds) and vds > 0:
-            coss_v0 = vds / 2
-        else:
-            coss_v0 = math.nan
+
     if math.isfinite(coss_v0) and coss_v0 > 0:
         # Coss is ~1/sqrt(V)
         p_coss = 2 / 3 * mf.Coss * dc.Vi ** (3 / 2) * coss_v0 ** .5 * dc.f
