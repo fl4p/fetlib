@@ -250,19 +250,19 @@ class MosfetSpecs:
     @property
     def Coss_V0(self):
         mf = self
-        coss_vds = mf.Coss_Vds
-        if coss_vds is not None and math.isfinite(coss_vds) and coss_vds > 0:
-            coss_v0 = mf.Coss_Vds
-            assert not (abs((mf.Vds / 2) - coss_v0) / mf.Vds > 0.2), (coss_v0, mf.Vds)
+        coss_vds = getattr(mf, 'Coss_Vds', math.nan)
+        if coss_vds and math.isfinite(coss_vds):
+            coss_v0 = abs(coss_vds) # test voltage might be given negative for p-channel
+            assert mf.Vds and not (abs((mf.Vds / 2) - coss_v0) / mf.Vds > 0.2), (coss_v0, mf.Vds)
         else:
             # Fallback: assume Coss specified at ~half Vds (common datasheet practice)
-            vds = mf.Vds
-            if vds is not None and math.isfinite(vds) and vds > 0:
+            vds = abs(mf.Vds or math.nan)
+            if math.isfinite(vds) and vds > 1:
                 coss_v0 = vds / 2
             else:
                 coss_v0 = math.nan
 
-        return coss_v0 or math.nan
+        return coss_v0
 
 
 class GateDrive:
