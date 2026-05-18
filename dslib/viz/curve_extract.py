@@ -421,6 +421,41 @@ def _has_oblique_neighbor(seg: Segment,
     return _oblique_neighbor_count(seg, all_segments, tol) >= 1
 
 
+def _looks_like_arrowhead(point: Tuple[float, float],
+                          all_segments: List[Segment],
+                          tol: float = 3.0,
+                          max_len: float = 8.0) -> bool:
+    """True if ``point`` has short outgoing strokes in *both* up and down
+    directions — the classic triangle arrowhead pattern.
+
+    Annotation arrows on ST-style gate-charge charts (the "Q_gs"/"Q_gd"
+    dimension arrows at the Miller-plateau level) consist of a long
+    horizontal stem capped by a small triangle at each end. The triangle's
+    edges fan out above AND below the stem y, so the stem's endpoint sees
+    short segments going both up and down. A real Miller-plateau endpoint
+    only ever sees outgoing strokes on ONE side (rising / falling curve
+    tangent), and any guide-line going from the plateau down to the
+    x-axis is long, not short — so this check doesn't trip on legit
+    plateau endpoints with Q_gs/Q_gd guide lines.
+    """
+    px, py = point
+    up = down = 0
+    for s in all_segments:
+        if s.length > max_len or s.length < 0.5:
+            continue
+        for sx, sy in ((s.x0, s.y0), (s.x1, s.y1)):
+            if abs(sx - px) < tol and abs(sy - py) < tol:
+                ox, oy = ((s.x1, s.y1) if (sx == s.x0 and sy == s.y0)
+                          else (s.x0, s.y0))
+                d = oy - py
+                if d > 0.5:
+                    down += 1
+                elif d < -0.5:
+                    up += 1
+                break
+    return up >= 1 and down >= 1
+
+
 def find_plateau(page: pymupdf.Page,
                  chart: ChartLocation) -> Optional[PlateauHit]:
     """Find the Miller plateau in the located chart on a page.
@@ -434,6 +469,18 @@ def find_plateau(page: pymupdf.Page,
     try:
         a, b = _calibrate_y(chart)
     except ValueError:
+        return None
+
+    # The chart finder occasionally tags a neighbouring chart whose
+    # y axis happens to look numeric (e.g. IRFH7110 page 2's
+    # capacitance chart, y axis 0.5..2.5 of nF) as a gate-charge
+    # chart candidate. Plateau extraction on such a chart returns a
+    # nonsense V that then beats the correct title-anchored chart in
+    # the find_vpl ranking. A real V_GS axis always spans at least
+    # ~5 V (lowest-voltage GaN parts go 0..5 V; silicon parts 0..10
+    # V or wider), so reject narrow-range tick columns up front.
+    y_vals = [v for v, _ in chart.y_ticks]
+    if y_vals and (max(y_vals) - min(y_vals)) < 5.0:
         return None
 
     drawings = _drawings_in_bbox(page, chart.bbox)
@@ -490,11 +537,16 @@ def find_plateau(page: pymupdf.Page,
                 continue
             # Reject polylines that are basically a flat horizontal line
             # (an axis or gridline drawn as a polyline). A real
-            # gate-charge polyline has rising/falling sections outside the
-            # plateau window — the polyline's overall y-range should be
-            # much larger than the plateau's y-range.
+            # gate-charge polyline has rising/falling sections outside
+            # the plateau window — usually the polyline's overall y-
+            # range is much larger than the plateau's y-range. Some
+            # vendors split the curve into separate sub-paths and draw
+            # the plateau as its own short, almost-flat sub-path
+            # (ST datasheets), so we don't reject low-y-range polylines
+            # outright; only when the polyline is *also* wide (clearly
+            # an axis/gridline rather than a plateau-only sub-path).
             poly_y_range = max(p[1] for p in poly) - min(p[1] for p in poly)
-            if poly_y_range < 0.2 * bbox_h:
+            if poly_y_range < 0.2 * bbox_h and dx > 0.5 * bbox_w:
                 continue
             # Locate the plateau window in x coordinates for the synthetic
             # segment endpoints.
@@ -594,6 +646,17 @@ def find_plateau(page: pymupdf.Page,
             s *= 20.0
         elif n_ob >= 1:
             s *= 3.0
+        # Annotation arrows (e.g. the Q_gs / Q_gd dimension arrows on
+        # ST's "gate charge characteristics" charts) look like a long
+        # horizontal stem with a short triangle arrowhead at each end.
+        # The arrowhead's edges fan both up and down from the stem's
+        # endpoint, so both endpoints satisfy
+        # ``_looks_like_arrowhead``. A real plateau's tangent goes only
+        # one way (rising into / falling out of the plateau), so it
+        # doesn't trip this check.
+        if (_looks_like_arrowhead((seg.x0, seg.y0), all_segments)
+                and _looks_like_arrowhead((seg.x1, seg.y1), all_segments)):
+            continue
         scored.append((s, seg))
 
     if not scored:
@@ -643,16 +706,29 @@ def find_plateau(page: pymupdf.Page,
         return total
 
     groups.sort(key=group_strength, reverse=True)
-    best = groups[0]
-    s_best, seg_best = max(best, key=lambda t: t[0])
+
+    # Walk the groups in descending order of strength and return the
+    # first one whose plateau y maps to a plausible Miller-plateau V.
+    # ST-style charts whose V axis extends past V_drive (e.g. STWA's
+    # 0..12 V scale with a 10 V curve) place a long horizontal segment
+    # at V=12 (the top axis line) that outscores the real plateau; the
+    # post-pick V-range check used to throw the result away entirely
+    # instead of falling back to the next-best group.
+    height = chart.bbox.y1 - chart.bbox.y0
+    seg_best: Optional[Segment] = None
+    s_best: float = 0.0
+    for g in groups:
+        cand_s, cand_seg = max(g, key=lambda t: t[0])
+        cand_v = a * cand_seg.cy + b
+        if 1.0 < cand_v < 10.0:
+            seg_best = cand_seg
+            s_best = cand_s
+            break
+    if seg_best is None:
+        return None
 
     y = seg_best.cy
     v_pl = a * y + b
-
-    if not (1.0 < v_pl < 10.0):
-        return None
-
-    height = chart.bbox.y1 - chart.bbox.y0
     rel_pos = (y - chart.bbox.y0) / height if height > 0 else 0.5
 
     return PlateauHit(
@@ -763,6 +839,7 @@ def find_in_pdf(pdf_path: str,
         # "Dynamic Input/Output Characteristics" and don't mention "gate
         # charge" anywhere on the page.
         if ('gate charge' not in text_lower
+                and 'gate-charge' not in text_lower
                 and 'qg' not in text_lower
                 and 'dynamic input/output' not in text_lower
                 and 'dynamic input / output' not in text_lower):
@@ -851,7 +928,7 @@ def find_in_pdf(pdf_path: str,
         has_keyword = False
         for page in doc.pages():
             tl = page.get_text().lower()
-            if ('gate charge' in tl or 'qg' in tl
+            if ('gate charge' in tl or 'gate-charge' in tl or 'qg' in tl
                     or 'dynamic input/output' in tl
                     or 'dynamic input / output' in tl):
                 has_keyword = True

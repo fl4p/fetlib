@@ -558,7 +558,7 @@ _CHART_TITLE_RE = re.compile(
     #      doesn't fire on them.
     r"^\s*(?:"
     # A
-    r"(?:Diagram|Figure|Fig\.?)\s*[0-9]+(?:-[0-9]+)?\s*[.:\-]?\s+"
+    r"(?:Diagram|Figure|Fig\.?)\s*[0-9]+(?:-[0-9]+)?[\s.:\-]+"
     r"(?:Typ(?:ical|ycal)?\s*\.?\s+)?"
     r"Gate[\s-]+Charge.*"
     r"|"
@@ -1330,6 +1330,28 @@ def _find_infineon_raster_charts(page: pymupdf.Page) -> List[ChartLocation]:
                 ys = [y for _, y in ticks]
                 col_x0 = max(page_rect.x0, title_bbox.x0 - 60)
                 col_x1 = min(page_rect.x1, title_bbox.x1 + 160)
+                # Clip horizontally to the nearest neighbouring chart
+                # caption on the same row. Datasheet pages routinely lay
+                # out two charts side by side (e.g. ST's "Figure 5.
+                # Typical gate charge characteristics" next to "Figure 6.
+                # Typical drain-source on-resistance" at the same y).
+                # Without this clip the title-anchored bbox bleeds into
+                # the neighbour, pulling its plot frame and curve into
+                # the raster trace.
+                for ow in words:
+                    if ow.y1 < title_bbox.y0 - 2 or ow.y0 > title_bbox.y1 + 2:
+                        continue
+                    txt = (ow.text or '').strip()
+                    if not re.match(r'(?i)^(?:figure|fig\.?)$', txt):
+                        continue
+                    if ow.x0 <= title_bbox.x1 + 2:
+                        continue
+                    if ow.x0 < col_x1:
+                        col_x1 = max(title_bbox.x1 + 8, ow.x0 - 4)
+                    if ow.x1 > title_bbox.x0 - 2:
+                        continue
+                    if ow.x1 > col_x0:
+                        col_x0 = min(title_bbox.x0 - 8, ow.x1 + 4)
                 # Extend the bbox by ~one tick-spacing past the topmost
                 # and bottommost tick labels. Some charts (e.g. vishay
                 # SUP-series gate-charge) draw the plot frame and curve

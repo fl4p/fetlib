@@ -42,6 +42,9 @@ def find_vpl_enc(pdf, enable_ocr):
 # References are copied from test/tests.py (test_pdf_parse / test_pdf_ocr /
 # tests_failing) and dslib/manual_fields.reference_data.
 SAMPLES: List[Tuple[str, float]] = [
+    ('datasheets/st/STWA75N65DM6.pdf', 6.5), # double axis, a lot of annotations
+    ('datasheets/ao/AON6220.pdf', 2.5),
+    ('datasheets/mcc/MCAC60N15YA-TP.pdf', 4.7),
     ('datasheets/xnrusemi/XR150N04.pdf', 3.1),
     ('datasheets/hxy/AM9435SA-HXY.pdf', 3.5),
     ('datasheets/siliup/SP30N01AGHNP.pdf', 4.8),  # needs ocr
