@@ -46,7 +46,7 @@ Pcl_ParallelMistmatchFactor = 0.9  # HS: one switch takes most of the dynamic lo
 class SwitchPowerLoss():
     def __init__(self, P_cl, P_gd, P_sw=math.nan, P_coss=math.nan, P_rr=math.nan, P_dt=math.nan, cond=None):
         """
-        :param P_on: conduction loss
+        :param P_cl: conduction loss
         :param P_gd: gate drive loss
         :param P_sw:  switching loss
         :param P_coss: output capacitance loss

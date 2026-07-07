@@ -12,3 +12,5 @@ Explore data in datasheet_db and write the normalize_conditions based on what yo
 Look into these fields and their conditions:
 * Qoss: Vds, Vgs
 * Qrr: di/dt, I, Vds
+
+For Qoss also accept Vds values in the like 'V =75 V'.
