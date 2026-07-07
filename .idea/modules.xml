@@ -2,6 +2,8 @@
 <project version="4">
   <component name="ProjectModuleManager">
     <modules>
+      <module fileurl="file://$PROJECT_DIR$/../ee/dcdc-tools/.idea/dcdc-tools.iml" filepath="$PROJECT_DIR$/../ee/dcdc-tools/.idea/dcdc-tools.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../ee/.idea/ee.iml" filepath="$PROJECT_DIR$/../ee/.idea/ee.iml" />
       <module fileurl="file://$PROJECT_DIR$/../fet-data-extractor/.idea/fet-datasheets.iml" filepath="$PROJECT_DIR$/../fet-data-extractor/.idea/fet-datasheets.iml" />
       <module fileurl="file://$PROJECT_DIR$/.idea/pwr-mosfet-lib.iml" filepath="$PROJECT_DIR$/.idea/pwr-mosfet-lib.iml" />
     </modules>

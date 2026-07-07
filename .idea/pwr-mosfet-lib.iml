@@ -10,5 +10,7 @@
     <orderEntry type="jdk" jdkName="Python 3.10 (fetlib)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="fet-datasheets" />
+    <orderEntry type="module" module-name="dcdc-tools" />
+    <orderEntry type="module" module-name="ee" />
   </component>
 </module>
