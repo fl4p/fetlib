@@ -17,7 +17,7 @@ DC bias current decreases core permeability, reducing L and increases ripple cur
 This can put the converter in DCM with higher loads.
 
 """
-from apps.mppts.libresolar import MPPT_Fheat2
+from apps.mppts.fugu import MPPT_Fheat2
 from dslib import round_to_n_dec
 
 L_drop_estimate = 0.99
