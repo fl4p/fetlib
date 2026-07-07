@@ -100,7 +100,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
             redo_ocr=not rasterize,
             oversample=int(rasterize) if not isinstance(rasterize, bool) else None,
             force_ocr=bool(rasterize),
-            tesseract_config=cfg_file,
+            tesseract_config=[cfg_file],
             # tesseract_thresholding=''
             user_words=pathlib.Path(uw_file),  # user_patterns=
             progress_bar=True,
@@ -205,7 +205,7 @@ def pdf2pdf(in_path, out_path, method):
             stdout=subprocess.DEVNULL, ),  # TODO try decrypt
         cups=cups,
 
-        fix_font_enc=lambda: fix_pdf_font_encoding(in_path, out_path, rewrite_streams=False, raise_if_no_bad_fonts=True),
+        fix_font_enc=lambda: fix_pdf_font_encoding(in_path, out_path, raise_if_no_bad_fonts=True),
 
         # ocrmypdf=lambda: raster_ocr(in_path, out_path, 'ocrmypdf'),
         ocrmypdf_r250=lambda: ocrmypdf(in_path, out_path, rasterize=250),

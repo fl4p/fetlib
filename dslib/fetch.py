@@ -6,6 +6,7 @@ import re
 import time
 import traceback
 from functools import partial
+from os.path import expanduser
 from typing import Union, List, Dict
 
 import requests
@@ -40,6 +41,11 @@ def get_datasheet_url(mfr, mpn):
             f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}_1.pdf',
             ]
 
+    if mfr == 'st':
+        return [
+            '~/Downloads/'+mpn.lower()+'.pdf',
+        ]
+
     # asyncio.get_event_loop().run_until_complete(download_with_chromium(
     #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
     #    click='a#pdp-datasheet_0,a#lnkDataSheet_1',
@@ -53,8 +59,6 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
     ds_url = ds_url and ds_url.strip('- ')
     ds_url = ds_url or get_datasheet_url(mfr, mpn)
 
-    if ds_url and ds_url.startswith('//'):
-        ds_url = 'https:' + ds_url
 
     if mfr == 'ti':
         ds_url_alt = ds_url
@@ -70,6 +74,10 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
             ds_url = dslib.discovery.onsemi.onsemi_ds_url(mpn)
         # ds_url_alt = ds_url.replace('fdb','fdp')
         # ds_url_alt = lambda : dslib.parts_discovery.onsemi_ds_url(mpn)
+
+    if mfr == 'st':
+        #ds_url_alt = ds_url
+        ds_url = get_datasheet_url(mfr, mpn)
 
     if not ds_url or str(ds_url) == 'nan':
         print('SKIP', datasheet_path, 'no url', ds_url)
@@ -92,6 +100,17 @@ async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
         try:
             if callable(du):
                 du = du()
+
+            if du.startswith('//'):
+                du = 'https:' + du
+
+            if not du.startswith('http'):
+                if os.path.isfile(expanduser(du)):
+                    import shutil
+                    shutil.copyfile(expanduser(du), datasheet_path)
+                    return
+                else:
+                    continue
 
             try:
                 req = requests.get(du, timeout=6)

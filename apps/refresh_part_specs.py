@@ -33,6 +33,7 @@ import os
 import traceback
 from typing import Any, List, Optional, Set, Tuple, Union
 
+from dslib import get_datasheets_path
 from dslib.discovery import DiscoveredPart
 from dslib.field import DatasheetFields
 from dslib.store import Part, parts_db
@@ -70,13 +71,14 @@ WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
     ('Qg',           'specs', 'Qg',          (1e-10,   1e-5)),     # C  (0.1 nC .. 10 µC)
     #('Qrr',          'specs', 'Qrr',         (1e-10,   1e-5)),    # C
     ('Vsd',          'specs', 'Vsd',         (0.3,     2.5)),      # V
-    ('V_pl',         'specs', 'V_pl',        (2.0,     9.0)),      # V (matches _VPL_MIN/_VPL_MAX)
+    ('V_pl',         'specs', 'V_pl',        (2.0,     9.0)),      # V (matches _VPL_MIN/_VPL_MAX) # TODO for SiC Vpl can be higher! and for GaN probably smaller
     ('QgdQgs_ratio', 'specs', 'QgdQgsRatio', (0.05,    10.0)),     # dimensionless
     #('Vgs_th',       'basic', 'Vgs_th_max',  (0.5,     8.0)),     # V
 )
 
 WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
-    ('Vds_max',      'specs', 'Vds',         (10.0,    10000.0)),
+    ('Rds_on_max', 'specs', 'Rds_on', (1e-5, 10.0)),  # Ω
+    #('Vds_max',      'specs', 'Vds',         (10.0,    10000.0)),
     #('Qg', 'specs', 'Qg', (1e-10, 1e-5)),  # C  (0.1 nC .. 10 µC)
     ('V_pl',         'specs', 'V_pl',        (2.0,     9.0)),
     #('Qrr',          'specs', 'Qrr',         (1.5e-9,   1e-5)),    # C
@@ -146,7 +148,7 @@ def missing_web_fields(part: Part) -> List[str]:
     miss: List[str] = []
     #if 'IXFH120N25T' in part.mpn:
     #    miss.append('Qrr')
-    miss.append('V_pl')
+    #miss.append('V_pl')
     for label, where, attr, valid_range in WEB_FIELDS:
         v = _read_web_field(part, where, attr)
         if _in_range(v and abs(v), valid_range):
@@ -171,7 +173,8 @@ def _ds_path(part: Part) -> Optional[str]:
     if disc is None:
         return None
     try:
-        path = disc.get_ds_path()
+        path = os.path.join(get_datasheets_path() , disc.get_ds_path())
+        path = path.replace('datasheets/datasheets/', 'datasheets/')
     except Exception:
         return None
     return path if path and os.path.isfile(path) else None

@@ -224,3 +224,7 @@ CSD19532KTT: 4.8V, just a slight kink
 
 
 # optimizing
+
+siliup/SP30N01AGHNP: the caption is not right-shifted, it is centered, below the chart. try 
+  to fix it with OCR. if you regress the others focus on the axis labels (does OCR work for 
+  vertical text?) 

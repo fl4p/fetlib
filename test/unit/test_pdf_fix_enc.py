@@ -17,11 +17,14 @@ CUSTOM_ENCODING_SAMPLES = [
     "datasheets/huayi/HY1920W.pdf",
     "datasheets/infineon/IPP028N08N3_G.pdf",
     "datasheets/infineon/IPW60R041C6.pdf",
+    #"datasheets/huayi/HY0910D.pdf",
 ]
 
 # Sample PDFs WITHOUT custom font encoding (negative test cases)
 NO_CUSTOM_ENCODING_SAMPLES = [
-    "datasheets/huayi/HY0910D.pdf",
+    "datasheets/huayi/HY0910D.pdf", # actually it has!
+    "datasheets/ti/CSD19532KTT.pdf",
+    "datasheets/mcc/MCAC100N08Y-TP.pdf",
 ]
 
 

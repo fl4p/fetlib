@@ -22,7 +22,6 @@ class Part:
     @property
     def is_fet(self):
         assert self.specs
-        from dslib.spec_models import MosfetSpecs
         return isinstance(self.specs, MosfetSpecs)
 
 

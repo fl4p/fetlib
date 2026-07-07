@@ -68,6 +68,97 @@ class PlateauHit:
 # ---------- vector drawing helpers ----------
 
 
+def _polylines_from_drawing(d: dict) -> List[List[Tuple[float, float]]]:
+    """Reconstruct connected polylines (lists of (x, y) points) from a drawing.
+
+    A chart's gate-charge curve is typically drawn as one path with many
+    short ``l`` or ``c`` ops in a chain — each op's start point equals the
+    previous op's end. We walk the items in order, splitting whenever the
+    chain is broken (gap, ``m`` move-to, ``re`` rect, etc.).
+
+    Curves drawn as densely-sampled bezier polylines (e.g. AO/Vishay) end
+    up as hundreds of ~1 px segments that the per-segment chrome filter
+    rejects as ticks, so we need to consider the polyline as a single
+    object when looking for a plateau.
+    """
+    polylines: List[List[Tuple[float, float]]] = []
+    cur: Optional[List[Tuple[float, float]]] = None
+    last: Optional[Tuple[float, float]] = None
+
+    def _flush():
+        nonlocal cur
+        if cur is not None and len(cur) >= 2:
+            polylines.append(cur)
+        cur = None
+
+    for it in d['items']:
+        op = it[0]
+        if op == 'l':
+            p0, p1 = it[1], it[2]
+            if cur is None or last is None \
+                    or abs(p0.x - last[0]) > 0.5 or abs(p0.y - last[1]) > 0.5:
+                _flush()
+                cur = [(p0.x, p0.y), (p1.x, p1.y)]
+            else:
+                cur.append((p1.x, p1.y))
+            last = (p1.x, p1.y)
+        elif op == 'c':
+            p0 = it[1]
+            p3 = it[4]
+            if cur is None or last is None \
+                    or abs(p0.x - last[0]) > 0.5 or abs(p0.y - last[1]) > 0.5:
+                _flush()
+                cur = [(p0.x, p0.y), (p3.x, p3.y)]
+            else:
+                cur.append((p3.x, p3.y))
+            last = (p3.x, p3.y)
+        else:
+            _flush()
+            last = None
+    _flush()
+    return polylines
+
+
+def _polyline_plateau(points: List[Tuple[float, float]],
+                      max_dy: float
+                      ) -> Optional[Tuple[float, float, float, float]]:
+    """Longest x-stretch of the polyline where y stays within ``max_dy``.
+
+    Returns ``(dx, y_center, y_range, length_idx)`` or None when no useful
+    plateau exists. Uses a monotonic-deque sliding window in O(n).
+    """
+    from collections import deque
+    n = len(points)
+    if n < 3:
+        return None
+    max_q: 'deque[int]' = deque()  # y-decreasing
+    min_q: 'deque[int]' = deque()  # y-increasing
+    best: Optional[Tuple[float, float, float, float]] = None
+    i = 0
+    for j in range(n):
+        y = points[j][1]
+        while max_q and points[max_q[-1]][1] < y:
+            max_q.pop()
+        max_q.append(j)
+        while min_q and points[min_q[-1]][1] > y:
+            min_q.pop()
+        min_q.append(j)
+        while points[max_q[0]][1] - points[min_q[0]][1] > max_dy:
+            i += 1
+            if max_q[0] < i:
+                max_q.popleft()
+            if min_q[0] < i:
+                min_q.popleft()
+        # window points[i..j]; assume curve is mostly x-monotonic, so x extent
+        # is bounded by the endpoints.
+        dx = abs(points[j][0] - points[i][0])
+        if best is None or dx > best[0]:
+            yc = sum(points[k][1] for k in range(i, j + 1)) / (j - i + 1)
+            yr = points[max_q[0]][1] - points[min_q[0]][1]
+            best = (dx, yc, yr, float(j - i + 1))
+    return best
+
+
 def _segments_from_drawing(d: dict) -> List[Segment]:
     """Convert a pymupdf drawing dict into a flat list of line segments."""
     segs: List[Segment] = []
@@ -330,6 +421,41 @@ def _has_oblique_neighbor(seg: Segment,
     return _oblique_neighbor_count(seg, all_segments, tol) >= 1
 
 
+def _looks_like_arrowhead(point: Tuple[float, float],
+                          all_segments: List[Segment],
+                          tol: float = 3.0,
+                          max_len: float = 8.0) -> bool:
+    """True if ``point`` has short outgoing strokes in *both* up and down
+    directions — the classic triangle arrowhead pattern.
+
+    Annotation arrows on ST-style gate-charge charts (the "Q_gs"/"Q_gd"
+    dimension arrows at the Miller-plateau level) consist of a long
+    horizontal stem capped by a small triangle at each end. The triangle's
+    edges fan out above AND below the stem y, so the stem's endpoint sees
+    short segments going both up and down. A real Miller-plateau endpoint
+    only ever sees outgoing strokes on ONE side (rising / falling curve
+    tangent), and any guide-line going from the plateau down to the
+    x-axis is long, not short — so this check doesn't trip on legit
+    plateau endpoints with Q_gs/Q_gd guide lines.
+    """
+    px, py = point
+    up = down = 0
+    for s in all_segments:
+        if s.length > max_len or s.length < 0.5:
+            continue
+        for sx, sy in ((s.x0, s.y0), (s.x1, s.y1)):
+            if abs(sx - px) < tol and abs(sy - py) < tol:
+                ox, oy = ((s.x1, s.y1) if (sx == s.x0 and sy == s.y0)
+                          else (s.x0, s.y0))
+                d = oy - py
+                if d > 0.5:
+                    down += 1
+                elif d < -0.5:
+                    up += 1
+                break
+    return up >= 1 and down >= 1
+
+
 def find_plateau(page: pymupdf.Page,
                  chart: ChartLocation) -> Optional[PlateauHit]:
     """Find the Miller plateau in the located chart on a page.
@@ -345,7 +471,21 @@ def find_plateau(page: pymupdf.Page,
     except ValueError:
         return None
 
+    # The chart finder occasionally tags a neighbouring chart whose
+    # y axis happens to look numeric (e.g. IRFH7110 page 2's
+    # capacitance chart, y axis 0.5..2.5 of nF) as a gate-charge
+    # chart candidate. Plateau extraction on such a chart returns a
+    # nonsense V that then beats the correct title-anchored chart in
+    # the find_vpl ranking. A real V_GS axis always spans at least
+    # ~5 V (lowest-voltage GaN parts go 0..5 V; silicon parts 0..10
+    # V or wider), so reject narrow-range tick columns up front.
+    y_vals = [v for v, _ in chart.y_ticks]
+    if y_vals and (max(y_vals) - min(y_vals)) < 5.0:
+        return None
+
     drawings = _drawings_in_bbox(page, chart.bbox)
+    bbox_h = chart.bbox.y1 - chart.bbox.y0
+    bbox_w = chart.bbox.x1 - chart.bbox.x0
 
     all_segments: List[Segment] = []
     pre_candidates: List[Segment] = []
@@ -365,6 +505,90 @@ def find_plateau(page: pymupdf.Page,
             if _is_chart_chrome(seg, chart):
                 continue
             pre_candidates.append(seg)
+
+    # Polyline-plateau pass: gate-charge curves drawn as a densely-sampled
+    # connected path (many tiny ``l``/``c`` ops) collapse into hundreds of
+    # ~1 px segments that the per-segment chrome filter rejects as ticks,
+    # so the segment-based scorer sees nothing. Walk each long polyline
+    # and synthesize a horizontal "plateau segment" at the longest stretch
+    # where y stays nearly constant — that segment then feeds the normal
+    # scoring path (so it competes fairly with curves drawn as long
+    # strokes). max_dy ≈ 2.5% of chart height ≈ 0.25 V for a 10 V chart.
+    max_dy = max(2.0, 0.025 * bbox_h)
+    for d in drawings:
+        # Skip rectangles / annotation drawings outright — only paths.
+        if d.get('type') == 'f' and len(d['items']) == 1 and d['items'][0][0] == 're':
+            continue
+        for poly in _polylines_from_drawing(d):
+            if len(poly) < 8:
+                # Short paths (axis tick-mark sequences, legend ticks) — let
+                # the segment-based pipeline handle them; treating them as
+                # polylines would produce noisy synthetic plateaus.
+                continue
+            result = _polyline_plateau(poly, max_dy=max_dy)
+            if result is None:
+                continue
+            dx, y_c, y_range, _n = result
+            if dx < 0.02 * bbox_w:
+                continue
+            if dx > 0.7 * bbox_w:
+                # Spans most of the chart — almost certainly the x-axis or
+                # a long gridline, not the Miller plateau.
+                continue
+            # Reject polylines that are basically a flat horizontal line
+            # (an axis or gridline drawn as a polyline). A real
+            # gate-charge polyline has rising/falling sections outside
+            # the plateau window — usually the polyline's overall y-
+            # range is much larger than the plateau's y-range. Some
+            # vendors split the curve into separate sub-paths and draw
+            # the plateau as its own short, almost-flat sub-path
+            # (ST datasheets), so we don't reject low-y-range polylines
+            # outright; only when the polyline is *also* wide (clearly
+            # an axis/gridline rather than a plateau-only sub-path).
+            poly_y_range = max(p[1] for p in poly) - min(p[1] for p in poly)
+            if poly_y_range < 0.2 * bbox_h and dx > 0.5 * bbox_w:
+                continue
+            # Locate the plateau window in x coordinates for the synthetic
+            # segment endpoints.
+            # The sliding window finds best (i, j) implicitly; reconstruct
+            # by walking the polyline once more — small n, cost negligible.
+            from collections import deque
+            mq: 'deque[int]' = deque()
+            nq: 'deque[int]' = deque()
+            i = 0
+            best_ij = (0, 0)
+            best_dx = -1.0
+            for j in range(len(poly)):
+                y = poly[j][1]
+                while mq and poly[mq[-1]][1] < y:
+                    mq.pop()
+                mq.append(j)
+                while nq and poly[nq[-1]][1] > y:
+                    nq.pop()
+                nq.append(j)
+                while poly[mq[0]][1] - poly[nq[0]][1] > max_dy:
+                    i += 1
+                    if mq[0] < i:
+                        mq.popleft()
+                    if nq[0] < i:
+                        nq.popleft()
+                d_curr = abs(poly[j][0] - poly[i][0])
+                if d_curr > best_dx:
+                    best_dx = d_curr
+                    best_ij = (i, j)
+            i, j = best_ij
+            x0, x1 = poly[i][0], poly[j][0]
+            if x0 > x1:
+                x0, x1 = x1, x0
+            # Synthesize a horizontal segment centred at y_c with a small
+            # dy reflecting the actual y-range of the plateau window —
+            # this makes the existing scorer (flatness = 1 / rel_dy) treat
+            # tighter plateaus as stronger evidence.
+            synth = Segment(x0, y_c - y_range * 0.5, x1, y_c + y_range * 0.5)
+            all_segments.append(synth)
+            if _is_chart_chrome(synth, chart):
+                continue
+            pre_candidates.append(synth)
 
     # Composite-gridline filter: when several horizontal segments at the
     # same y together span most of the chart width, they're a gridline
@@ -422,6 +646,17 @@ def find_plateau(page: pymupdf.Page,
             s *= 20.0
         elif n_ob >= 1:
             s *= 3.0
+        # Annotation arrows (e.g. the Q_gs / Q_gd dimension arrows on
+        # ST's "gate charge characteristics" charts) look like a long
+        # horizontal stem with a short triangle arrowhead at each end.
+        # The arrowhead's edges fan both up and down from the stem's
+        # endpoint, so both endpoints satisfy
+        # ``_looks_like_arrowhead``. A real plateau's tangent goes only
+        # one way (rising into / falling out of the plateau), so it
+        # doesn't trip this check.
+        if (_looks_like_arrowhead((seg.x0, seg.y0), all_segments)
+                and _looks_like_arrowhead((seg.x1, seg.y1), all_segments)):
+            continue
         scored.append((s, seg))
 
     if not scored:
@@ -471,16 +706,29 @@ def find_plateau(page: pymupdf.Page,
         return total
 
     groups.sort(key=group_strength, reverse=True)
-    best = groups[0]
-    s_best, seg_best = max(best, key=lambda t: t[0])
+
+    # Walk the groups in descending order of strength and return the
+    # first one whose plateau y maps to a plausible Miller-plateau V.
+    # ST-style charts whose V axis extends past V_drive (e.g. STWA's
+    # 0..12 V scale with a 10 V curve) place a long horizontal segment
+    # at V=12 (the top axis line) that outscores the real plateau; the
+    # post-pick V-range check used to throw the result away entirely
+    # instead of falling back to the next-best group.
+    height = chart.bbox.y1 - chart.bbox.y0
+    seg_best: Optional[Segment] = None
+    s_best: float = 0.0
+    for g in groups:
+        cand_s, cand_seg = max(g, key=lambda t: t[0])
+        cand_v = a * cand_seg.cy + b
+        if 1.0 < cand_v < 10.0:
+            seg_best = cand_seg
+            s_best = cand_s
+            break
+    if seg_best is None:
+        return None
 
     y = seg_best.cy
     v_pl = a * y + b
-
-    if not (1.0 < v_pl < 10.0):
-        return None
-
-    height = chart.bbox.y1 - chart.bbox.y0
     rel_pos = (y - chart.bbox.y0) / height if height > 0 else 0.5
 
     return PlateauHit(
@@ -542,10 +790,22 @@ def _looks_scanned(doc: pymupdf.Document) -> bool:
     return False
 
 
+def _has_custom_font_encoding(pdf_path: str) -> bool:
+    """Wrapper around ``dslib.pdf.fix_encoding.has_custom_font_encoding``
+    that swallows import / parse errors and returns False so missing
+    optional deps can't break the viz pipeline."""
+    try:
+        from dslib.pdf.fix_encoding import has_custom_font_encoding
+        return has_custom_font_encoding(pdf_path)
+    except Exception:
+        return False
+
+
 def find_in_pdf(pdf_path: str,
                 enable_raster: bool = True,
                 enable_ocr: bool = False,
-                _ocr_attempted: bool = False
+                _ocr_attempted: bool = False,
+                _fix_attempted: bool = False,
                 ) -> List[Tuple[ChartLocation, Optional[object], Optional[str]]]:
     """Locate every gate-charge chart in a PDF and report its Vpl.
 
@@ -558,6 +818,15 @@ def find_in_pdf(pdf_path: str,
     ``dslib.pdf.parse.ocr_pdf`` and this function is re-invoked on the
     resulting text-layer-augmented PDF. The OCR retry happens at most
     once per call chain.
+
+    When ``enable_ocr`` is True and no charts are found on the first
+    pass and the PDF carries a custom font encoding (e.g. some Huayi
+    datasheets ship a font with a scrambled glyph map that turns "Qg"
+    into "OG" and "(nC)" into "(nO)" for any text-layer reader), the
+    PDF is first passed through ``fix_pdf_font_encoding`` to restore
+    a sane ``ToUnicode`` map, then through ``ocr_pdf`` to rasterize
+    and re-OCR — that pipeline produces a clean text layer with
+    correct "Gate Charge"/"VGS" labels and chart-region tick values.
     """
     from dslib.viz.chart_finder import (find_gate_charge_charts,
                                         _find_infineon_raster_charts)
@@ -565,7 +834,15 @@ def find_in_pdf(pdf_path: str,
     out = []
     for page in doc.pages():
         text = page.get_text()
-        if 'gate charge' not in text.lower() and 'qg' not in text.lower():
+        text_lower = text.lower()
+        # Toshiba TPH/XPN/XPQR datasheets caption the V_GS-vs-Q_g plot
+        # "Dynamic Input/Output Characteristics" and don't mention "gate
+        # charge" anywhere on the page.
+        if ('gate charge' not in text_lower
+                and 'gate-charge' not in text_lower
+                and 'qg' not in text_lower
+                and 'dynamic input/output' not in text_lower
+                and 'dynamic input / output' not in text_lower):
             continue
         std_charts = list(find_gate_charge_charts(page))
         title_charts = list(_find_infineon_raster_charts(page))
@@ -620,19 +897,70 @@ def find_in_pdf(pdf_path: str,
                 page_results.append((chart, hit, source))
         out.extend(page_results)
 
-    if out or not enable_ocr or _ocr_attempted:
+    # ``out`` may contain entries with hit=None (chart located but no
+    # plateau extracted); fall through to OCR in that case too, because
+    # OCR sometimes produces a cleaner tick column that lets the
+    # plateau scan succeed.
+    have_hit = any(h is not None for _c, h, _s in out)
+    if have_hit or not enable_ocr or _ocr_attempted:
         return out
 
-    if not _looks_scanned(doc):
-        return out
+    is_scanned = _looks_scanned(doc)
+    has_bad_fonts = (not _fix_attempted) and _has_custom_font_encoding(pdf_path)
+    # If the caller already passed a fix-encoded PDF (its text reads as
+    # garbled "Gate 0harge" / "(nO)" because fix_encoding's shape matcher
+    # confuses C↔0 / Q↔O), neither is_scanned nor has_bad_fonts will be
+    # true even though the page truly needs OCR. Detect that by looking
+    # for any chart-keyword cue in the extracted text — if NONE of the
+    # pages mention "gate charge", "qg", or "dynamic input/output",
+    # the text layer can't anchor the chart finder and OCR is worth a
+    # shot.
+    if not is_scanned and not has_bad_fonts and out:
+        # The text layer reads fine AND we already located at least one
+        # chart — so the failure is in plateau extraction, not chart
+        # discovery. OCR is unlikely to help, skip it.
+        # When ``out`` is empty, the chart finder turned up nothing even
+        # though one of the pages mentions "gate charge". That usually
+        # means the chart sits on a different, image-only page (the
+        # keyword we found is on the front-page summary). OCR'ing the
+        # image pages can surface the chart's tick labels and unblock
+        # the title-anchored finder.
+        has_keyword = False
+        for page in doc.pages():
+            tl = page.get_text().lower()
+            if ('gate charge' in tl or 'gate-charge' in tl or 'qg' in tl
+                    or 'dynamic input/output' in tl
+                    or 'dynamic input / output' in tl):
+                has_keyword = True
+                break
+        if has_keyword:
+            return out
 
-    # No text-layer cues anywhere; try OCR and retry on the augmented PDF.
     import os
     import shutil
     import warnings
+
+    # Custom-encoded fonts: fix the ToUnicode map first, then OCR. OCR
+    # alone misses the small per-tick digits on these charts (the
+    # rasterized "1".."9" are too small for tesseract); the fix-encoded
+    # PDF preserves the original text positions exactly, and the
+    # subsequent rasterize-and-tesseract pass cleans up the title and
+    # axis labels that fix_encoding misidentifies (C ↔ 0, Q ↔ O).
+    fix_path = pdf_path
+    if has_bad_fonts:
+        try:
+            from dslib.pdf.fix_encoding import fix_pdf_font_encoding
+            fix_path = fix_pdf_font_encoding(
+                pdf_path, raise_if_no_bad_fonts=False)
+        except Exception as e:
+            warnings.warn(
+                f'viz: fix_pdf_font_encoding failed on {pdf_path}: '
+                f'{type(e).__name__}: {e}')
+            fix_path = pdf_path
+
     # Avoid re-running ocrmypdf (slow + requires tesseract) if a cached
     # variant from a previous run is already on disk.
-    cached = pdf_path + '.r600_ocrmypdf.pdf'
+    cached = fix_path + '.r600_ocrmypdf.pdf'
     if os.path.isfile(cached):
         ocr_path = cached
     elif shutil.which('tesseract') is None:
@@ -643,20 +971,30 @@ def find_in_pdf(pdf_path: str,
     else:
         try:
             from dslib.pdf.parse import ocr_pdf
-            ocr_path = ocr_pdf(pdf_path)
+            ocr_path = ocr_pdf(fix_path)
         except Exception as e:
             warnings.warn(f'viz: ocr_pdf failed on {pdf_path}: {type(e).__name__}: {e}')
             return out
 
     retried = find_in_pdf(ocr_path, enable_raster=enable_raster,
-                          enable_ocr=enable_ocr, _ocr_attempted=True)
+                          enable_ocr=enable_ocr, _ocr_attempted=True,
+                          _fix_attempted=True)
     return [(c, h, (s + '+ocr') if s else s) for c, h, s in retried]
 
 
 def find_vpl(pdf_path: str,
              enable_raster: bool = True,
              enable_ocr: bool = False) -> Optional[float]:
-    """Convenience: return the most confident Vpl, or None if none found."""
+    """Convenience: return the most confident Vpl, or None if none found.
+
+    Within the candidate set, prefer plateau values in the canonical
+    Miller-plateau range (1.5..7.5 V) before falling back to out-of-range
+    hits. The high-end out-of-range hits are usually wrong — they latch
+    onto the curve's V_drive saturation tail rather than the plateau —
+    but the rare datasheets with V_drive ≳ 8 V have their plateau there,
+    so out-of-range hits are still accepted as a fallback when no in-
+    range candidate exists.
+    """
     cands = []
     for _chart, hit, _src in find_in_pdf(pdf_path,
                                          enable_raster=enable_raster,
@@ -666,5 +1004,5 @@ def find_vpl(pdf_path: str,
         cands.append(hit)
     if not cands:
         return None
-    cands.sort(key=lambda h: -h.score)
+    cands.sort(key=lambda h: (0 if 1.5 < h.v_pl < 7.5 else 1, -h.score))
     return cands[0].v_pl

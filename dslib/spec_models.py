@@ -41,8 +41,8 @@ class DcDcLoadParams:
         """
         assert 1000 < f < 2e6, f
 
-        self.Vi = vi
-        self.Vo = vo
+        self.Vi:float = vi
+        self.Vo:float = vo
 
         if ii is not None:
             assert pin is None and io is None
@@ -184,7 +184,8 @@ class DcDcLoadParams:
 
 class BuckConverter():
     def __init__(self, name, Io_max, f_sw, coil: 'CoilSpecs', hs: MosfetSlot, ls: MosfetSlot, output_parasitics,
-                 cin_imp=0, cout_imp=0
+                 cin_imp=0, cout_imp=0,
+                 pcb=None,
                  ):
 
         self.name = name
@@ -198,6 +199,7 @@ class BuckConverter():
 
         self.cout_imp = cout_imp
         self.cin_imp = cin_imp
+        self.pcb = pcb
 
     def powerloss(self, dcdc: DcDcLoadParams, gd: GateDrive):
         coil = self.coil

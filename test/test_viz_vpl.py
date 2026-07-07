@@ -11,6 +11,8 @@ import os
 import sys
 from typing import List, Optional, Tuple
 
+
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 if ROOT not in sys.path:
@@ -19,7 +21,7 @@ if ROOT not in sys.path:
 sys.path.insert(0, '/opt/homebrew/bin') # PATH="$PATH:/opt/homebrew/bin"
 
 from dslib.viz import find_vpl  # noqa: E402
-
+from dslib.pdf import fix_encoding
 
 def find_vpl_(pdf, enable_ocr=False):
     from apps.vpl_from_chart import vpl_from_pdf, _pick_best
@@ -29,10 +31,30 @@ def find_vpl_(pdf, enable_ocr=False):
     return vpl['vpl']
 
 
+def find_vpl_enc(pdf, enable_ocr):
+    from dslib.pdf.fix_encoding import fix_pdf_font_encoding
+    pdf2 = fix_pdf_font_encoding(pdf)
+    import dslib.viz
+    return dslib.viz.find_vpl(pdf2, enable_ocr=enable_ocr)
+
+
 # (pdf_path, reference_Vpl)
 # References are copied from test/tests.py (test_pdf_parse / test_pdf_ocr /
 # tests_failing) and dslib/manual_fields.reference_data.
 SAMPLES: List[Tuple[str, float]] = [
+    ('datasheets/st/STWA75N65DM6.pdf', 6.5), # double axis, a lot of annotations
+    ('datasheets/ao/AON6220.pdf', 2.5),
+    ('datasheets/mcc/MCAC60N15YA-TP.pdf', 4.7),
+    ('datasheets/xnrusemi/XR150N04.pdf', 3.1),
+    ('datasheets/hxy/AM9435SA-HXY.pdf', 3.5),
+    ('datasheets/siliup/SP30N01AGHNP.pdf', 4.8),  # needs ocr
+
+    ('datasheets/ti/CSD19532KTT.pdf', 4.8), # very soft plateau
+    ('datasheets/diotec/DI110N15PQ.pdf', 3.2),
+    ('datasheets/huayi/HYG009N06NS1C2.pdf', 4.9),
+    ('datasheets/good_ark/GSFP1080.pdf', 5),
+
+
     ('datasheets/infineon/BSB056N10NN3GXUMA2.pdf', 4.2),  # chart title: "14 Typ. gate charge"
     ('datasheets/infineon/IPT025N15NM6ATMA1.pdf', 5.4),
     ('datasheets/infineon/BSC021N08NS5ATMA1.pdf', 4.4),  # "Diagram 14 : Typ . gate charge"
@@ -52,7 +74,7 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/onsemi/FDA032N08.pdf', 5.5),
     ('datasheets/onsemi/NVCR4LS1D3N08M7A.pdf', 4.2),
     ('datasheets/ti/CSD19501KCS.pdf', 4.25),
-    ('datasheets/ti/CSD19532KTT.pdf', 4.8),
+
     ('datasheets/mcc/MCAC100N08Y-TP.pdf', 5.1),
     ('datasheets/mcc/MCP75N10Y-BP.pdf', 4.05),
     ('datasheets/ti/TPS1100.pdf', 3.1),
@@ -75,10 +97,13 @@ SAMPLES: List[Tuple[str, float]] = [
     #AOTF288L
 ]
 
+# SAMPLES = SAMPLES[:20]
 
-def main():
+def test_main():
     tol = float(os.environ.get('VPL_TOL', 0.5))
     enable_ocr = os.environ.get('VPL_OCR', '').lower() in ('1', 'true', 'yes')
+    if enable_ocr:
+        print('ocr enabled')
 
     n_ok = 0
     n_ref = 0
@@ -117,4 +142,4 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    test_main()
