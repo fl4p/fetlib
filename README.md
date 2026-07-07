@@ -1,6 +1,9 @@
 commands
 - discover parts
-- download datasheets
+- download datasheet
+
+# todo
+- has_custom_enc.. should return false for 'datasheets/mcc/MCAC100N08Y-TP.pdf'
 
 
 I’ve been working on this the last years.
