@@ -143,7 +143,27 @@ parts_db = ObjectDatabase[Tuple[Mfr, Mpn], Part]('parts-lib', key_func=lambda p:
 
 
 def load_parts():
-    return parts_db.load()
+    parts = parts_db.load()
+    # Attach datasheet Coss(V)/Crss(V) curves by MPN onto the loaded specs, so the pickle
+    # DB need not be rebuilt to add a curve. Only fills a curve that isn't already present.
+    # A missing curves module is tolerated (older checkout); any OTHER error is a real bug in
+    # the curve subsystem and must surface (Fab's rule: never silently degrade) rather than
+    # leave every part quietly curve-less.
+    try:
+        from dslib.coss_curves import coss_curve_for
+    except ImportError:
+        coss_curve_for = None
+    if coss_curve_for is not None:
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None or getattr(specs, 'coss_curve', None):
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            curve = coss_curve_for(mfr, mpn)
+            if curve:
+                specs.coss_curve = curve
+    return parts
 
 
 datasheets_db = ObjectDatabase[Tuple[Mfr, Mpn], DatasheetFields]('datasheets-lib',

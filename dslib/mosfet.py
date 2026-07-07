@@ -12,7 +12,7 @@ class MosfetSpecs:
                  Qsw=None,
                  Vpl=None, Vsd=None,
                  Coss=math.nan, Coss_Vds=None,
-                 Rg=math.nan, Id=math.nan, part=None):
+                 Rg=math.nan, Id=math.nan, part=None, coss_curve=None):
         """
 
         :param Vds_max: Vds break-down voltage (also referred as `BVdss` or `V (BR)DSS`), in volt
@@ -105,6 +105,10 @@ class MosfetSpecs:
 
         self.Coss = Coss  # Vds = Vin
         self.Coss_Vds = Coss_Vds
+        # Optional datasheet Coss(V)/Crss(V) curve: [(Vds_V, Coss_pF, Crss_pF), ...] or None.
+        # Attached by load_parts() from dslib.coss_curves (by MPN). Consumers use it for a
+        # curve-faithful output cap; None -> they warn and fall back to the scalar Coss.
+        self.coss_curve = coss_curve
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
