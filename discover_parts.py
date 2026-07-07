@@ -171,6 +171,27 @@ async def main():
 
     if man:
         print('manual dl parts:', (man))
+        print("""
+async function downloadAll(urls) {
+  for (const url of urls) {
+    try {
+      const res = await fetch(url);
+      const blob = await res.blob();
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = url.split('/').pop().split('?')[0] || 'download';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(a.href);
+      await new Promise(r => setTimeout(r, 300));
+    } catch (e) {
+      console.error('Failed:', url, e);
+    }
+  }
+}
+        
+        """)
 
     from wakepy import keep
     with keep.running():
