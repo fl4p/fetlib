@@ -286,6 +286,8 @@ def run(args: RunArgs, cargs, name):
 
         if not args.vdsRange:
             dss = [ds for ds in dss if dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds'))]
+        else:
+            dss = [ds for ds in dss if ds.get_max_or_min_or_typ('Vds') >= args.vdsRange[0]]
 
         generate_HS_power_loss_csv(dss,
                                    args=args.dcdc,
