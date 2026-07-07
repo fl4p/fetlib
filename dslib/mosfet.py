@@ -34,7 +34,7 @@ class MosfetSpecs:
         self.part = part
         if Vds_max and not math.isnan(Vds_max) and int(Vds_max) == Vds_max:
             Vds_max = int(Vds_max)
-        self.Vds:float = Vds_max
+        self.Vds: float = Vds_max
 
         if isinstance(Rds_on, str):
             if Rds_on.endswith('mOhm'):
@@ -103,7 +103,7 @@ class MosfetSpecs:
             warnings.warn('abs Vsd is greater than 10, ' + str(Vsd) + ', assuming ' + str(Vsd / 10))
             Vsd /= 10
 
-        self.Coss = Coss # Vds = Vin
+        self.Coss = Coss  # Vds = Vin
         self.Coss_Vds = Coss_Vds
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
@@ -116,7 +116,8 @@ class MosfetSpecs:
 
         assert math.isnan(Qg) or .2e-9 < Qg < 2000e-9, (
             "qg range", Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1, FF3MR20KM1HHPSA1
-        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 200e-6, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC, SUP70042E:189uC
+        assert math.isnan(
+            self.Qrr) or 0 <= self.Qrr < 200e-6, self.Qrr  # GaN have 0 qrr, TK16A55D:26µC, SUP70042E:189uC
 
         rr = self.Qrr / self.trr
         assert math.isnan(rr) or 0.01 <= rr <= 40, ("qrr/trr ratio", self.Qrr / self.trr, self.Qrr, self.trr)
@@ -129,7 +130,8 @@ class MosfetSpecs:
         if isnum(Vsd):
             Vsd = abs(Vsd)
 
-        assert not isnum(Vsd) or 0.2 < Vsd < 5, "Vsd %s out of range" % Vsd  # FBG10N30BC: 2.5V, FF33MR12W1M1HB11BPSA1: 4.2V
+        assert not isnum(
+            Vsd) or 0.2 < Vsd < 5, "Vsd %s out of range" % Vsd  # FBG10N30BC: 2.5V, FF33MR12W1M1HB11BPSA1: 4.2V
 
         assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 2e-08, (Qg, Rds_on, Qg * Rds_on)
 
@@ -209,7 +211,7 @@ class MosfetSpecs:
         return (f'MosfetSpecs({round_to_n_dec(self.Vds, 3)}V,{round_to_n_dec(self.Rds_on, 3)}Ω '
                 f'Qg={round_to_n_dec(self.Qg, 3)} Qsw={round_to_n_dec(self.Qsw, 3)} '
                 f'trf={round_to_n_dec(self.tRise, 3)}/{round_to_n_dec(self.tFall, 3)} '
-                f'Qrr={round_to_n_dec(self.Qrr, 3)} Coss@{round_to_n_dec(coss_vds or "nan",3)}={round_to_n_dec(self.Coss,3)})')
+                f'Qrr={round_to_n_dec(self.Qrr, 3)} Coss@{round_to_n_dec(coss_vds or "nan", 3)}={round_to_n_dec(self.Coss, 3)})')
 
     def keys(self):
         fl = ['Vds', 'Vsd', 'Rds_on', 'Qg', 'tRise', 'tFall', 'Qgs', 'Qgd', '_Qg_th', '_Qgs2', '_Qsw', 'Coss']
@@ -220,8 +222,8 @@ class MosfetSpecs:
         # "Rectification FoM"
         return self.Rds_on * self.Qg * 1e3 * 1e9  # [mΩ*nC]
 
-    #@property
-    #def FoMswitch(self):
+    # @property
+    # def FoMswitch(self):
     #    # "Switch FoM" (Qgd plays mayor role in switch losses)
     #    # https://epc-co.com/epc/Portals/0/epc/documents/papers/eGaN%20FET%20Electrical%20Characteristics.pdf
     #    return self.Rds_on * self.Qgd * 1e3 * 1e9  # [mΩ*nC]
@@ -251,10 +253,13 @@ class MosfetSpecs:
     def Coss_V0(self):
         mf = self
         coss_vds = getattr(mf, 'Coss_Vds', math.nan)
-        if coss_vds and math.isfinite(coss_vds):
-            coss_v0 = abs(coss_vds) # test voltage might be given negative for p-channel
-            assert mf.Vds and not (abs((mf.Vds / 2) - coss_v0) / mf.Vds > 0.2), (coss_v0, mf.Vds)
-        else:
+        coss_v0 = math.nan
+
+        # reject coss_v0 if it is too far away from half the break-down voltage
+        if coss_vds and math.isfinite(coss_vds) and (abs((mf.Vds / 2) - coss_v0) / mf.Vds < 0.2):
+            coss_v0 = abs(coss_vds)  # test voltage might be given negative for p-channel
+
+        elif math.isnan(coss_v0):
             # Fallback: assume Coss specified at ~half Vds (common datasheet practice)
             vds = abs(mf.Vds or math.nan)
             if math.isfinite(vds) and vds > 1:
@@ -274,7 +279,7 @@ class GateDrive:
 
     """
 
-    def __init__(self, rg_total,rg_total_dis, Von=10, Von_GaN=math.nan, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
+    def __init__(self, rg_total, rg_total_dis, Von=10, Von_GaN=math.nan, Voff=0, fallback_V_pl=math.nan, tDead=500e-9):
         self.rg_total = rg_total
         self.rg_total_dis = rg_total_dis
         self.Von = Von
@@ -284,7 +289,8 @@ class GateDrive:
         self.tDead = tDead
 
     def __str__(self):
-        return f'GateDrive(Rg_tot=%.1fΩ Von=%.1f Voff=%.1f Vpl_fallback=%.1f)' %(self.rg_total, self.Von, self.Voff, self.fallback_V_pl)
+        return f'GateDrive(Rg_tot=%.1fΩ Von=%.1f Voff=%.1f Vpl_fallback=%.1f)' % (self.rg_total, self.Von, self.Voff,
+                                                                                  self.fallback_V_pl)
 
 
 class MosfetSlot():
