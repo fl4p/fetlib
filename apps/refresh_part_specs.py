@@ -148,7 +148,7 @@ def missing_web_fields(part: Part) -> List[str]:
     miss: List[str] = []
     #if 'IXFH120N25T' in part.mpn:
     #    miss.append('Qrr')
-    miss.append('V_pl')
+    #miss.append('V_pl')
     for label, where, attr, valid_range in WEB_FIELDS:
         v = _read_web_field(part, where, attr)
         if _in_range(v and abs(v), valid_range):
