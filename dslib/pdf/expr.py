@@ -541,12 +541,12 @@ def line_regex_variations(dim: Dimension):
 
 DIMENSIONS = dotdict(
     t=Dimension(
-        head_regex=r'(time|[tf][_\s]?[rf]?)',
+        head_regex=r'([tT]ime|[tf][_\s]?[rf]?|t[_\s]?[pP])',
         unit_regex=r'([uμnm]s|㎱|㎲|㎳)',
         signed=False,
     ),
     C=Dimension(
-        head_regex=r'(capacitance|C[\s_]?[a-z]{1,3})',
+        head_regex=r'([Cc]apacitance|C[\s_]?[a-z]{1,3})',
         unit_regex=r'[uμnp]F',
         signed=False,
     ),
@@ -562,7 +562,7 @@ DIMENSIONS = dotdict(
                    r'|reversed?[−\s]+recover[edy]{1,2}[−\s]+charge'
                    r'|Q[\s_]?[0-9a-z]{1,3}([\s_]?\([a-z]{2,5}\))?)',
 
-        unit_regex=r'[uμnp]?C',
+        unit_regex=r'[uμnpm]?C',
         signed=False,
     ),
     I=Dimension(
@@ -807,7 +807,7 @@ def get_cond_regex():
     num_signed = NumValReSet(True, False).val
 
     test_cond = (rf'(?P<cond_sym>{cond_sym})\s*[=≈]\s*'
-                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[•-+*/]? *)+'
+                 ''   rf'(((?P<cond_val>({num_signed}))\s*(?P<cond_unit>(({any_unit}){unit_suffix}){{0,2}})?|{cond_sym}) *[•\-+*/]? *)+'
                  ''   rf'(\s+to\s+(?P<cond_val_to>({num_signed}))\s*(?P<cond_unit2>{any_unit})?)?'
                  )
     test_conds_delim_ml = (rf'(?P<conds_ml>{test_cond}\s*[;,\n\s]*)')
