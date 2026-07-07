@@ -4,10 +4,11 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 import apps.mppts.libresolar
+from apps.mppts import fugu
 from dclib.powerloss import SwitchPowerLoss
 from dslib import round_to_n_dec
 from dslib.mosfet import GateDrive
-from dslib.spec_models import DcDcLoadParams
+from dslib.spec_models import DcDcLoadParams, DCMNotImplemented
 
 if __name__ == '__main__':
     """
@@ -21,7 +22,7 @@ if __name__ == '__main__':
     # buck = apps.mppts.libresolar.FuguWhite184()
     # buck = apps.mppts.libresolar.MPPT_Fheat2()
 
-    buck = apps.mppts.libresolar.Fugu2_tall()
+    buck = fugu.FuguSpiceTest1()
 
     gd = GateDrive(rg_total=buck.hs.rg_total,
                    rg_total_dis=buck.hs.rg_total_dis,
@@ -40,7 +41,7 @@ if __name__ == '__main__':
         # dcdc = DcDcLoadParams(vi=40, vo=27, pin=800, f=fsw,tDead=200e-9, L=buck.coil.L0)
         # dcdc = DcDcLoadParams(vi=60, vo=9.9, pin=pin, f=fsw, tDead=300e-9, L=buck.coil.L0)
         # dcdc = DcDcLoadParams(vi=75, vo=27, pin=pin, f=fsw, tDead=gd.tDead, L=buck.coil.L0)
-        dcdc = DcDcLoadParams(vi=71.5, vo=27.1, pin=pin, f=fsw, tDead=gd.tDead, L=buck.coil.L0) # L arg is irrelevant here
+        dcdc = DcDcLoadParams(vi=72, vo=27, pin=pin, f=fsw, tDead=gd.tDead, L=buck.coil.L0) # L arg is irrelevant here
 
         # dcdc = DcDcSpecs(vi=67, vo=27, io=13, f=fsw, Vgs=11, tDead=400e-9, L=buck.coil.L0)
 
@@ -129,7 +130,7 @@ if __name__ == '__main__':
                 P_caps=losses.cap.P_cin + losses.cap.P_cout,
                 P_rest=sum(losses.misc.values()),
             ))
-        except AssertionError as e:
+        except DCMNotImplemented as e:
             # print('err with pin', pin, e)
             # print(traceback.format_exc())
             pass
