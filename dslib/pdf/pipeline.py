@@ -100,7 +100,7 @@ def ocrmypdf(in_path, out_path, rasterize: Union[bool, int], try_decrypt=True):
             redo_ocr=not rasterize,
             oversample=int(rasterize) if not isinstance(rasterize, bool) else None,
             force_ocr=bool(rasterize),
-            tesseract_config=cfg_file,
+            tesseract_config=[cfg_file],
             # tesseract_thresholding=''
             user_words=pathlib.Path(uw_file),  # user_patterns=
             progress_bar=True,
