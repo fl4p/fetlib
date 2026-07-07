@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python3 -c ' *)",
+      "Bash(/tmp/venv/bin/python -c \"import fitz, cv2, numpy, pdf2image, matplotlib; print\\('OK', fitz.__version__\\)\")",
+      "Bash(/tmp/venv/bin/python *)",
+      "Bash(ip -brief addr show)"
+    ]
+  }
+}

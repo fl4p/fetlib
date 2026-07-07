@@ -2,6 +2,21 @@ import math
 import os.path
 
 
+def write_csv(df: 'pd.DataFrame', path: str, sort_by=['P_tot', 'Vds_max', 'mfr', 'mpn'], power_value_digits=2) -> None:
+    by = list(sort_by)
+    for b in list(by):
+        if b not in df.columns:
+            by.remove(b)
+    df.sort_values(by=by, inplace=True, kind='mergesort')
+
+    for col in df.columns:
+        if col.startswith('P_') or col.startswith('FoM'):
+            df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, power_value_digits) if isinstance(v, float) else v)
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
+
+
 def get_datasheets_path(mfr=None, mpn=None):
     p = os.path.realpath(os.path.dirname(__file__) + '/../datasheets')
     if mpn is None:
@@ -13,10 +28,11 @@ mfrs = dict(
     infineon=('infineon', 'international rectifier'),
     ti='texas instruments', ao='alpha & omega', nxp=('nxp', 'nexperia'),
     st='stmicroelectronics', toshiba='toshiba', vishay='vishay', diodes='diodes inc',
-    diotec='diotec', rohm='rohm', fairchild='fairchild', good_ark='good-ark',
+    diotec='diotec', rohm='rohm',
+    good_ark='good-ark',
     mcc=('micro commercial', 'mcc')
     , renesas='renesas',
-    ts='taiwan semiconductor',
+    ts=('taiwan semiconductor', 'taiwansemi'),
     panjit='panjit',
     apm='a power microelectronics',
     jscj='jiangsu changjing',
@@ -25,10 +41,11 @@ mfrs = dict(
     winsok='winsok',
     epc_space='epc space',
     goford='goford',
-    littelfuse='littelfuse',
-    onsemi='onsemi',
+    littelfuse=('littelfuse', 'ixys', 'littelfuse/ixys'),
+    onsemi=('onsemi', 'fairchild'),
     analog_power='analog power',
     yageo_xsemi='yageo_xsemi',
+    hxy='hxy mosfet'
 
 )
 
@@ -71,7 +88,7 @@ def round_to_n(x, n):
     # if isinstance(x, tuple):
     #    return '[%s]' % ', '.join(map(str, map(partial(round_to_n, n=n), x)))
 
-    if isinstance(x, str) or not math.isfinite(x) or not x:
+    if not x or isinstance(x, str) or not math.isfinite(x):
         return x
 
     try:
@@ -82,6 +99,40 @@ def round_to_n(x, n):
     except ValueError as e:
         print('error', x, n, e)
         raise e
+
+
+def num2str(x, n=None):
+    if n is not None:
+        x = round_to_n(x, n)
+    s = str(x)
+    if s.endswith('.0'):
+        s = s[:-2]
+    return s
+
+
+def round_to_n_dec(x, n):
+    x = round_to_n(x, n)
+    if not x or isinstance(x, str) or not math.isfinite(x):
+        return str(x)
+
+    ax = abs(x)
+    if ax < 1e-20:
+        return '0'
+    elif ax < 999e-12:
+        return num2str(x * 1e12, n) + 'p'
+    elif ax < 999e-9:
+        return num2str(x * 1e9, n) + 'n'
+    elif ax < 999e-6:
+        return num2str(x * 1e6, n) + 'µ'
+    elif ax < 999e-3:
+        return num2str(x * 1e3, n) + 'm'
+    elif ax > 0.999e6:
+        return num2str(x * 1e-6, n) + 'M'
+    elif ax > 0.999e3:
+        return num2str(x * 1e-3, n) + 'k'
+    # elif x > 9
+    else:
+        return num2str(x, n)
 
 
 class dotdict(dict):
@@ -96,3 +147,11 @@ class dotdict(dict):
     # __getstate__ == dict.__getstate__
 
     # __hasattr__ = dict.__contains__
+
+
+def isnum(v):
+    return v is not None and not math.isnan(v)
+
+
+def rel_err(a, b, reg=1e-20):
+    return (a - b) / (abs(b) + reg)

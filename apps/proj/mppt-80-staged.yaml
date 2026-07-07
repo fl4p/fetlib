@@ -1,0 +1,38 @@
+# victron 150-100 uses 5p IRFI4321 ( https://www.youtube.com/watch?v=yIJC6lQeMMA )
+
+topology: buck
+
+substrates: [ Si ] # GaN
+packages: []
+vdsRange: [ 80, 150 ]
+
+gateDrive:
+  voltage: 11
+#  voltageGaN: 5
+  rgTotal: 4
+  rgTotalOff: 3
+  vplFallback: 4.5
+  deadTime: 100e-9
+
+controlFet:
+  maxParallel: 3
+  stagedSwitching: true
+  excludes:
+    - XRS10N10Q # 20Amp soa
+    - XRS15N10S
+    - XRS15N10
+    - XRS12N12
+
+syncFet:
+  maxParallel: 3
+  reverseRecoveryFactor: 1
+
+inductor:
+  rippleFactor: 0.33
+
+loadPoints:
+  - pointWeight: 1
+    vIn: 72
+    vOut: 27
+    pIn: 900
+    f: 80e3

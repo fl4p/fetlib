@@ -2,6 +2,11 @@
 <project version="4">
   <component name="VcsDirectoryMappings">
     <mapping directory="$PROJECT_DIR$/../.." vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../ee/dcdc-tools" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../ee/dcdc-tools/parasitics" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../ee/modulekit" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../ee/mppt-1210-hus" vcs="Git" />
+    <mapping directory="$PROJECT_DIR$/../fet-data-extractor" vcs="Git" />
     <mapping directory="$PROJECT_DIR$" vcs="Git" />
     <mapping directory="$PROJECT_DIR$/datasheets" vcs="Git" />
   </component>

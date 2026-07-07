@@ -1,117 +1,31 @@
 import math
-from typing import Literal
+import warnings
+from typing import Literal, List
+
+from dslib import round_to_n, round_to_n_dec, dotdict
+from dslib.discovery import DiscoveredPart
+from dslib.mosfet import GateDrive, MosfetSlot
 
 
-class MosfetSpecs:
+# the smaller this ratio, the greater Qg_th
+# .. and the smaller Qsw
 
-    def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None, Qsw=None,
-                 Vpl=None, Vsd=None, Coss=None):
-        """
+class DCMNotImplemented(Exception):
+    pass
 
-        :param Vds_max:
-        :param Rds_on:
-        :param Qg: total gate charge
-        :param tRise:
-        :param tFall:
-        :param Qrr: reverse recovery charge (german: Sperrverzugsladung)
-        :param Qgd: gate-drain charge across miller plateau
-        :param Qgs: gate-source charge until the start of miller plateau (toshiba: before and after MP)
-        :param Qgs2: charge between Qg_th and start of MP (toshiba: charger after MP)
-        :param Qg_th: charge until V_th (Qg_th + Qgs2 = Qgs)
-        :param Qsw: Qgs2 + Qgd
-        :param Vpl: miller plateau voltage
-        :param Vsd: body diode forward voltage
-        :param Coss: output capacity (eff. energy related)
-        """
-        self.Vds = Vds_max
 
-        if isinstance(Rds_on, str):
-            if Rds_on.endswith('mOhm'):
-                Rds_on = float(Rds_on[:-4].strip()) * 1e-3
-
-        if isinstance(Qg, str):
-            if Qg.endswith('nC'):
-                Qg = float(Qg[:-2].strip()) * 1e-9
-            else:
-                raise ValueError('Qg must be either nC: %s' % Qg)
-
-        self.Rds_on = Rds_on
-
-        if not Qgs2 and Qsw:
-            assert Qsw > Qgd
-            Qgs2 = Qsw - Qgd
-
-        if not Qg_th and Qgs2:
-            Qg_th = Qgs - Qgs2
-            assert Qg_th > 0
-
-        self.Qg = Qg
-        self.Qgd = Qgd or math.nan
-        self.Qgs = Qgs or math.nan
-        self._Qgs2 = Qgs2 or math.nan
-        self.Qg_th = Qg_th or math.nan
-
-        assert not Qg_th or Qg_th < Qgs, (Qgs, Qg_th,)
-
-        self._Vpl = Vpl or math.nan
-        assert not Vpl or (2 <= Vpl <= 9), "Vpl %s must be between 2 and 8" % Vpl
-
-        self.Coss = Coss or math.nan
-        self.tRise = tRise or math.nan
-        self.tFall = tFall or math.nan
-        self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
-        self.Vsd = Vsd  # body diode forward
-
-        assert 1e-9 < Qg < 1000e-9, Qg
-        assert math.isnan(self.Qrr) or 0 <= self.Qrr < 4000e-9, self.Qrr  # GaN have 0 qrr
-        assert math.isnan(self.tRise) or .5e-9 <= self.tRise < 1000e-9, self.tRise
-        assert math.isnan(self.tFall) or 1e-9 < self.tFall < 1000e-9, self.tFall
-        assert Vsd is None or 0.2 < Vsd < 2, Vsd
+class DcDcLoadParams:
 
     @staticmethod
-    def from_mpn(mpn, mfr) -> 'MosfetSpecs':
-        import dslib.store
+    def default():
+        # return DcDcSpecs(vi=62, vo=27, pin=800, f=40e3, Vgs=12, ripple_factor=0.3, tDead=300e-9)
+        # return DcDcSpecs(vi=75, vo=27 * 2, pin=900, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        # return DcDcLoadParams(vi=130, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
+        # return DcDcLoadParams(vi=72, vo=27, pin=800, f=80e3, ripple_factor=0.3, tDead=300e-9)
+        return DcDcLoadParams(vi=72, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=300e-9)
 
-        part = dslib.store.load_part(mpn, mfr)
-        assert part.is_fet
-        return part.specs
-
-    @property
-    def V_pl(self):
-        # aka Vgp, read from datasheet
-        # https://www.vishay.com/docs/73217/an608a.pdf#page=4
-        # Vgp = VTH + IDS/gfs
-        # better to read from datasheet curves
-        # return (self.Qgs + self.Qgd) - self.Qg_th
-        # Qg_th = Qgs - Q_pl
-        if not math.isnan(self._Vpl):
-            return self._Vpl
-        else:
-            return math.nan
-            raise NotImplemented()
-            # return (self.Qgs + self.Qgd) - self.Qg_th
-        # return 4.2
-        # raise NotImplemented
-
-    @property
-    def Qgs2(self):
-        if not math.isnan(self._Qgs2):
-            return self._Qgs2
-        if not math.isnan(self.Qg_th):
-            return self.Qgs - self.Qg_th
-        return self.Qgs * 0.6  # TODO estimate
-
-    @property
-    def Qsw(self):
-        return self.Qgd + self.Qgs2
-
-    def __str__(self):
-        return f'MosfetSpecs({self.Vds}V,{round(self.Rds_on * 1e3, 1)}mR Qg={round(self.Qg * 1e9)}n trf={round(self.tRise * 1e9)}/{round(self.tFall * 1e9)}n Qrr={round(self.Qrr * 1e9)}n)'
-
-
-class DcDcSpecs:
-
-    def __init__(self, vi, vo, f, Vgs, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None):
+    def __init__(self, vi, vo, f, tDead=None, io=None, ii=None, pin=None, iripple=None, ripple_factor=None,
+                 L=None, coil:'CoilSpecs'=None):
         """
 
         :param vi: input voltage
@@ -125,8 +39,10 @@ class DcDcSpecs:
         :param iripple: peak-2-peak coil ripple current il(ton) - il(0). CCM if dil<2*il
         :param ripple_factor: peak-2-peak see https://www.richtek.com/Design%20Support/Technical%20Document/AN009#Ripple%20Factor
         """
-        self.Vi = vi
-        self.Vo = vo
+        assert 1000 < f < 2e6, f
+
+        self.Vi:float = vi
+        self.Vo:float = vo
 
         if ii is not None:
             assert pin is None and io is None
@@ -141,16 +57,38 @@ class DcDcSpecs:
 
         if ripple_factor is not None:
             assert iripple is None
+            assert L is None and coil is None
             iripple = io * ripple_factor
 
-        self.Iripple = iripple if not iripple is None else math.nan
+        if L is not None or coil is not None:
+            if coil is not None:
+                assert L is None
+                L = coil.Ldc(io)
+            else:
+                assert coil is None
+            assert ripple_factor is None
+            assert iripple is None
+            assert 1e-6 < L  # < 999e-6
+            if L > 999e-6:
+                warnings.warn(f'L is very high')
+            # https://www.ti.com/lit/ds/symlink/lm5163.pdf#page=18 (18)
+            # notice that the ripple current does not depend on io (dc bias current)
+            iripple = vo / (f * L) * (1 - vo / vi)
+            if not (iripple < 2 * io):
+                raise DCMNotImplemented("CCM mode only (DCM not implemented)")
+            assert 0.01 < iripple / io < 2, (iripple, io, round(iripple / io, 2))
+        else:
+            L = round_to_n(vo / (f * iripple) * (1 - vo / vi), 3)
+
+        self.Iripple = iripple if not iripple is None else math.nan  # dI peak-peak
 
         self.f = f
-        self.Vgs = Vgs
         self.tDead = tDead
+        self.L = L
 
         p = 1 / self.f
-        assert tDead / p < 0.1
+        if tDead is not None:
+            assert tDead / p < 0.1, (tDead / p)
 
     @property
     def Pout(self):
@@ -167,6 +105,10 @@ class DcDcSpecs:
         return self.Vo / self.Vi
 
     @property
+    def ton_buck(self):
+        return self.D_buck / self.f
+
+    @property
     def Io_min(self):
         """
         :return: Bottom ripple current
@@ -181,11 +123,17 @@ class DcDcSpecs:
         return self.Io + (self.Iripple / 2)
 
     @property
+    def Il_ac_rms2(self):
+        # RMS(∆I)^2 = ∆I^2/3 (triangular waveform)
+        # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf
+        return ((self.Iripple / 2) ** 2) / 3
+
+    @property
     def is_ccm(self) -> bool:
         """
         :return: Whether the DC-DC converter operates in continuous conduction mode (coil current does not touch zero)
         """
-        #if math.isnan(self.Iripple):
+        # if math.isnan(self.Iripple):
         #    return True
         assert self.Iripple >= 0, self.Iripple
         return self.Iripple < 2 * self.Io
@@ -200,24 +148,112 @@ class DcDcSpecs:
         return (dc.Io_max ** 2 + dc.Io_max * dc.Io_min + dc.Io_min ** 2) / 3
 
     def __str__(self):
-        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%.1fW)' % (
-            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, self.Pout)
+        return 'DcDcSpecs(%.1fV/%.1fV=%.2f Io=%.1fA Po=%sW ΔI=%.1fA L=%sH f=%sHz)' % (
+            self.Vi, self.Vo, self.Vo / self.Vi, self.Io, round_to_n_dec(self.Pout, 4), self.Iripple,
+            round_to_n_dec(self.L, 2), round_to_n_dec(self.f, 2))
 
     def fn_str(self, topo: Literal['buck']):
         if topo == 'buck':
             return f'buck-%.0fV-%.0fV-%.0fA-%.0fkHz' % (self.Vi, self.Vo, self.Io, self.f / 1000)
         raise ValueError(topo)
 
+    def vds_in_range(self, vds):
+        if abs(vds) < 2:  # probably invalid
+            return True
+        return not (vds < (self.Vi * 1.1)) and not (vds > max(50, self.Vi * 3))
+
+    def Id_in_range(self, id_max: float, parallel: int):
+        return not (id_max < self.Io_max * 1.2 / parallel)
+
+    def select_mosfets(dcdc, parts: List['DiscoveredPart'], max_parallel=3):
+        rds_on_max = dcdc.Pout * 0.01 / (dcdc.Io ** 2) * 2 * max_parallel
+        # use inverted comparison to pass-through nan-values
+        return [p for p in parts if (
+                dcdc.vds_in_range(p.specs.Vds_max)
+                and dcdc.Id_in_range(p.specs.ID_25, max_parallel) and not (
+                p.specs.Rds_on_10v_max > rds_on_max))]
+
+    def C_out_min(self, vout_ripple):
+        # https://www.ti.com/lit/ds/symlink/lm5163.pdf
+        return self.Iripple / (8 * self.f * vout_ripple)
+
+    def C_in_min(self, vin_ripple, R_esr=0):
+        # https://www.ti.com/lit/ds/symlink/lm5163.pdf
+        return self.Io * self.D_buck * (1 - self.D_buck) / (self.f * (vin_ripple - self.Io * R_esr))
+
+
+class BuckConverter():
+    def __init__(self, name, Io_max, f_sw, coil: 'CoilSpecs', hs: MosfetSlot, ls: MosfetSlot, output_parasitics,
+                 cin_imp=0, cout_imp=0,
+                 pcb=None,
+                 ):
+
+        self.name = name
+        self.Io_max = Io_max
+        self.f_sw = f_sw
+        from dclib.powerloss import CoilSpecs
+        self.coil: CoilSpecs = coil
+        self.hs = hs
+        self.ls = ls
+        self.output_parasitics = output_parasitics
+
+        self.cout_imp = cout_imp
+        self.cin_imp = cin_imp
+        self.pcb = pcb
+
+    def powerloss(self, dcdc: DcDcLoadParams, gd: GateDrive):
+        coil = self.coil
+        Ldc = coil.Ldc(dcdc.Io)
+        dcdc = DcDcLoadParams(vi=dcdc.Vi, vo=dcdc.Vo, io=dcdc.Io, f=dcdc.f, tDead=dcdc.tDead, L=Ldc)
+
+        from dclib.powerloss import dcdc_buck_hs
+        p_hs = dcdc_buck_hs(
+            dcdc,
+            self.hs.mf,
+            gd=gd,
+            isGaN=False,  # self.hs.mf.part.specs.isGaN,
+            # fallback_V_pl=5.4,
+            # Lcsi=4e-9, ls_Qoss=400e-9,  # TODO csd19503 # TODO Qload_HS = Qoss_LS + Qrr_LS ?
+            # MosfetSpecs(Rds_on=1e-3, Qg=1e-9, tRise=.5e-9, tFall=.5e-9, Qrr=1e-9)
+            # MosfetSpecs(Rds_on=6.8e-3, Qg=39e-9, tRise=39e-9, tFall=46e-9, Qrr=43e-9),  # TK6R8A08QM
+            # MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),#CSD19506KCS
+
+            # MosfetSpecs.mpn(mpn='TK6R8A08QM', mfr='toshiba')
+        )
+        p_hs = p_hs.parallel(self.hs.parallel)
+
+        from dclib.powerloss import dcdc_buck_coil
+        p_coil = dcdc_buck_coil(dcdc, coil)
+
+        from dclib.powerloss import dcdc_buck_ls
+        p_ls = dcdc_buck_ls(dcdc,
+                            # MosfetSpecs(Rds_on=2.3e-3, Qg=120e-9, tRise=11e-9, tFall=10e-9, Qrr=525e-9),
+                            self.ls.mf,
+                            gd
+                            )
+
+        from dclib.powerloss import dcdc_buck_caps
+        p_cap = dcdc_buck_caps(dcdc, Z_cin=self.cin_imp, Z_cout=self.cout_imp)
+
+        p_misc = dict()
+        for k, v in self.output_parasitics.items():
+            if k[0] == 'R':
+                p_misc['P' + k[1:]] = v * dcdc.Io ** 2
+            else:
+                raise ValueError(k)
+
+        return dotdict(hs=p_hs, ls=p_ls, coil=p_coil, cap=p_cap, misc=p_misc), dcdc
+
 
 def tests():
     io = 10
-    d1 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=0.001)
+    d1 = DcDcLoadParams(24, 12, 40e3, 10, 0, io=io, ripple_factor=0.001)
     assert abs(d1.Io_mean_squared_on - io ** 2) / io ** 2 < 1e-3
 
-    d2 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=1)
+    d2 = DcDcLoadParams(24, 12, 40e3, 10, 0, io=io, ripple_factor=1)
     assert d2.Io_mean_squared_on > d1.Io_mean_squared_on * 1.05
 
-    d2 = DcDcSpecs(24, 12, 40e3, 10, 0, io=io, ripple_factor=1.99)
+    d2 = DcDcLoadParams(24, 12, 40e3, 10, 0, io=io, ripple_factor=1.99)
     assert d2.Io_mean_squared_on > d1.Io_mean_squared_on * 1.10
 
 

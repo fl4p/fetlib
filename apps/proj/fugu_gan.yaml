@@ -1,0 +1,44 @@
+# Gate Driver: UCC
+# => Rg_min = 2.75 Ω @ 11V
+#
+
+topology: buck
+
+substrates: [ GaN ]
+packages: []
+vdsRange: [ 100, 200 ]
+
+gateDrive:
+  voltage: 11
+  rgTotal: 6 # 4.7 + Rg
+  rgTotalOff: 3 # 2.2 + Rg
+  vplFallback: 4.5 # for gan this value is internally divided by 2
+  voltageGaN: 5
+  deadTime: 100e-9
+
+
+gateDriveGaN:
+  voltage: 5
+  rgTotal: 3
+  rgTotalOff: 1.5
+  vplFallback: 2.3
+  voltageGaN: 5
+  deadTime: 100e-9
+
+controlFet:
+  maxParallel: 2
+  stagedSwitching: false
+
+syncFet:
+  maxParallel: 2
+  reverseRecoveryFactor: 1
+
+inductor:
+  rippleFactor: 0.33
+
+loadPoints:
+  - pointWeight: 1
+    vIn: 72
+    vOut: 27
+    pIn: 900
+    f: 60e3

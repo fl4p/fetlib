@@ -1,0 +1,62 @@
+[dspicks]
+Vsd1v=datasheets/diotec/DI048N08PQ.pdf
+Idp=datasheets/epc/EPC2012C.pdf
+OneOhm=datasheets/littelfuse/IXTH10P60.pdf
+IdValue=datasheets/infineon/IRL100HS121.pdf
+___=datasheets/mcc/MCW200N10Y-TP.pdf
+headMTM=datasheets/littelfuse/IXFK170N10P.pdf
+headExt=datasheets/infineon/FF3MR12KM1HPHPSA1.pdf
+off=datasheets/infineon/IPP014N06NF2SAKMA2.pdf
+enc=datasheets/infineon/IPP057N08N3GHKSA1.pdf
+rohm=datasheets/rohm/RS6P100BHTB1.pdf
+
+irf310=datasheets/infineon/IRFS3107TRLPBF.pdf
+
+;ipa29 wide spacing
+ipa29=datasheets/infineon/IPA029N06NXKSA1.pdf
+
+
+
+__=datasheets/littelfuse/IXFP110N15T2.pdf
+_=datasheets/onsemi/NTMFSC4D2N10MC.pdf
+fontName=datasheets/toshiba/TK35A08N1.pdf
+alotOfWS=datasheets/infineon/IPA050N10NM5SXKSA1.pdf
+cidFT2=datasheets/littelfuse/IXFH110N15T2.pdf.ocrmypdf_redo.pdf
+cidFT2_1=datasheets/littelfuse/IXFA180N10T2.pdf.gs.pdf
+
+exp=datasheets/infineon/BSL606SNH6327XTSA1.pdf
+ocr_scanned=datasheets/infineon/IRFP150NPBF.pdf.ocrmypdf_r400.pdf.cups.pdf
+ocr=datasheets/infineon/IPP100N08N3GXKSA1.pdf.r400_ocrmypdf.pdf
+
+in2n7=datasheets/infineon/2N7002DWH6327XTSA1.pdf
+on4d=datasheets/onsemi/NTMFSC4D2N10MC.pdf
+
+
+
+
+ixfp=datasheets/littelfuse/IXFP110N15T2.pdf
+
+; pdfminer review
+doubleChar=datasheets/vishay/SQM120N10-3M8_GE3.pdf
+
+
+; fontTroubles
+ft1=datasheets/infineon/IPF039N08NF2SATMA1.pdf
+
+; Vds = 0.5V wtf
+bsc093=datasheets/infineon/BSC093N15NS5ATMA1.pdf
+; TODO if head row contains the word Diagram, skip whole table
+
+
+; backfill units
+; datasheets/infineon/IRFP3710PBF.pdf
+; datasheets/vishay/SQJ184EP-T1_GE3.pdf
+; datasheets/infineon/IRFP150NPBF.pdf
+; BSC146N10LS5ATMA1.pdf
+; RS6P100BHTB1.pdf.cups.pdf
+
+; ffill symbol
+; IPP048N12N3GXKSA1.pdf.r400.pdf
+
+; ffill symbol with unseperated/confusing conditions
+; BSC146N10LS5ATMA1.pdf

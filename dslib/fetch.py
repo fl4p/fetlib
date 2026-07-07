@@ -1,48 +1,138 @@
 import asyncio
 import glob
+import math
 import os.path
+import re
 import time
+import traceback
+from functools import partial
+from os.path import expanduser
+from typing import Union, List, Dict
 
 import requests
-from pyppeteer.errors import PageError
+from pyppeteer.page import Page
+
+import dslib.discovery.onsemi
+from dslib.cache import acquire_file_lock
 
 
-def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
+def get_datasheet_url(mfr, mpn):
+    if mfr == 'mcc':
+        req = requests.get('https://www.mccsemi.com/products/search/' + mpn)
+        reg = re.compile(
+            r'<a target="_blank" href="?(https://www.mccsemi.com/pdf/products/' + mpn[:6] + '[-()a-z0-9]+.pdf)"?',
+            re.IGNORECASE)
+        m = reg.search(req.text)
+        if m:
+            return m.group(1)
+
+    if mfr == 'onsemi':
+        return [
+            f"https://www.onsemi.com/download/data-sheet/pdf/{mpn}-d.pdf",
+            ]
+
+    if mfr == 'ti':
+        return f'https://www.ti.com/lit/ds/symlink/{mpn.lower()}.pdf'
+
+    if mfr == 'ao':
+        return [
+            f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}.pdf',
+            f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}_0.pdf',
+            f'https://www.aosmd.com/sites/default/files/res/datasheets/{mpn}_1.pdf',
+            ]
+
+    if mfr == 'st':
+        return [
+            '~/Downloads/'+mpn.lower()+'.pdf',
+        ]
+
+    # asyncio.get_event_loop().run_until_complete(download_with_chromium(
+    #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
+    #    click='a#pdp-datasheet_0,a#lnkDataSheet_1',
+    # ))
+
+
+async def fetch_datasheet(ds_url, datasheet_path, mfr, mpn):
     ds_url_alt = None
+    if isinstance(ds_url, float) and math.isnan(ds_url):
+        ds_url = None
+    ds_url = ds_url and ds_url.strip('- ')
+    ds_url = ds_url or get_datasheet_url(mfr, mpn)
 
-    if ds_url.startswith('//'):
-        ds_url = 'https:' + ds_url
 
     if mfr == 'ti':
         ds_url_alt = ds_url
-        ds_url = f'https://www.ti.com/lit/ds/symlink/{mpn.lower()}.pdf'
+        ds_url = get_datasheet_url(mfr, mpn)
 
+    if mfr == 'ao':
+        ds_url_alt = ds_url
+        ds_url = get_datasheet_url(mfr, mpn)
 
-    if ('infineon-technologies/fundamentals-of-power-semiconductors' in ds_url or 'MCCProductCatalog.pdf ' in ds_url):
+    if mfr == 'onsemi':
+        #import dslib.discovery.parts_discovery
+        if not requests.head(ds_url).ok:
+            ds_url = dslib.discovery.onsemi.onsemi_ds_url(mpn)
+        # ds_url_alt = ds_url.replace('fdb','fdp')
+        # ds_url_alt = lambda : dslib.parts_discovery.onsemi_ds_url(mpn)
+
+    if mfr == 'st':
+        #ds_url_alt = ds_url
+        ds_url = get_datasheet_url(mfr, mpn)
+
+    if not ds_url or str(ds_url) == 'nan':
+        print('SKIP', datasheet_path, 'no url', ds_url)
+        return None
+
+    if ('infineon-technologies/fundamentals-of-power-semiconductors' in ds_url or 'MCCProductCatalog.pdf' in ds_url):
         print(mfr, 'skip url to', ds_url)
         return None
 
-    if ds_url == '-':
-        # asyncio.get_event_loop().run_until_complete(download_with_chromium(
-        #    'https://www.mouser.de/c/?q=' + mpn, datasheet_path,
-        #    click='a#pdp-datasheet_0,a#lnkDataSheet_1',
-        # ))
+    if isinstance(ds_url, str):
+        ds_url = [ds_url]
 
-        print('SKIP', datasheet_path, ds_url)
-        return None
+    print('downloading', ds_url, datasheet_path)
+    dp = os.path.dirname(datasheet_path)
+    os.path.isdir(dp) or os.makedirs(dp)
+    for du in [*ds_url, ds_url_alt]:
+        if not du:
+            continue
 
-    else:
+        try:
+            if callable(du):
+                du = du()
 
-        print('downloading', ds_url, datasheet_path)
-        dp = os.path.dirname(datasheet_path)
-        os.path.isdir(dp) or os.makedirs(dp)
-        for du in (ds_url, ds_url_alt):
-            if not du:
-                continue
+            if du.startswith('//'):
+                du = 'https:' + du
+
+            if not du.startswith('http'):
+                if os.path.isfile(expanduser(du)):
+                    import shutil
+                    shutil.copyfile(expanduser(du), datasheet_path)
+                    return
+                else:
+                    continue
+
             try:
-                asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
+                req = requests.get(du, timeout=6)
+                if req.status_code == 200 and req.headers['Content-Type'].split(';')[0].lower() == 'application/pdf' and len(
+                        req.content) > 10e3 and req.content.startswith(b"%PDF"):
+                    with open(datasheet_path, 'wb') as f:
+                        f.write(req.content)
+                    return
+                if req.status_code == 404:
+                    continue
             except Exception as e:
-                print('ERROR', du, e)
+                if 'not found' in str(e).lower():
+                    continue
+                pass
+
+            t = download_with_chromium(du, datasheet_path)
+            await t
+            # asyncio.get_event_loop().run_until_complete(download_with_chromium(du, datasheet_path))
+            # asyncio.run(download_with_chromium(du, datasheet_path))
+        except Exception as e:
+            print(traceback.format_exc())
+            print('ERROR', du, e)
 
 
 def download(url, filename):
@@ -52,19 +142,54 @@ def download(url, filename):
             fh.write(chunk)
 
 
-import pyppeteer
-
-browser_page = None
+browser_pages:Dict[int, Page] = {}
+browsers = {}
 
 
 async def get_browser_page():
-    global browser_page
-    if browser_page is None or browser_page.isClosed():
+    import pyppeteer
+
+    evl_id = id(asyncio.get_event_loop())
+
+    if evl_id not in browsers:
+        assert not browsers
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
         os.path.exists(userDataDir) or os.makedirs(userDataDir)
-        browser = await pyppeteer.launch(dict(headless=False, userDataDir=userDataDir))
-        browser_page = await browser.newPage()
-    return browser_page
+        browsers[evl_id] = await pyppeteer.launch(dict(
+            ignoreHTTPSErrors=True,
+            headless=False,
+            userDataDir=userDataDir, # this is important for PDF downloads (to disable internal pdf viewer)
+            #autoClose=True,
+            timeout=60000,
+        ))
+
+        def on_close(evl_id):
+            browsers.pop(evl_id, None)
+            browser_pages.pop(evl_id, None)
+
+        browsers[evl_id].on('close', partial(on_close, evl_id))
+
+    if evl_id not in browser_pages  or browser_pages[evl_id].isClosed():
+        browser_pages[evl_id] = await browsers[evl_id].newPage()
+
+    return browser_pages[evl_id]
+
+async def close_browser():
+    for k in list(browser_pages.keys()):
+        pg = browser_pages.pop(k)
+        try:
+            pg.isClosed() or await pg.close()
+        except:
+            pass
+
+    for k in list(browsers.keys()):
+        from pyppeteer.browser import Browser
+        bw: Browser = browsers.pop(k)
+        try:
+            await bw.close()
+        except:
+            pass
+
 
 
 """
@@ -72,71 +197,124 @@ https://stackoverflow.com/questions/50804931/how-to-download-a-pdf-that-opens-in
 
 """
 
+_chromium_lock = asyncio.Lock()
 
-async def download_with_chromium(url, filename, click='#open-button'):
 
-    def _check_dl():
-        dl_files = glob.glob(dl_path + '/*.[pP][dD][fF]')
-        if len(dl_files) > 0:
-            print('got download', dl_files[0])
-            os.rename(dl_files[0], filename)
-            return True
-        return False
+async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', eval=None, close=False,
+                                 nav_timeout=30000):
+    from pyppeteer.errors import PageError
 
-    dl_path = os.path.realpath(filename + '_downloads')
-    if os.path.exists(dl_path):
-        import shutil
-        shutil.rmtree(dl_path)
-    assert not os.path.exists(dl_path), dl_path
-    try:
-        os.path.isdir(dl_path) or os.makedirs(dl_path)
+    with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
+        file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
 
-        print('download folder', dl_path)
+        if isinstance(click, str):
+            click = [click]
 
-        page = await get_browser_page()
+        def _check_dl():
+            dl_files = glob.glob(dl_path + '/*.' + file_ext_glob)
+            if len(dl_files) > 0:
+                print('got download', dl_files[0])
+                os.rename(dl_files[0], filename)
+                return True
+            return False
 
-        await page._client.send('Page.setDownloadBehavior', {
-            'behavior': 'allow',
-            'downloadPath': dl_path,
-        })
+        dl_path = os.path.realpath(filename + '_downloads')
+        if os.path.exists(dl_path):
+            import shutil
+            shutil.rmtree(dl_path)
+        assert not os.path.exists(dl_path), dl_path
+        page = None
+        try:
+            os.path.isdir(dl_path) or os.makedirs(dl_path)
+
+            print(url, 'download folder', dl_path)
+
+            page = await get_browser_page()
+
+            await page._client.send('Page.setDownloadBehavior', {
+                'behavior': 'allow',
+                'downloadPath': dl_path,
+            })
+
+            try:
+                resp = await page.goto(url, timeout=nav_timeout)
+                if resp.status in {404}:
+                    print(url, 'NOT FOUND')
+                    return
+
+                if eval:
+                    await page.evaluate(eval)
+
+                for c in click:
+
+                    for i in range(1, 200):
+                        if _check_dl():
+                            return
+
+                        try:
+                            await page.waitFor(c, timeout=100)
+                            break
+                        except Exception as e:
+                            # print(e)
+                            pass
+
+                        # await page.evaluate(""" document.querySelector('a[data-track-name="downloadLink"]').click() """)
+
+                    await page.waitForSelector(c, timeout=300)
+
+                    await asyncio.sleep(1)
+
+                    sel = c + ' a' if await page.querySelector(c + ' a') else c
+
+                    # el = await page.querySelector(c + ' a') or await page.querySelector(c)
+
+                    try:
+                        await page.click(sel)
+                    except:
+                        sel = sel.replace("'", "\\'")
+                        await page.evaluate(f""" document.querySelector('{sel}').click() """)
+
+                    if len(click) > 1:
+                        await asyncio.sleep(2)
+
+            except PageError as e:
+                # print('page error, probably direct download')
+                pass
+
+            for i in range(1, 100):
+                if _check_dl():
+                    return
+                time.sleep(.3)
+            print('no downloaded file found')
+        finally:
+            os.rmdir(dl_path)
+            if close and page:
+                if close == 'page':
+                    await page.close()
+                else:
+                    await page.browser.close()
+                # await page.close()
+
+
+
+async def get_text_with_chromium(url, close=False):
+    with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
 
         try:
+            page = await get_browser_page()
             resp = await page.goto(url)
             if resp.status in {404}:
                 print(url, 'NOT FOUND')
                 return
 
-            for i in range(1, 100):
-                if _check_dl():
-                    return
+            return await resp.text()
 
-                try:
-                    await page.waitFor(click, timeout=200)
-                except:
-                    pass
-
-            await page.waitFor(click, timeout=300)
-
-            try:
-                await page.click(click + ' a')
-            except:
-                await page.click(click)
-
-        except PageError as e:
-            # print('page error, probably direct download')
-            pass
-
-        for i in range(1, 100):
-            if _check_dl():
-                return
-            time.sleep(.1)
-        print('no downloaded file found')
-    finally:
-        os.rmdir(dl_path)
-
-
-
-
+        finally:
+            if close and page:
+                if close == 'page':
+                    await page.close()
+                else:
+                    await page.browser.close()
 
 if __name__ == '__main__':
     asyncio.get_event_loop().run_until_complete(

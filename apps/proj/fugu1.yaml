@@ -1,0 +1,33 @@
+# Gate Driver: EG3114 4A
+# => Rg_min = 2.75 Ω @ 11V
+#
+
+topology: buck
+
+substrates: [ Si ]
+packages: ['TO-220']
+vdsRange: [ 80, 200 ]
+
+gateDrive:
+  voltage: 11
+  rgTotal: 4.7
+  vplFallback: 4.5
+  deadTime: 100e-9
+
+controlFet:
+  maxParallel: 1
+  stagedSwitching: false
+
+syncFet:
+  maxParallel: 1
+  reverseRecoveryFactor: 1
+
+inductor:
+  rippleFactor: 0.3
+
+loadPoints:
+  - pointWeight: 1
+    vIn: 72
+    vOut: 27
+    pIn: 600
+    f: 40e3
