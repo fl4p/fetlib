@@ -1,50 +1,3 @@
-commands
-- discover parts
-- download datasheet
-
-# todo
-- has_custom_enc.. should return false for 'datasheets/mcc/MCAC100N08Y-TP.pdf'
-
-
-I’ve been working on this the last years.
-It is 3 projects in one repo:
-
-1) mosfet datasheet parser and advanced parametric search
-2) power mosfet power loss modelling using gate charge curve
-3) inductor core loss
-
-If you’ve been looking for power switches for your dc-dc converter you probably know. there are plenty of good products
-but which one to choose.
-
-What fetlib does:
-
-1) scrape manufacturer websites for parts (currently TODO)
-2) download parts pdf data sheet
-3) read the data sheet and normalize specifications
-
-the data sheet reading uses several techniques:
-
-1) a simple pdf2text and then regex approach. pdf does not understand tables and not even fluent text, each
-   character[README.md](../../heliosync/hw/sensor/debug-probe/README.md)
-   has its own bounding box with coordinates absolute to the page origin. this ensures that pdfs are rendered perfectly
-   equal without using the character width of the font.
-   the first step here is too aggregate characters into words, words into lines, lines into blocks/paragraphs. care must
-   be
-   taken with subscript and superscript, so it doesn’t end up in another line.
-
-2) find tables using tabula. this works ok. due to the nature of data sheet tables that contain a lot of merged
-   vertically and horizontally merged cells, and sometimes frame-less tables/cells.
-
-3) spatial query: this is somewhat a new invention, a mix of regex search and 2d-raytracing.
-
-we also been throwing LLMs (from openai and anthropic and sth open source) in but we couldn't find any advantage as
-compared to regex. They sometimes produces arbitrary
-errors, which can easily stay un-detected. LLMs are non-deterministic behavior and insane waste of energy.
-
-Once the data is extracted, the program does some range checks on the values, especially with the gate charge
-parameters.
-
-datasheets/toshiba/SSM6N15FU.pdf
 
 # Extensive parametric search of MOSFETs for DC-DC converters
 
@@ -474,3 +427,52 @@ datasheets/goford/GT105N10T.pdf error parsing field trr in Row(175 ~ 187, 'Rever
     assert vpl > vgs_th, (hs.part.mpn, vpl, vgs_th)
 AssertionError: ('IRFI4227', 4.5, nan)
 ```
+
+
+commands
+- discover parts
+- download datasheet
+
+# todo
+- has_custom_enc.. should return false for 'datasheets/mcc/MCAC100N08Y-TP.pdf'
+
+
+I’ve been working on this the last years.
+It is 3 projects in one repo:
+
+1) mosfet datasheet parser and advanced parametric search
+2) power mosfet power loss modelling using gate charge curve
+3) inductor core loss
+
+If you’ve been looking for power switches for your dc-dc converter you probably know. there are plenty of good products
+but which one to choose.
+
+What fetlib does:
+
+1) scrape manufacturer websites for parts (currently TODO)
+2) download parts pdf data sheet
+3) read the data sheet and normalize specifications
+
+the data sheet reading uses several techniques:
+
+1) a simple pdf2text and then regex approach. pdf does not understand tables and not even fluent text, each
+   character[README.md](../../heliosync/hw/sensor/debug-probe/README.md)
+   has its own bounding box with coordinates absolute to the page origin. this ensures that pdfs are rendered perfectly
+   equal without using the character width of the font.
+   the first step here is too aggregate characters into words, words into lines, lines into blocks/paragraphs. care must
+   be
+   taken with subscript and superscript, so it doesn’t end up in another line.
+
+2) find tables using tabula. this works ok. due to the nature of data sheet tables that contain a lot of merged
+   vertically and horizontally merged cells, and sometimes frame-less tables/cells.
+
+3) spatial query: this is somewhat a new invention, a mix of regex search and 2d-raytracing.
+
+we also been throwing LLMs (from openai and anthropic and sth open source) in but we couldn't find any advantage as
+compared to regex. They sometimes produces arbitrary
+errors, which can easily stay un-detected. LLMs are non-deterministic behavior and insane waste of energy.
+
+Once the data is extracted, the program does some range checks on the values, especially with the gate charge
+parameters.
+
+datasheets/toshiba/SSM6N15FU.pdf
