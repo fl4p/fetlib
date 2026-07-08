@@ -15,18 +15,35 @@ Add a part by digitizing its graph; see fl4p/fetlib#37 (Qoss curve model).
 
 # (Vds_V, Coss_pF, Crss_pF)
 COSS_CURVES = {
-    # Infineon IPP024N08NF2S Rev 2.1, Diagram 11 (VGS=0, f=1 MHz). Reconciled to Table
-    # anchors: Coss=1000pF@40V, Crss=45pF@40V, Qoss=105nC@40V, Qgd=19nC@40V. Ring region
-    # (40-80 V) solid to ~3%; low-V region integral-constrained. Behind the _coss-handoff
-    # curve-fit model that rings 60 MHz on the Fugu2 fixture.
+    # Infineon IPP024N08NF2S Rev 2.1, Diagram 11 (VGS=0, f=1 MHz). Digitized by the raster
+    # dark-pixel column trace (dslib/coss_digitizer.py), verified point-by-point against a
+    # datasheet overlay. Reproduce:
+    #   python -m dslib.coss_digitizer datasheets/infineon/IPP024N08NF2S.pdf --page 8 \
+    #     --dpi 600 --box 650,2473,3956,5948 --vspan 0,80 --cdec 1,4 \
+    #     --mfr infineon --mpn IPP024N08NF2S --anchor-coss 40,1000 --anchor-qoss 40,105
+    # Table anchors: Coss=1000pF@40V (tool 1006), Crss=44pF@40V. Qoss(0-40V)=110nC integrated
+    # -- the graph itself integrates to ~109nC, ~4% above the 105nC Table value (datasheet
+    # graph-vs-table inconsistency, not a digitization error). NB: the 19nC Qgd Table spec is
+    # the gate-charge Miller plateau, NOT integral(Crss dV) -- do not use it to anchor Crss.
+    # Behind the datasheet-curve ring model (~60 MHz old fixture, ~62.5 refreshed padland).
     ("infineon", "IPP024N08NF2S"): [
-        (0, 7500, 1600), (5, 4700, 780), (10, 3250, 380), (15, 2480, 210),
-        (20, 1960, 130), (25, 1560, 85), (30, 1255, 60), (40, 1000, 45),
-        (50, 880, 40), (60, 800, 37), (70, 760, 34), (80, 730, 32),
+        (0, 6400, 1450), (5, 4420, 800), (10, 3660, 510), (15, 3140, 345),
+        (20, 2565, 208), (25, 1950, 113), (30, 1435, 71), (35, 1106, 54),
+        (40, 1000, 44), (50, 875, 35), (60, 800, 32), (70, 756, 31), (80, 733, 31),
     ],
-    # IPP055N08NF2S: TODO digitize Diagram 11 from the datasheet. Until then the HS side
-    # has no real curve (the _coss-handoff MYHS model reused IPP024's fit) and consumers
-    # warn + fall back to the scalar Coss for this part.
+    # Infineon IPP055N08NF2S Rev 2.1, Diagram 11 (VGS=0, f=1 MHz) -- Fugu2 HS device.
+    # Digitized by dslib/coss_digitizer.py (same box/template as IPP024). Reproduce:
+    #   python -m dslib.coss_digitizer datasheets/infineon/IPP055N08NF2S.pdf --page 8 \
+    #     --dpi 600 --box 650,2473,3956,5948 --vspan 0,80 --cdec 1,4 \
+    #     --mfr infineon --mpn IPP055N08NF2S --anchor-coss 40,420 --anchor-qoss 40,43
+    # Anchors: Coss=420pF@40V (tool 412, snapped to spec), Crss=20pF@40V (tool 20, exact),
+    # Ciss=2500pF@40V (tool 2476). Qoss(0-40V)=45nC integrated vs 43nC Table (~5% graph-over-
+    # table, same as IPP024). Closes the HS curve gap -> both Fugu2 sides curve-faithful.
+    ("infineon", "IPP055N08NF2S"): [
+        (0, 2650, 600), (5, 1830, 320), (10, 1505, 205), (15, 1290, 140),
+        (20, 1050, 85), (25, 800, 47), (30, 590, 31), (35, 455, 24),
+        (40, 420, 20), (50, 355, 16), (60, 320, 15), (70, 305, 15), (80, 295, 15),
+    ],
 }
 
 
