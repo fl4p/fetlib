@@ -94,6 +94,38 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/agmsemi/AGM035N10D.pdf', 4.3),
     ('datasheets/toshiba/XPQR8308QB.pdf', 5.5), # double axis, chart has 3 additional Vds curves overlapping the gate charge curve
 
+    # Human-verified samples from docs/vibes/chart-extraction.md, checked with
+    # full-curve overlays in ee/out/vpl_human_refs_first5_dsdig_fullcurve.
+    ('datasheets/agmsemi/AGM15T13D.pdf', 4.2),  # bright blue curve
+    ('datasheets/ao/AOMR62818.pdf', 3.0),  # smooth plateau start
+    ('datasheets/ao/AOT286L.pdf', 4.2),  # noisy line
+    ('datasheets/infineon/IPW65R019C7.pdf', 5.4),
+    ('datasheets/infineon/IRF540NL.pdf', 4.6),  # overlapping test-condition box
+    ('datasheets/onsemi/NVMFS5C468NLT1G.pdf', 3.5),  # Qgs/Qgd dimension lines
+    ('datasheets/onsemi/NVMYS029N08LHTWG.pdf', 3.0),  # Qgs/Qgd dimension lines
+    ('datasheets/onsemi/NVTFWS010N10MCLTAG.pdf', 2.6),  # Qgs/Qgd dimension lines
+    ('datasheets/agmsemi/AGM025N13LL.pdf', 4.3),  # rasterized
+    ('datasheets/agmsemi/AGM150P10AP.pdf', 3.1),  # rasterized
+    ('datasheets/infineon/IAUC28N08S5L230ATMA1.pdf', 3.1),  # rasterized
+    ('datasheets/infineon/F3L3MR12W3M1HH11BPSA1.pdf', 7.25),
+
+    # Not folded into hard-pass tests yet:
+    # - PSMN1R2-55SLH passes in the overlay harness via local-axis repair, but
+    #   dslib.viz.find_vpl still returns the upper-panel-axis value.
+    # - R6509KND3TL1-HXY and SIHD6N65ET4-GE3-HXY are still off/reference-disputed.
+
+    # Human-verified samples from chart-extraction.md entries 16-40 that are
+    # green in the full-curve overlay batch.
+    ('datasheets/st/STL70N4LLF5.pdf', 3.0),  # rasterized in source table, vector-readable
+    ('datasheets/ao/AOB284L.pdf', 3.95),  # noisy line
+    ('datasheets/ao/AOTL66518Q.pdf', 5.5),  # smooth knee
+    ('datasheets/nxp/PSMN1R0-30YLD.pdf', 2.6),
+    ('datasheets/huayi/HYG016N04LS1B.pdf', 3.6),  # rasterized
+    ('datasheets/hxy/SIS444DN-T1-GE3-HXY.pdf', 3.0),
+    ('datasheets/crmicro/CRTT020N04N.pdf', 5.0),
+    # GT085N10MH is green in the overlay harness but was observed to drift in
+    # a clean review venv, so keep it out of the hard dslib.viz regression set.
+
     #AOTF288L
 ]
 
@@ -108,6 +140,7 @@ def test_main():
     n_ok = 0
     n_ref = 0
     n_skip = 0
+    n_fail = 0
     rows: List[Tuple[str, Optional[float], float, str]] = []
 
     for path, ref in SAMPLES:
@@ -120,6 +153,7 @@ def test_main():
             est = find_vpl(path, enable_ocr=enable_ocr)
         except Exception as e:
             rows.append((path, None, ref, f'ERROR: {type(e).__name__}: {e}'))
+            n_fail += 1
             continue
 
         if est is None:
@@ -129,6 +163,8 @@ def test_main():
         ok = abs(est - ref) <= tol
         if ok:
             n_ok += 1
+        else:
+            n_fail += 1
         rows.append((path, est, ref, 'OK' if ok else f'OFF ({est - ref:+.2f})'))
 
     width = max(len(r[0]) for r in rows)
@@ -139,6 +175,8 @@ def test_main():
     print()
     print(f'  matched within ±{tol} V: {n_ok} / {n_ref}'
           + (f'  ({n_skip} files missing)' if n_skip else ''))
+    if n_fail:
+        raise SystemExit(1)
 
 
 if __name__ == '__main__':
