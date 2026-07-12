@@ -241,6 +241,35 @@ class MosfetSpecs:
     def FoMqrr(self):
         return self.Rds_on * self.Qrr * 1e3 * 1e9  # [mΩ*nC]
 
+    def Qrr_op(self, IF, didt, Tj=25.0, detail=False):
+        """Predicted reverse-recovery charge [C] at an OPERATING point (IF [A],
+        didt [A/s], Tj [degC]) — fl4p/fetlib#37. The flat `self.Qrr` is only valid at
+        the datasheet test condition; this extrapolates it with the Lauritzen-Ma
+        charge-control fit (dslib/qrr_model.py: exact at the calibration point,
+        linear-ish in IF, sub-linear in di/dt, tau(Tj) via an ASSUMED exponent —
+        results at Tj != the datasheet Tj are model guesses, flagged via
+        detail=True -> dict(..., tj_extrapolated=True)).
+
+        GaN (Qrr == 0) returns 0.0. Raises qrr_model.LMFitError when the part has no
+        curated test conditions (dslib/qrr_conditions.py) or an LM-inconsistent
+        datasheet pair — fail loud rather than invent an operating point.
+        """
+        from dslib import qrr_model
+        if self.Qrr == 0:
+            return dict(Qrr=0.0, trr=0.0, irrm=0.0, td=0.0, tau=0.0, TM=0.0,
+                        tj_extrapolated=False, fit=None) if detail else 0.0
+        if not hasattr(self, "_lm_fit_cache"):
+            self._lm_fit_cache = {}
+        p = qrr_model.qrr_op(self.Qrr, self.trr, self.qrr_cond, IF, didt, Tj=Tj,
+                             _fit_cache=self._lm_fit_cache)
+        return p if detail else p["Qrr"]
+
+    def FoMqrr_op(self, IF, didt, Tj=25.0):
+        """FoMqrr [mΩ*nC] evaluated at an operating point instead of the datasheet
+        test condition (fl4p/fetlib#37 item 3) — ranking by this de-biases parts whose
+        datasheet Qrr was simply measured at a gentler di/dt or lower IF."""
+        return self.Rds_on * self.Qrr_op(IF, didt, Tj) * 1e3 * 1e9  # [mΩ*nC]
+
     @property
     def FoMqsw(self):
         return self.Rds_on * self.Qsw * 1e3 * 1e9  # [mΩ*nC]
