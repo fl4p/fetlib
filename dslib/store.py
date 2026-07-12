@@ -163,6 +163,23 @@ def load_parts():
             curve = coss_curve_for(mfr, mpn)
             if curve:
                 specs.coss_curve = curve
+    # Same for the body-diode reverse-recovery test conditions (IF/di-dt/VR/Tj the datasheet
+    # Qrr+trr were measured at). Scalars without their operating point can't be re-scaled or
+    # fitted to a charge-control diode; see dslib/qrr_conditions.py and fl4p/fetlib#37.
+    try:
+        from dslib.qrr_conditions import qrr_conditions_for
+    except ImportError:
+        qrr_conditions_for = None
+    if qrr_conditions_for is not None:
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None or getattr(specs, 'qrr_cond', None):
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            cond = qrr_conditions_for(mfr, mpn)
+            if cond:
+                specs.qrr_cond = cond
     return parts
 
 

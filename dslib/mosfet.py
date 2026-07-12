@@ -109,6 +109,11 @@ class MosfetSpecs:
         # Attached by load_parts() from dslib.coss_curves (by MPN). Consumers use it for a
         # curve-faithful output cap; None -> they warn and fall back to the scalar Coss.
         self.coss_curve = coss_curve
+        # Optional datasheet reverse-recovery TEST CONDITIONS: dict(IF, didt, VR, Tj) or None.
+        # Attached by load_parts() from dslib.qrr_conditions (by MPN). Qrr/trr below are
+        # scalars measured AT this operating point; a consumer that needs to re-scale them
+        # (Qrr ~ sqrt(di/dt)) or fit a charge-control diode model needs it. See fl4p/fetlib#37.
+        self.qrr_cond = None
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
