@@ -101,6 +101,23 @@ COSS_CURVES = {
         (60, 2400, 40), (70, 1847, 28.4), (80, 1492, 22.2), (90, 1334, 18.9),
         (100, 1176, 17.1), (110, 1063, 16.1), (120, 960, 15.6),
     ],
+    # Infineon IPP050N10NF2S Rev 2.1 (2022-06-15), Diagram 11 (VGS=0, f=1 MHz) -- 100 V
+    # StrongIRFET2 Fugu2 HS candidate (dcdc-tools#15: like-for-like IPP055N08NF2S
+    # replacement, 2x parallel). Digitized with the dcdc-tools vector-first C(V) digitizer:
+    #   python3 dcdc-tools/scratch/datasheet_charts/find_charts.py \
+    #     datasheets/infineon/IPP050N10NF2S.pdf --out out/datasheet_charts/ipp050n10nf2s --dpi 180
+    #   python3 dcdc-tools/scratch/datasheet_charts/digitize_capacitance.py \
+    #     out/datasheet_charts/ipp050n10nf2s/charts.json --out out/datasheet_charts/ipp050n10nf2s
+    # Anchors: Coss=570pF@50V (tool 565.2, snapped to spec), Crss=25pF@50V (tool 25.4,
+    # snapped to spec), Ciss=3600pF@50V (tool 3607). Qoss(0-50V)=67.0nC sampled vs 67nC
+    # Table (-0.0%). Vector extraction, axis residuals ~1e-6.
+    ("infineon", "IPP050N10NF2S"): [
+        (0, 3332, 838), (5, 2079, 321), (10, 1784, 230), (15, 1559, 174),
+        (20, 1377, 132), (25, 1238, 98.2), (30, 1124, 71.9), (35, 983, 51.9),
+        (40, 829, 35.7), (45, 689, 29.1), (50, 570, 25), (55, 527, 22.7),
+        (60, 492, 20.9), (70, 449, 18.7), (80, 415, 17.9), (90, 397, 17.5),
+        (100, 384, 17.3),
+    ],
 }
 
 
