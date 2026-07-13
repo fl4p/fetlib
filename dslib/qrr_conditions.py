@@ -1,15 +1,25 @@
 """Datasheet body-diode reverse-recovery TEST CONDITIONS, keyed by (mfr, mpn).
 
 The parts DB stores `Qrr` and `trr` as flat scalars, but a scalar is meaningless without
-the operating point it was measured at: Qrr scales roughly as sqrt(di/dt) and with IF and
-Tj. The conditions live next to the Qrr/trr line in every datasheet ("VR=40V, IF=100A,
+the operating point it was measured at: Qrr scales STEEPLY with di/dt, and with IF and Tj.
+The conditions live next to the Qrr/trr line in every datasheet ("VR=40V, IF=100A,
 diF/dt=500A/us") but are not parsed into the pickle DB, so they are curated here.
+
+How steeply, measured (2026-07-13): IPP022N12NM6 is the only part here whose datasheet quotes
+Qrr at TWO di/dt points (IF=50A, Tj=25C): 155.2 nC @ 300 A/us and 412.1 nC @ 1000 A/us. That
+is an exponent of **0.81**, NOT the 0.5 ("roughly sqrt") this docstring used to claim. The
+Lauritzen-Ma fit reproduces it: fit on one point, predict the other, and Qrr lands within
+3.5% / -4.9% with tau agreeing to 4% between the two rows.
 
 Consumers:
   * dcdc-tools/loss lib/lm_diode.py — fits the Lauritzen-Ma charge-control body-diode
     subcircuit (tau, TM) from (Qrr, trr) AT THIS OPERATING POINT, so the transient deck
-    reproduces the datasheet recovery instead of a crude TT diode (which over-injects Qrr
-    by ~5x and manufactures a fake avalanche; see fl4p/dcdc-tools#14).
+    reproduces the datasheet recovery SHAPE (which a one-time-constant TT diode cannot).
+    NB: this is a FIDELITY fix, not a way to shrink Qrr. At a tight-loop converter's di/dt
+    (~10x the datasheet's) the LM diode injects MORE charge than the TT diode it replaces,
+    because Qrr grows with di/dt. The claim that TT "over-injects Qrr by ~5x and manufactures
+    a fake avalanche" is RETRACTED (see the retraction block in lm_diode.py and
+    fl4p/dcdc-tools#15): TT*IF = 15ns * 28A = 420 nC, only ~1.5x IPP019's 285 nC.
   * the analytic Qrr(di/dt) refinement (loss.py --qrr-didt-ref).
 
 Fields per entry:
