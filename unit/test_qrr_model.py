@@ -173,6 +173,45 @@ def test_qrr_op_prefers_2pt_and_falls_back_explicitly():
     assert p2["method"] == "1pt" and "fallback_from_2pt" in p2
 
 
+IPP022_PTS = [dict(IF=50.0, didt=300e6, VR=60.0, Tj=25.0, Qrr=155.2e-9, trr=46.3e-9),
+              dict(IF=50.0, didt=1000e6, VR=60.0, Tj=25.0, Qrr=412.1e-9, trr=39.0e-9)]
+ISC320_PTS = [dict(IF=4.5, didt=300e6, Tj=25.0, Qrr=23.8e-9, trr=20.5e-9),
+              dict(IF=4.5, didt=1000e6, Tj=25.0, Qrr=20.3e-9, trr=10.3e-9)]
+
+
+def test_best_lm_fit_prefers_2pt_and_q0_contract():
+    """best_lm_fit is the ONE deck/bucket calibration decision point. CONTRACT:
+    q0 is calibration provenance only — predictions from (tau, TM) are the
+    DIFFUSION charge; a consumer adding q0 back would double-count against the
+    Coss bucket (that is the exact bug this function exists to prevent)."""
+    f = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=IPP022_PTS)
+    assert f["method"] == "2pt" and f["decontaminated"] and f["q0"] > 0
+    # diffusion prediction at a datasheet row == row Qrr MINUS q0, exactly
+    p = qrr_model.predict(f["tau"], f["TM"], 50.0, 300e6)
+    assert abs(p["Qrr"] - (155.2e-9 - f["q0"])) < 1e-15
+    assert p["Qrr"] < 155.2e-9  # diffusion-only: never the full measured integral
+
+
+def test_best_lm_fit_explicit_fallbacks():
+    cond = dict(IF=50.0, didt=300e6, Tj=25.0)
+    # contamination-dominated points -> loud 1pt fallback, decontaminated via Qoss
+    f = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, cond,
+                              qrr_points=ISC320_PTS, qoss_vr=267e-9)
+    assert f["method"] == "1pt" and "fallback_from_2pt" in f
+    assert f["decontaminated"]
+    assert abs(f["q0"] - qrr_model.QRR_QOSS_FRACTION * 267e-9) < 1e-15
+    # no Qoss available -> raw fit, q0=0, decontaminated=False (caller must warn)
+    f2 = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, cond)
+    assert f2["method"] == "1pt" and f2["q0"] == 0.0 and not f2["decontaminated"]
+    # neither points nor conditions -> fail loud
+    try:
+        qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=ISC320_PTS)
+    except qrr_model.LMFitError as e:
+        assert "2pt path failed first" in str(e)
+    else:
+        raise AssertionError("best_lm_fit must raise without cond or usable points")
+
+
 def test_qrr_op_fugu2_operating_point():
     """Fugu2 sync-buck LS: IF ~ 33 A (1/3 the datasheet's), di/dt ~ 5.7 kA/us (11x the
     datasheet's). The two axes pull opposite ways; the result must be finite, positive,

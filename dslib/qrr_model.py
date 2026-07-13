@@ -316,6 +316,53 @@ def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None):
                 method="2pt", fit=fit)
 
 
+def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None):
+    """ONE calibration decision point, shared by the analytic Qrr loss bucket
+    (dcdc-tools loss.py) and the SPICE deck emitter (loss/lib/lm_diode.py) so
+    the two can never fit different diodes again (qrr-lm coordination
+    2026-07-13; the deck/bucket split was audit finding (b)).
+
+    Preference order:
+      1. method='2pt' — per-part (tau, TM, q0) from the part's own two-di/dt
+         datasheet rows (dslib/qrr_points.py) when a same-IF pair exists and
+         admits a diffusion-only fit. `cond` may be None on this path.
+      2. method='1pt' — single-point fit on calibration_qrr(Qrr, qoss_vr).
+         q0 = QRR_QOSS_FRACTION*qoss_vr; with qoss_vr=None the fit runs on the
+         RAW datasheet Qrr with q0=0.0 and decontaminated=False — the caller
+         must surface that (it over-states diffusion charge).
+    A 2pt attempt that admits no fit falls back EXPLICITLY
+    (fallback_from_2pt carries the reason); no conditions at all raises.
+
+    CONTRACT (encoded in tests): q0 is calibration PROVENANCE only — the
+    capacitive share excluded from the diffusion fit. predict(tau, TM, ...)
+    on this fit yields the DIFFUSION charge, which is what both the deck and
+    the loss bucket book; consumers must NOT add q0 back (the Coss/Eoss
+    bucket owns displacement charge — adding q0 would recreate the exact
+    double-count this function exists to prevent).
+    """
+    fallback = None
+    if qrr_points:
+        try:
+            p_lo, p_hi = _pick_2pt_rows(qrr_points)
+            fit = fit_lm_2pt(p_lo, p_hi, tj_fit=float(p_lo.get("Tj", 25.0)))
+            return dict(fit, method="2pt", decontaminated=True)
+        except LMFitError as e:
+            fallback = str(e)
+    if cond is None:
+        raise LMFitError(
+            "no reverse-recovery test conditions — add the part to "
+            "dslib/qrr_conditions.py (see fl4p/fetlib#37)"
+            + (f" (2pt path failed first: {fallback})" if fallback else ""))
+    q_cal = calibration_qrr(Qrr, qoss_vr)
+    fit = fit_lm(q_cal, trr, cond.get("IF"), cond.get("didt"),
+                 tj_fit=float(cond.get("Tj", 25.0)))
+    out = dict(fit, method="1pt", q0=Qrr - q_cal,
+               decontaminated=qoss_vr is not None)
+    if fallback:
+        out["fallback_from_2pt"] = fallback
+    return out
+
+
 def qrr_op(Qrr, trr, cond, IF, didt, Tj=25.0, _fit_cache=None):
     """One-call fl4p/fetlib#37 entry: datasheet (Qrr, trr) + test conditions `cond`
     (dict with IF/didt/Tj, see dslib/qrr_conditions.py) -> predicted recovery at the
