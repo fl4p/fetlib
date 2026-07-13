@@ -180,6 +180,23 @@ def load_parts():
             cond = qrr_conditions_for(mfr, mpn)
             if cond:
                 specs.qrr_cond = cond
+    # And the multi-di/dt reverse-recovery rows (generated dslib/qrr_points.py):
+    # parts carrying these get a per-part two-point (tau, TM, q0) fit in Qrr_op
+    # instead of the global QRR_QOSS_FRACTION assumption (fl4p/fetlib#37).
+    try:
+        from dslib.qrr_points import qrr_points_for
+    except ImportError:
+        qrr_points_for = None
+    if qrr_points_for is not None:
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None or getattr(specs, 'qrr_points', None):
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            pts = qrr_points_for(mfr, mpn)
+            if pts:
+                specs.qrr_points = pts
     return parts
 
 

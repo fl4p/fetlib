@@ -114,6 +114,11 @@ class MosfetSpecs:
         # scalars measured AT this operating point; a consumer that needs to re-scale them
         # (Qrr ~ sqrt(di/dt)) or fit a charge-control diode model needs it. See fl4p/fetlib#37.
         self.qrr_cond = None
+        # Optional MULTI-di/dt reverse-recovery rows: [dict(IF, didt, VR, Tj, Qrr, trr), ...]
+        # or None. Attached by load_parts() from the generated dslib.qrr_points (by MPN).
+        # Parts carrying two same-IF rows get a per-part (tau, TM, q0) fit in Qrr_op —
+        # the part's own di/dt data replaces the global QRR_QOSS_FRACTION assumption.
+        self.qrr_points = None
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0
@@ -250,6 +255,13 @@ class MosfetSpecs:
         results at Tj != the datasheet Tj are model guesses, flagged via
         detail=True -> dict(..., tj_extrapolated=True)).
 
+        Parts with multi-di/dt datasheet rows (dslib/qrr_points.py, attached as
+        `qrr_points`) get a per-part two-point (tau, TM, q0) fit — their own di/dt
+        data pins the capacitive share of the Qrr integral instead of the global
+        QRR_QOSS_FRACTION assumption. Contamination-dominated pairs that admit no
+        two-point fit fall back EXPLICITLY to the single-point path (detail=True
+        carries method='2pt'/'1pt' and the fallback reason).
+
         GaN (Qrr == 0) returns 0.0. Raises qrr_model.LMFitError when the part has no
         curated test conditions (dslib/qrr_conditions.py) or an LM-inconsistent
         datasheet pair — fail loud rather than invent an operating point.
@@ -262,8 +274,20 @@ class MosfetSpecs:
             self._lm_fit_cache = {}
         # getattr: an instance unpickled from a parts-lib written before the field
         # existed bypasses __init__ and would AttributeError instead of LMFitError.
+        points = getattr(self, "qrr_points", None)
+        fallback_reason = None
+        if points:
+            try:
+                p = qrr_model.qrr_op_2pt(points, IF, didt, Tj=Tj,
+                                         _fit_cache=self._lm_fit_cache)
+                return p if detail else p["Qrr"]
+            except qrr_model.LMFitError as e:
+                fallback_reason = str(e)  # e.g. Qrr ~flat with di/dt: 1pt only
         p = qrr_model.qrr_op(self.Qrr, self.trr, getattr(self, "qrr_cond", None),
                              IF, didt, Tj=Tj, _fit_cache=self._lm_fit_cache)
+        p["method"] = "1pt"
+        if fallback_reason:
+            p["fallback_from_2pt"] = fallback_reason
         return p if detail else p["Qrr"]
 
     def FoMqrr_op(self, IF, didt, Tj=25.0):

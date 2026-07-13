@@ -117,6 +117,62 @@ def test_predict_charge_partition():
     assert p["qa"] > 0 and p["qb"] > 0
 
 
+def test_fit_lm_2pt_roundtrip_ipp022():
+    """Two-point (tau, TM, q0) fit must reproduce BOTH datasheet Qrr rows as
+    measured-equivalent charge (diffusion + q0); the second trr row is a free
+    residual and stays within the band measured at review time (~+12%)."""
+    lo = dict(IF=50.0, didt=300e6, Qrr=155.2e-9, trr=46.3e-9)
+    hi = dict(IF=50.0, didt=1000e6, Qrr=412.1e-9, trr=39.0e-9)
+    fit = qrr_model.fit_lm_2pt(lo, hi)
+    assert 0 < fit["q0"] < 30e-9, fit["q0"]      # implied offset ~9.6 nC
+    for row in (lo, hi):
+        p = qrr_model.predict(fit["tau"], fit["TM"], row["IF"], row["didt"])
+        assert abs((p["Qrr"] + fit["q0"]) / row["Qrr"] - 1) < 1e-6, row
+    assert abs(fit["trr_hi_resid"]) < 0.25, fit["trr_hi_resid"]
+
+
+def test_fit_lm_2pt_fail_loud_on_contamination_dominated():
+    """ISC320N12LM6's datasheet Qrr FALLS with di/dt (23.8 -> 20.3 nC) —
+    impossible for stored charge; no q0 makes it LM-consistent. Must raise,
+    never force a fit."""
+    lo = dict(IF=4.5, didt=300e6, Qrr=23.8e-9, trr=20.5e-9)
+    hi = dict(IF=4.5, didt=1000e6, Qrr=20.3e-9, trr=10.3e-9)
+    try:
+        qrr_model.fit_lm_2pt(lo, hi)
+    except qrr_model.LMFitError:
+        pass
+    else:
+        raise AssertionError("fit_lm_2pt must reject a falling-Qrr pair")
+    # mismatched IF rows are equally invalid
+    try:
+        qrr_model.fit_lm_2pt(dict(lo, IF=25.0), hi)
+    except qrr_model.LMFitError:
+        pass
+    else:
+        raise AssertionError("fit_lm_2pt must reject rows at different IF")
+
+
+def test_qrr_op_prefers_2pt_and_falls_back_explicitly():
+    d = DS["IPP022N12NM6"]
+    pts = [dict(IF=50.0, didt=300e6, VR=60.0, Tj=25.0, Qrr=155.2e-9, trr=46.3e-9),
+           dict(IF=50.0, didt=1000e6, VR=60.0, Tj=25.0, Qrr=412.1e-9, trr=39.0e-9)]
+    fet = _FakeFet(Qrr=d["Qrr"], trr=d["trr"], Rds_on=2.2e-3,
+                   qrr_cond=dict(IF=d["IF"], didt=d["didt"], Tj=d["Tj"]),
+                   qrr_points=pts)
+    p = fet.Qrr_op(IF=50.0, didt=300e6, detail=True)
+    assert p["method"] == "2pt" and p["q0"] > 0
+    assert abs(p["Qrr"] / 155.2e-9 - 1) < 1e-6          # measured-equivalent at row
+    assert p["qrr_diffusion"] < p["Qrr"]                # diffusion excludes q0
+    # contamination-dominated points -> explicit single-point fallback
+    bad = [dict(IF=4.5, didt=300e6, Tj=25.0, Qrr=23.8e-9, trr=20.5e-9),
+           dict(IF=4.5, didt=1000e6, Tj=25.0, Qrr=20.3e-9, trr=10.3e-9)]
+    fet2 = _FakeFet(Qrr=d["Qrr"], trr=d["trr"], Rds_on=2.2e-3,
+                    qrr_cond=dict(IF=d["IF"], didt=d["didt"], Tj=d["Tj"]),
+                    qrr_points=bad)
+    p2 = fet2.Qrr_op(IF=50.0, didt=300e6, detail=True)
+    assert p2["method"] == "1pt" and "fallback_from_2pt" in p2
+
+
 def test_qrr_op_fugu2_operating_point():
     """Fugu2 sync-buck LS: IF ~ 33 A (1/3 the datasheet's), di/dt ~ 5.7 kA/us (11x the
     datasheet's). The two axes pull opposite ways; the result must be finite, positive,

@@ -207,6 +207,115 @@ def tau_at_tj(tau0, tj, tj_fit=25.0):
     return tau0 * ((tj + 273.15) / (tj_fit + 273.15)) ** N_TAU
 
 
+def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
+    """Two-point (tau, TM, q0) fit from datasheet rows at TWO di/dt values.
+
+    p_lo/p_hi: dict(IF, didt, Qrr, trr) — same IF, p_lo at the lower di/dt.
+    q0 is the constant capacitive share of the measured Qrr integral (Qoss
+    displacement charge counted by the JESD-style integration): solved so that
+    a diffusion-only LM fit on (Qrr_lo - q0, trr_lo) reproduces (Qrr_hi - q0)
+    at didt_hi exactly. This replaces the global QRR_QOSS_FRACTION assumption
+    with the part's own data (fl4p/fetlib#37; calibrated 2026-07-13: implied
+    per-die offsets median 0.13*Qoss across 21 dies).
+
+    Returns the fit_lm dict plus q0 [C] and trr_hi_resid — the SECOND trr row
+    is not consumed by the fit (3 observables Qrr_lo/trr_lo/Qrr_hi determine
+    the 3 parameters), so its prediction error is a free residual check.
+
+    Raises LMFitError when the rows differ in IF, or when no q0 in
+    [0, ~min(Qrr)) makes the pair LM-consistent (contamination-dominated
+    pairs: Qrr ~flat or falling with di/dt, e.g. ISK057N04LM6/ISC320N12LM6 —
+    those cannot be diffusion-fitted; fail loud, never force a fit)."""
+    if p_lo["didt"] > p_hi["didt"]:
+        p_lo, p_hi = p_hi, p_lo
+    if p_lo["IF"] != p_hi["IF"]:
+        raise LMFitError(f"two-point fit needs equal IF rows "
+                         f"(got {p_lo['IF']} A and {p_hi['IF']} A)")
+    if p_lo["didt"] == p_hi["didt"]:
+        raise LMFitError("two-point fit needs two DISTINCT di/dt rows")
+    IF = float(p_lo["IF"])
+
+    def err(q0):
+        f = fit_lm(p_lo["Qrr"] - q0, p_lo["trr"], IF, p_lo["didt"], tj_fit=tj_fit)
+        return (predict(f["tau"], f["TM"], IF, p_hi["didt"])["Qrr"]
+                - (p_hi["Qrr"] - q0))
+
+    lo, hi = 0.0, min(p_lo["Qrr"], p_hi["Qrr"]) * 0.98
+    try:
+        f_lo = err(lo)
+    except LMFitError as e:
+        raise LMFitError(f"two-point fit: low row not LM-representable ({e})")
+    f_hi = None
+    while hi > lo + 1e-12:
+        try:
+            f_hi = err(hi)
+            break
+        except LMFitError:
+            hi *= 0.85  # subtraction consumed the pair; walk back into range
+    if f_hi is None or f_lo * f_hi > 0:
+        raise LMFitError(
+            "no LM-consistent capacitive offset q0 in [0, min(Qrr)) — the pair "
+            "is contamination-dominated or non-LM (Qrr ~flat/falling with di/dt)")
+    for _ in range(80):
+        mid = 0.5 * (lo + hi)
+        try:
+            f_mid = err(mid)
+        except LMFitError:
+            hi = mid
+            continue
+        if f_lo * f_mid <= 0:
+            hi = mid
+        else:
+            lo, f_lo = mid, f_mid
+    q0 = 0.5 * (lo + hi)
+    fit = fit_lm(p_lo["Qrr"] - q0, p_lo["trr"], IF, p_lo["didt"], tj_fit=tj_fit)
+    trr_hi = predict(fit["tau"], fit["TM"], IF, p_hi["didt"])["trr"]
+    return dict(fit, q0=q0, trr_hi_resid=trr_hi / p_hi["trr"] - 1.0)
+
+
+def _pick_2pt_rows(points):
+    """Best same-IF row pair from a qrr_points list: the IF group with the
+    widest di/dt span (all curated rows are Tj=25 C)."""
+    by_if: dict = {}
+    for r in points or []:
+        by_if.setdefault(float(r["IF"]), []).append(r)
+    best = None
+    for rows in by_if.values():
+        rows = sorted(rows, key=lambda r: r["didt"])
+        if rows[-1]["didt"] <= rows[0]["didt"]:
+            continue
+        span = rows[-1]["didt"] / rows[0]["didt"]
+        if best is None or span > best[0]:
+            best = (span, rows[0], rows[-1])
+    if best is None:
+        raise LMFitError("qrr_points has no same-IF pair with distinct di/dt")
+    return best[1], best[2]
+
+
+def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None):
+    """Two-point sibling of qrr_op(): calibrate (tau, TM, q0) from the part's
+    own two-di/dt datasheet rows (dslib/qrr_points.py), predict at the
+    operating point. Headline Qrr is the MEASURED-EQUIVALENT charge
+    (diffusion + q0) for comparability with the single-point path and
+    FoM ranking; `qrr_diffusion` carries the stored-charge-only prediction
+    (what a loss model books separately from Coss/Eoss)."""
+    p_lo, p_hi = _pick_2pt_rows(points)
+    tj_fit = float(p_lo.get("Tj", 25.0))
+    key = ("2pt", p_lo["Qrr"], p_lo["trr"], p_lo["didt"],
+           p_hi["Qrr"], p_hi["trr"], p_hi["didt"], p_lo["IF"], tj_fit)
+    fit = _fit_cache.get(key) if _fit_cache is not None else None
+    if fit is None:
+        fit = fit_lm_2pt(p_lo, p_hi, tj_fit=tj_fit)
+        if _fit_cache is not None:
+            _fit_cache[key] = fit
+    tau = tau_at_tj(fit["tau0"], Tj, tj_fit)
+    p = predict(tau, fit["TM"], IF, didt)
+    return dict(Qrr=p["Qrr"] + fit["q0"], qrr_diffusion=p["Qrr"], q0=fit["q0"],
+                trr=p["trr"], irrm=p["irrm"], td=p["td"],
+                tau=tau, TM=fit["TM"], tj_extrapolated=(Tj != tj_fit),
+                method="2pt", fit=fit)
+
+
 def qrr_op(Qrr, trr, cond, IF, didt, Tj=25.0, _fit_cache=None):
     """One-call fl4p/fetlib#37 entry: datasheet (Qrr, trr) + test conditions `cond`
     (dict with IF/didt/Tj, see dslib/qrr_conditions.py) -> predicted recovery at the

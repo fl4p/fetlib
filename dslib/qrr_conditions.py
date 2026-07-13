@@ -45,8 +45,9 @@ QRR_CONDITIONS = {
     ("infineon", "IPP050N10NF2S"): dict(IF=60.0, didt=500e6, VR=50.0, Tj=25.0),
     ("infineon", "IPP018N10N5"): dict(IF=100.0, didt=100e6, VR=50.0, Tj=25.0),
     # IPP022N12NM6 quotes TWO di/dt points (300 and 1000 A/us) -- the primary Qrr/trr row
-    # in the parts DB is the 300 A/us one. The second point is the two-point fit fl4p/fetlib#37
-    # wants; not used yet.
+    # in the parts DB is the 300 A/us one. BOTH rows now live in the generated
+    # dslib/qrr_points.py and Qrr_op prefers the per-part two-point (tau, TM, q0) fit;
+    # this single-point entry remains as the explicit fallback.
     ("infineon", "IPP022N12NM6"): dict(IF=50.0, didt=300e6, VR=60.0, Tj=25.0),
 }
 

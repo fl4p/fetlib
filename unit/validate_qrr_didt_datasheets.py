@@ -208,8 +208,71 @@ def fraction_sweep(dies):
               f"{sorted(errs)[n//2]*100:+11.1f}%{mark}")
 
 
+def emit_points(dies, path):
+    """Write dslib/qrr_points.py: the curated-by-extraction two-point table
+    consumed by qrr_model.fit_lm_2pt / MosfetSpecs.Qrr_op (fl4p/fetlib#37)."""
+    lines = [
+        '"""Datasheet reverse-recovery rows for parts quoting Qrr at MULTIPLE di/dt',
+        "points, keyed by (mfr, mpn) — GENERATED, do not edit by hand:",
+        "",
+        "    python3 unit/validate_qrr_didt_datasheets.py --emit-points dslib/qrr_points.py",
+        "",
+        "Extraction is the geometry parser validated in that script (typ values,",
+        "all rows Tj=25 C). Package/order-code variants are listed as their own",
+        "keys. Used for per-part two-point (tau, TM, q0) fits that replace the",
+        "global QRR_QOSS_FRACTION assumption — see dslib/qrr_model.fit_lm_2pt().",
+        '"""',
+        "",
+        "QRR_POINTS = {",
+    ]
+    entries = []
+    for d in dies.values():
+        rows = sorted(d["pts"], key=lambda p: (p[0], p[1]))
+        for rel in d["mpns"]:
+            mfr, mpn = rel.split("/", 1)
+            entries.append((mfr, mpn, rows))
+    for mfr, mpn, rows in sorted(entries):
+        lines.append(f'    ("{mfr}", "{mpn}"): [')
+        for IF, didt, qrr, trr, vr in rows:
+            vr_s = f"{vr:g}" if vr is not None else "None"
+            lines.append(
+                f"        dict(IF={IF:g}, didt={didt/1e6:g}e6, VR={vr_s}, Tj=25.0, "
+                f"Qrr={qrr*1e9:g}e-9, trr={trr*1e9:g}e-9),")
+        lines.append("    ],")
+    lines += [
+        "}",
+        "",
+        "",
+        "def qrr_points_for(mfr, mpn):",
+        '    """(mfr, mpn) -> list of row dicts or None. Same base-MPN prefix',
+        '    fallback as qrr_conditions (orderable suffixes resolve to the base)."""',
+        "    if not mfr or not mpn:",
+        "        return None",
+        "    hit = (QRR_POINTS.get((mfr, mpn))",
+        "           or QRR_POINTS.get((str(mfr).lower(), mpn)))",
+        "    if hit:",
+        "        return [dict(r) for r in hit]",
+        "    for (m, p), v in QRR_POINTS.items():",
+        "        if str(m).lower() == str(mfr).lower() and str(mpn).startswith(p):",
+        "            return [dict(r) for r in v]",
+        "    return None",
+        "",
+    ]
+    with open(path, "w") as f:
+        f.write("\n".join(lines))
+    print(f"wrote {path}: {len(entries)} part keys")
+
+
 if __name__ == "__main__":
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--emit-points", metavar="PATH",
+                    help="write the dslib/qrr_points.py data module and exit")
+    args = ap.parse_args()
     dies = collect()
-    cross_validate(dies)
-    implied_q0(dies)
-    fraction_sweep(dies)
+    if args.emit_points:
+        emit_points(dies, args.emit_points)
+    else:
+        cross_validate(dies)
+        implied_q0(dies)
+        fraction_sweep(dies)
