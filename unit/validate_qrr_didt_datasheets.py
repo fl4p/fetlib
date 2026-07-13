@@ -215,38 +215,63 @@ def trr_shape_residuals(dies):
     fit-free observables are the SECOND trr row (and, for AO parts, the
     digitized Irm curves — regenerate with `dsdig digitize-reverse-recovery`
     on AOT414 and compare predict()["irrm"]; measured 2026-07-13: LM under-
-    predicts IRRM ~20-26% across 200-800 A/us). Result here: trr_hi over-
+    predicts IRRM ~20-26% across 200-800 A/us). Result (over the LM-2pt-
+    SOLVABLE same-IF dies; eligible/solved/skipped printed): trr_hi over-
     predicted median +37% / trr_lo -21% symmetric — real recovery shortens
     with di/dt faster than LM(K_TRR, single tau) allows; big 120V dies fit
-    best (+12-14%), small ISC dies worst. Charge axis unaffected; the Ma
-    soft-recovery extension is the cure if SHAPE ever needs to be right,
-    calibratable from exactly these residuals."""
+    best (+12-14%), small ISC dies worst. Scope: this does NOT revise the two
+    pinned Qrr anchors or the booked-charge estimate at them — but charge
+    inter/extrapolation to an operating point remains model-form prediction
+    and shares whatever error the shape mismatch implies there. The derived
+    ls_frac band below quantifies the Qa/Qb split sensitivity: ls_frac at the
+    high row computed from the low-anchored vs high-anchored fit (same q0);
+    the spread is the shape-induced split uncertainty. The Ma soft-recovery
+    extension is the cure if SHAPE ever needs to be right, calibratable from
+    exactly these residuals."""
     from dslib import qrr_model as qm
     print("=== 4. LM model-form: fit-free trr residuals per die ===")
-    res_hi, res_lo = [], []
+    res_hi, res_lo, dls = [], [], []
+    n_eligible = n_skipped = 0
     for d in sorted(dies.values(), key=lambda d: d["mpns"][0]):
         pts = sorted(d["pts"], key=lambda p: p[1])
         a, b = pts[0], pts[-1]
         if a[0] != b[0]:
             continue
+        n_eligible += 1
         lo = dict(IF=a[0], didt=a[1], Qrr=a[2], trr=a[3])
         hi = dict(IF=b[0], didt=b[1], Qrr=b[2], trr=b[3])
         try:
             f = qm.fit_lm_2pt(lo, hi)
         except qm.LMFitError:
+            n_skipped += 1  # contamination-dominated pair: no LM fit exists
             continue
         fh = qm.fit_lm(hi["Qrr"] - f["q0"], hi["trr"], b[0], b[1])
         r_lo = qm.predict(fh["tau"], fh["TM"], a[0], a[1])["trr"] / a[3] - 1
         res_hi.append(f["trr_hi_resid"])
         res_lo.append(r_lo)
+        # derived Qa/Qb split sensitivity: ls_frac (= 0.5*qb/Qrr, the loss
+        # tool's HS/LS attribution) at the HIGH row from both anchorings —
+        # the spread is the shape-induced band on the split (NOT on the total)
+        def _lsf(fit):
+            p = qm.predict(fit["tau"], fit["TM"], b[0], b[1])
+            return 0.5 * p["qb"] / p["Qrr"]
+        d_ls = _lsf(fh) - _lsf(f)
+        dls.append(d_ls)
         print(f"  {d['mpns'][0].split('/')[1]:22s} trr_hi {f['trr_hi_resid']*100:+6.1f}%"
-              f"   trr_lo* {r_lo*100:+6.1f}%")
+              f"   trr_lo* {r_lo*100:+6.1f}%   d_ls_frac {d_ls:+.3f}")
+    print(f"  eligible same-IF dies: {n_eligible}, solved: {len(res_hi)}, "
+          f"skipped (no LM fit): {n_skipped}")
     for nm, rs in (("trr_hi", res_hi), ("trr_lo*", res_lo)):
         rs = sorted(rs)
         n = len(rs)
         print(f"  -> {nm}: n={n} median {rs[n//2]*100:+.1f}%  "
               f"IQR {rs[n//4]*100:+.1f}..{rs[3*n//4]*100:+.1f}%  "
               f"range {rs[0]*100:+.1f}..{rs[-1]*100:+.1f}%")
+    dls.sort()
+    n = len(dls)
+    print(f"  -> ls_frac shape band: median {dls[n//2]:+.3f}  "
+          f"IQR {dls[n//4]:+.3f}..{dls[3*n//4]:+.3f}  "
+          f"range {dls[0]:+.3f}..{dls[-1]:+.3f} (absolute shift of the 0..1 split)")
     print()
 
 
