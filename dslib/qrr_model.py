@@ -38,9 +38,14 @@ ASSUMPTIONS a consumer must surface (see fl4p/fetlib#37 item 4):
     IRRM). Vendors rarely state it. It only sets the ta/tail split of trr; fitted Qrr
     is insensitive to it (IRRM moves ~10% between K=0.05 and 0.25).
   * N_TAU = 2.0 — tau(Tj) = tau0*(Tj_K/Tfit_K)^N_TAU. Datasheets give NO Qrr(Tj)
-    curve; Si body-diode Qrr roughly doubling 25->125 C implies n ~ 2.4, 2.0 is the
-    (conservative) assumption shared with lm_diode.py. The Tj axis is a MODEL GUESS,
-    not a datasheet fact — Qrr_op results at Tj != Tj_fit carry `tj_extrapolated=True`.
+    curve. NB (2026-07-13 physics review): the model's Qrr responds ~quadratically to
+    tau at datasheet-like conditions, so matching the empirical "Si body-diode Qrr
+    roughly doubles 25->125 C" rule through the MODEL actually implies n ~ 1.2 — the
+    2.0 shared with lm_diode.py sits at the AGGRESSIVE (over-predicting) end, not the
+    conservative one as previously claimed (~+10% Qrr at Tj 80 C, ~1.5-1.9x at 125 C).
+    Kept at 2.0 for lock-step with lm_diode.py pending a joint recalibration (tracked
+    in dcdc-tools). The Tj axis is a MODEL GUESS, not a datasheet fact — Qrr_op
+    results at Tj != Tj_fit carry `tj_extrapolated=True`.
   * Basic LM is calibrated for SOFT recovery (Si trench body diodes are; snappy SiC
     needs the Ma 2013 three-charge extension). VR does not enter the charge dynamics.
 """
@@ -125,7 +130,13 @@ def fit_lm(Qrr, trr, IF, didt, tj_fit=25.0):
 def predict(tau, TM, IF, didt):
     """Forward model: (tau, TM) -> (IRRM, Qrr, trr) at an operating point. The inverse
     of fit_lm — verifies a fit round-trips, and predicts recovery away from the
-    datasheet point."""
+    datasheet point. IF >= 0 (0 = no stored charge -> Qrr 0); didt/tau/TM must be
+    positive finite — same fail-loud LMFitError contract as fit_lm."""
+    for nm, v, lo_ok in (("tau", tau, False), ("TM", TM, False),
+                         ("IF", IF, True), ("didt", didt, False)):
+        if v is None or not math.isfinite(v) or v < 0 or (v == 0 and not lo_ok):
+            raise LMFitError(f"predict needs a {'non-negative' if lo_ok else 'positive'} "
+                             f"finite {nm} (got {v!r})")
     a = float(didt)
     td = tau * TM / (tau + TM)
 
@@ -134,8 +145,12 @@ def predict(tau, TM, IF, didt):
         return a * (tau - td) * (1.0 - math.exp(-(IF + ir) / (a * tau))) - ir
 
     lo, hi = 0.0, max(1.0, 10.0 * a * tau)
+    n = 0
     while g(hi) > 0:
         hi *= 4.0
+        n += 1
+        if n > 60:   # same defensive cap as fit_lm's bracket loop
+            raise LMFitError("could not bracket IRRM in predict()")
     for _ in range(200):
         mid = 0.5 * (lo + hi)
         if g(mid) > 0:

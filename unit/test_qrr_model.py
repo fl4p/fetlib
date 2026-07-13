@@ -90,6 +90,39 @@ def test_inconsistent_pair_fail_loud():
         raise AssertionError("fit_lm must reject an LM-inconsistent (Qrr, trr) pair")
 
 
+def test_predict_validates_inputs():
+    """predict() must fail loud with LMFitError (not ZeroDivisionError/OverflowError)
+    on degenerate operating points — public-API hardening from the adversarial review."""
+    d = DS["IPP024N08NF2S"]
+    fit = qrr_model.fit_lm(d["Qrr"], d["trr"], d["IF"], d["didt"])
+    bad = [dict(IF=33.3, didt=0.0), dict(IF=33.3, didt=-5e9),
+           dict(IF=-1.0, didt=5e9), dict(IF=float("nan"), didt=5e9),
+           dict(IF=33.3, didt=float("inf"))]
+    for kw in bad:
+        try:
+            qrr_model.predict(fit["tau"], fit["TM"], **kw)
+        except qrr_model.LMFitError:
+            pass
+        else:
+            raise AssertionError(f"predict must raise LMFitError for {kw}")
+    # IF=0 stays legal: no stored charge -> Qrr ~ 0
+    p = qrr_model.predict(fit["tau"], fit["TM"], 0.0, 5e9)
+    assert p["Qrr"] < 1e-12
+
+
+def test_qrr_op_stale_pickle_object():
+    """MosfetSpecs.Qrr_op on an object lacking the qrr_cond attribute entirely
+    (stale-pickle shape) must raise LMFitError, not AttributeError."""
+    d = DS["IPP024N08NF2S"]
+    stale = _FakeFet(Qrr=d["Qrr"], trr=d["trr"], Rds_on=2.4e-3)   # no qrr_cond attr
+    try:
+        stale.Qrr_op(IF=33.3, didt=5.7e9)
+    except qrr_model.LMFitError:
+        pass
+    else:
+        raise AssertionError("Qrr_op must LMFitError on a stale object without qrr_cond")
+
+
 class _FakeFet(SimpleNamespace):
     """Attribute bag carrying the real MosfetSpecs methods under test."""
     Qrr_op = MosfetSpecs.Qrr_op

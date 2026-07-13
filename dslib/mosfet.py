@@ -260,8 +260,10 @@ class MosfetSpecs:
                         tj_extrapolated=False, fit=None) if detail else 0.0
         if not hasattr(self, "_lm_fit_cache"):
             self._lm_fit_cache = {}
-        p = qrr_model.qrr_op(self.Qrr, self.trr, self.qrr_cond, IF, didt, Tj=Tj,
-                             _fit_cache=self._lm_fit_cache)
+        # getattr: an instance unpickled from a parts-lib written before the field
+        # existed bypasses __init__ and would AttributeError instead of LMFitError.
+        p = qrr_model.qrr_op(self.Qrr, self.trr, getattr(self, "qrr_cond", None),
+                             IF, didt, Tj=Tj, _fit_cache=self._lm_fit_cache)
         return p if detail else p["Qrr"]
 
     def FoMqrr_op(self, IF, didt, Tj=25.0):
