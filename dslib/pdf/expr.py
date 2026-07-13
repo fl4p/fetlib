@@ -796,8 +796,35 @@ any_head = '|'.join(d.head_regex for d in DIMENSIONS.values() if d.head_regex)
 
 unit_suffix = '[/a-z0-9]{0,4}'  # VGS= 10 V, VDS = 0.5 VDSS, ID = 0.5 ID25    A/us
 
-dim_regs_csv = get_dimensional_regular_expressions()
-dim_regs_multiline = build_dim_regex_table(line_regex_variations)
+_LAZY_TABLES = {
+    # name -> builder. These two used to be built HERE, at module level. That cost ~0.85 s on every
+    # import of this module -- build_dim_regex_table alone runs 112 regex.compile() calls of large
+    # patterns -- and it was paid by anyone who merely READ THE PARTS DB, because
+    # dslib/store.py -> discovery -> field imports this module for `any_unit` and nothing else.
+    # Their only consumer is dslib/pdf/parse.py (the PDF scraper), which is not on that path.
+    #
+    # NB the cost is invisible to a naive re-timing: re/regex memoize compiled patterns, so calling
+    # the builders a second time in the same process looks free. Only a COLD process pays it.
+    'dim_regs_csv': get_dimensional_regular_expressions,
+    'dim_regs_multiline': lambda: build_dim_regex_table(line_regex_variations),
+}
+_lazy_built = {}
+
+
+def __getattr__(name):
+    """PEP 562 module-level __getattr__: build the regex tables on first ACCESS.
+
+    This fires for `from dslib.pdf.expr import dim_regs_csv` as well as attribute access, so every
+    existing import site keeps working untouched -- parse.py still gets a fully-built table, it
+    just gets it when parse.py is imported rather than when expr.py is.
+    """
+    builder = _LAZY_TABLES.get(name)
+    if builder is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    if name not in _lazy_built:
+        _lazy_built[name] = builder()
+    globals()[name] = _lazy_built[name]     # self-replace: subsequent lookups skip __getattr__
+    return _lazy_built[name]
 
 
 @mem_cache(ttl='1h')

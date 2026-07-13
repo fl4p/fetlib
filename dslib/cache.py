@@ -99,7 +99,21 @@ def get_parquet_engine():
             return 'auto'
 
 
-parquet_engine = get_parquet_engine()
+_parquet_engine = None
+
+
+def parquet_engine():
+    """Resolve the parquet engine on FIRST USE, not at import.
+
+    This ran at module level and imported pyarrow (~0.32 s) on every `import dslib.cache` --
+    including the one behind `import dslib.store`, i.e. every parts-DB read paid for pyarrow to
+    answer a question only ParquetFileStore.write() ever asks. Same class of eager module-level
+    work as the pandas import above and the regex tables in dslib/pdf/expr.py.
+    """
+    global _parquet_engine
+    if _parquet_engine is None:
+        _parquet_engine = get_parquet_engine()
+    return _parquet_engine
 
 import pytz
 
@@ -269,7 +283,7 @@ class ParquetFileStore:
             df = pd.DataFrame({'__empty': []})
 
         try:
-            df.to_parquet(fn + '.tmp', engine=parquet_engine, compression='snappy')
+            df.to_parquet(fn + '.tmp', engine=parquet_engine(), compression='snappy')
         except ValueError as e:
             # columns as MultiIndex fails !
             raise ValueError('failed to parquet dataframe: %s %s %s' % (e, df.columns, df.head()))
