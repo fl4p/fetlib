@@ -14,10 +14,61 @@ from os.path import expanduser
 from threading import Thread, Lock, RLock
 from typing import Callable, Optional, Tuple, Union
 
-import pandas as pd
 import psutil
 
 from dslib import get_logger
+
+
+class _LazyPandas:
+    """Defer `import pandas` until something actually touches `pd`.
+
+    WHY: importing pandas costs ~1.7 s, and it dominated the cost of simply READING THE PARTS DB.
+    dslib/store.py imports exactly one symbol from this module -- acquire_file_lock -- which does
+    not use pandas at all; pandas is only needed by the dataframe disk-cache helpers below
+    (read_parquet / read_pickle / to_timedelta / DataFrame). So every consumer that just wanted
+    load_parts() was paying 1.7 s to build a dataframe stack it never called. Measured on
+    `import dslib.store`: 2.18 s total, of which pandas was 1.67 s and the actual unpickle 0.21 s.
+
+    SAFETY: this only works because every use of `pd` in this module is a plain attribute access
+    inside a function body (`pd.read_pickle(...)`, `isinstance(df, pd.Series)`, ...). There is no
+    `-> pd.DataFrame` annotation or `pd.X` default arg -- those are evaluated at DEF time, i.e. at
+    import, and would silently defeat the whole thing. Nothing does `from dslib.cache import pd`.
+    Keep it that way, or this quietly goes back to being eager.
+
+    The proxy REPLACES itself in module globals on first touch, so only the first attribute access
+    pays the indirection; everything after binds straight to the real module.
+    """
+    __slots__ = ()
+
+    def __getattr__(self, name):
+        import pandas
+        globals()["pd"] = pandas
+        return getattr(pandas, name)
+
+
+pd = _LazyPandas()
+
+
+def _lazy_timedelta(ttl):
+    """Defer `pd.to_timedelta(ttl)` from DECORATION time to first CALL.
+
+    mem_cache/disk_cache are decorator FACTORIES, so their bodies run when the decorator is
+    APPLIED -- i.e. at import of every module that decorates. Converting ttl there touched `pd`
+    and so re-imported pandas eagerly, which is exactly what _LazyPandas exists to avoid: it is
+    how `import dslib.store` still paid for pandas via dslib/pdf/expr.py's module-level @mem_cache,
+    even after the top-level import was made lazy.
+
+    Every ttl consumer inside the two factories runs at CALL time, so deferring is safe, and a
+    cached function that is never called never pays for pandas at all.
+    """
+    box = []
+
+    def get():
+        if not box:
+            box.append(ttl if isinstance(ttl, datetime.timedelta) else pd.to_timedelta(ttl))
+        return box[0]
+
+    return get
 
 # try:
 #    from streamz.collection import Streaming
@@ -658,7 +709,7 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
     if ignore_kwargs is None:
         ignore_kwargs = set()
 
-    ttl = pd.to_timedelta(ttl)
+    _ttl = _lazy_timedelta(ttl)      # NOT at decoration time — see _lazy_timedelta
     _mem_cache = cache_storage
     _lock_cache = shared_managed_mem_cache()
 
@@ -682,9 +733,9 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
 
             if ret is None:
                 ret = target(*args, **kwargs)
-                _mem_cache.set(cache_key_obj, ret, ttl=ttl, ignore_overwrite=ignore_rc)
+                _mem_cache.set(cache_key_obj, ret, ttl=_ttl(), ignore_overwrite=ignore_rc)
             elif touch:
-                _mem_cache.set(cache_key_obj, ret, ttl=ttl, ignore_overwrite=True)
+                _mem_cache.set(cache_key_obj, ret, ttl=_ttl(), ignore_overwrite=True)
 
             return ret
 
@@ -696,7 +747,7 @@ def mem_cache(ttl, touch=False, ignore_kwargs=None, synchronized=False, expired=
                 cache_key_obj = _cache_key_obj(args, kwargs)
 
                 with target_lock:
-                    lock = _lock_cache.get_default((cache_key_obj, target_lock), Lock, ttl=ttl)
+                    lock = _lock_cache.get_default((cache_key_obj, target_lock), Lock, ttl=_ttl())
 
                 with lock:
                     return _inner_wrapper(cache_key_obj, args, kwargs)
@@ -752,7 +803,7 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
         ignore_kwargs = set()
 
     disk_cache_store = PickleFileStore()
-    ttl = pd.to_timedelta(ttl)
+    _ttl = _lazy_timedelta(ttl)      # NOT at decoration time — see _lazy_timedelta
 
     def decorate(target):
         import inspect
@@ -860,7 +911,7 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
 
         def _store(cache_key_str, ret, meta):
             try:
-                disk_cache_store.write(cache_key_str, (ret, now() + ttl, meta))
+                disk_cache_store.write(cache_key_str, (ret, now() + _ttl(), meta))
             except Exception as _e:
                 logger.warning('Disk cache: error storing: %s', _e)
 
