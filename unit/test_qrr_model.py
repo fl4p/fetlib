@@ -186,9 +186,13 @@ def test_best_lm_fit_prefers_2pt_and_q0_contract():
     Coss bucket (that is the exact bug this function exists to prevent)."""
     f = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=IPP022_PTS)
     assert f["method"] == "2pt" and f["decontaminated"] and f["q0"] > 0
+    # explicit charge names (review guard): what the fit consumed vs what the
+    # datasheet integral measured — never leave only the ambiguous fit["Qrr"]
+    assert abs(f["qrr_measured_equiv"] - 155.2e-9) < 1e-15
+    assert abs(f["qrr_diffusion"] + f["q0"] - f["qrr_measured_equiv"]) < 1e-15
     # diffusion prediction at a datasheet row == row Qrr MINUS q0, exactly
     p = qrr_model.predict(f["tau"], f["TM"], 50.0, 300e6)
-    assert abs(p["Qrr"] - (155.2e-9 - f["q0"])) < 1e-15
+    assert abs(p["Qrr"] - f["qrr_diffusion"]) < 1e-15
     assert p["Qrr"] < 155.2e-9  # diffusion-only: never the full measured integral
 
 
@@ -200,9 +204,31 @@ def test_best_lm_fit_explicit_fallbacks():
     assert f["method"] == "1pt" and "fallback_from_2pt" in f
     assert f["decontaminated"]
     assert abs(f["q0"] - qrr_model.QRR_QOSS_FRACTION * 267e-9) < 1e-15
+    assert abs(f["qrr_diffusion"] + f["q0"] - f["qrr_measured_equiv"]) < 1e-15
     # no Qoss available -> raw fit, q0=0, decontaminated=False (caller must warn)
     f2 = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, cond)
     assert f2["method"] == "1pt" and f2["q0"] == 0.0 and not f2["decontaminated"]
+    assert f2["qrr_diffusion"] == f2["qrr_measured_equiv"] == 155.2e-9
+
+
+def test_pick_2pt_rows_rejects_mixed_tj_and_vr():
+    """Mixed-Tj pairs would fold the temperature law into (tau, TM); mixed-VR
+    pairs fold a Qoss(VR) difference into q0 — both must fail loud even though
+    the generated corpus is currently clean."""
+    mixed_tj = [dict(IPP022_PTS[0]), dict(IPP022_PTS[1], Tj=125.0)]
+    try:
+        qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=mixed_tj)
+    except qrr_model.LMFitError as e:
+        assert "mix Tj" in str(e)
+    else:
+        raise AssertionError("mixed-Tj pair must be rejected")
+    mixed_vr = [dict(IPP022_PTS[0]), dict(IPP022_PTS[1], VR=40.0)]
+    try:
+        qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=mixed_vr)
+    except qrr_model.LMFitError as e:
+        assert "mix VR" in str(e)
+    else:
+        raise AssertionError("mixed-VR pair must be rejected")
     # neither points nor conditions -> fail loud
     try:
         qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=ISC320_PTS)

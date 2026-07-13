@@ -270,7 +270,10 @@ def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
     q0 = 0.5 * (lo + hi)
     fit = fit_lm(p_lo["Qrr"] - q0, p_lo["trr"], IF, p_lo["didt"], tj_fit=tj_fit)
     trr_hi = predict(fit["tau"], fit["TM"], IF, p_hi["didt"])["trr"]
-    return dict(fit, q0=q0, trr_hi_resid=trr_hi / p_hi["trr"] - 1.0)
+    # explicit charge names at the calibration point — the inherited fit["Qrr"]
+    # (the diffusion charge the fit consumed) is ambiguous next to q0:
+    return dict(fit, q0=q0, trr_hi_resid=trr_hi / p_hi["trr"] - 1.0,
+                qrr_diffusion=p_lo["Qrr"] - q0, qrr_measured_equiv=p_lo["Qrr"])
 
 
 def _pick_2pt_rows(points):
@@ -289,7 +292,20 @@ def _pick_2pt_rows(points):
             best = (span, rows[0], rows[-1])
     if best is None:
         raise LMFitError("qrr_points has no same-IF pair with distinct di/dt")
-    return best[1], best[2]
+    p_lo, p_hi = best[1], best[2]
+    # the pair must also share Tj and VR: mixed Tj would fold the temperature
+    # law into (tau, TM); mixed VR folds a Qoss(VR) DIFFERENCE into q0 instead
+    # of the capacitive share. Today's generated corpus is clean on both, but
+    # the guard must not depend on that staying true (review 2026-07-13).
+    if p_lo.get("Tj", 25.0) != p_hi.get("Tj", 25.0):
+        raise LMFitError(f"two-point rows mix Tj ({p_lo.get('Tj')} / "
+                         f"{p_hi.get('Tj')} C) — cannot diffusion-fit across "
+                         f"the temperature law")
+    if p_lo.get("VR") != p_hi.get("VR"):
+        raise LMFitError(f"two-point rows mix VR ({p_lo.get('VR')} / "
+                         f"{p_hi.get('VR')} V) — q0 would absorb a Qoss(VR) "
+                         f"difference, not the capacitive share")
+    return p_lo, p_hi
 
 
 def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None):
@@ -356,7 +372,10 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None):
     q_cal = calibration_qrr(Qrr, qoss_vr)
     fit = fit_lm(q_cal, trr, cond.get("IF"), cond.get("didt"),
                  tj_fit=float(cond.get("Tj", 25.0)))
+    # explicit charge names (same keys as the 2pt path): fit["Qrr"] alone is
+    # ambiguous beside q0 — name what the fit consumed and what was measured
     out = dict(fit, method="1pt", q0=Qrr - q_cal,
+               qrr_diffusion=q_cal, qrr_measured_equiv=Qrr,
                decontaminated=qoss_vr is not None)
     if fallback:
         out["fallback_from_2pt"] = fallback
