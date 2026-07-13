@@ -29,6 +29,10 @@ QRR_CONDITIONS = {
     ("infineon", "IPP024N08NF2S"): dict(IF=100.0, didt=500e6, VR=40.0, Tj=25.0),
     ("infineon", "IPP055N08NF2S"): dict(IF=60.0, didt=500e6, VR=40.0, Tj=25.0),
     ("infineon", "IPP026N10NF2S"): dict(IF=100.0, didt=500e6, VR=50.0, Tj=25.0),
+    # 100 V StrongIRFET2, Fugu2 HS candidate (fl4p/dcdc-tools#15). Rev 2.1: Qrr=247nC,
+    # trr=37ns at these conditions. Without this entry the loss tool silently fell back
+    # to the flat datasheet Qrr for an LS built from this part.
+    ("infineon", "IPP050N10NF2S"): dict(IF=60.0, didt=500e6, VR=50.0, Tj=25.0),
     ("infineon", "IPP018N10N5"): dict(IF=100.0, didt=100e6, VR=50.0, Tj=25.0),
     # IPP022N12NM6 quotes TWO di/dt points (300 and 1000 A/us) -- the primary Qrr/trr row
     # in the parts DB is the 300 A/us one. The second point is the two-point fit fl4p/fetlib#37
