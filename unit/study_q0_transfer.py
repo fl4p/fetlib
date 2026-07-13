@@ -11,6 +11,9 @@ Estimators:
   C. q0 ~ a*Qoss (LOO least-squares through origin)
   D. TM/tau prior: choose q0 so the 1pt fit's TM/tau matches the LOO
      population median (uses ONLY the low row + the prior — no Qoss needed!)
+  E. affine q0 = c + a*Qoss (LOO least squares)
+  F. affine q0 = c + a*Qrr_lo
+  G. two-feature q0 = a*Qoss + b*Qrr_lo
 
 Committed for auditability (qrr-lm channel, 2026-07-13): the quoted figures —
 current global f=0.1 -> 13.7% median; LOO global 12.3%, family 15.4%,
