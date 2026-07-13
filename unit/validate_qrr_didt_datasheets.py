@@ -208,6 +208,48 @@ def fraction_sweep(dies):
               f"{sorted(errs)[n//2]*100:+11.1f}%{mark}")
 
 
+def trr_shape_residuals(dies):
+    """Analysis 4 (2026-07-13): how well does LM model-FORM match the 2pt data?
+
+    With per-part q0 the fit reproduces both Qrr rows by construction; the
+    fit-free observables are the SECOND trr row (and, for AO parts, the
+    digitized Irm curves — regenerate with `dsdig digitize-reverse-recovery`
+    on AOT414 and compare predict()["irrm"]; measured 2026-07-13: LM under-
+    predicts IRRM ~20-26% across 200-800 A/us). Result here: trr_hi over-
+    predicted median +37% / trr_lo -21% symmetric — real recovery shortens
+    with di/dt faster than LM(K_TRR, single tau) allows; big 120V dies fit
+    best (+12-14%), small ISC dies worst. Charge axis unaffected; the Ma
+    soft-recovery extension is the cure if SHAPE ever needs to be right,
+    calibratable from exactly these residuals."""
+    from dslib import qrr_model as qm
+    print("=== 4. LM model-form: fit-free trr residuals per die ===")
+    res_hi, res_lo = [], []
+    for d in sorted(dies.values(), key=lambda d: d["mpns"][0]):
+        pts = sorted(d["pts"], key=lambda p: p[1])
+        a, b = pts[0], pts[-1]
+        if a[0] != b[0]:
+            continue
+        lo = dict(IF=a[0], didt=a[1], Qrr=a[2], trr=a[3])
+        hi = dict(IF=b[0], didt=b[1], Qrr=b[2], trr=b[3])
+        try:
+            f = qm.fit_lm_2pt(lo, hi)
+        except qm.LMFitError:
+            continue
+        fh = qm.fit_lm(hi["Qrr"] - f["q0"], hi["trr"], b[0], b[1])
+        r_lo = qm.predict(fh["tau"], fh["TM"], a[0], a[1])["trr"] / a[3] - 1
+        res_hi.append(f["trr_hi_resid"])
+        res_lo.append(r_lo)
+        print(f"  {d['mpns'][0].split('/')[1]:22s} trr_hi {f['trr_hi_resid']*100:+6.1f}%"
+              f"   trr_lo* {r_lo*100:+6.1f}%")
+    for nm, rs in (("trr_hi", res_hi), ("trr_lo*", res_lo)):
+        rs = sorted(rs)
+        n = len(rs)
+        print(f"  -> {nm}: n={n} median {rs[n//2]*100:+.1f}%  "
+              f"IQR {rs[n//4]*100:+.1f}..{rs[3*n//4]*100:+.1f}%  "
+              f"range {rs[0]*100:+.1f}..{rs[-1]*100:+.1f}%")
+    print()
+
+
 def emit_points(dies, path):
     """Write dslib/qrr_points.py: the curated-by-extraction two-point table
     consumed by qrr_model.fit_lm_2pt / MosfetSpecs.Qrr_op (fl4p/fetlib#37)."""
@@ -276,3 +318,4 @@ if __name__ == "__main__":
         cross_validate(dies)
         implied_q0(dies)
         fraction_sweep(dies)
+        trr_shape_residuals(dies)
