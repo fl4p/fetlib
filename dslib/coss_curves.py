@@ -61,6 +61,25 @@ COSS_CURVES = {
         (20, 1050, 85), (25, 800, 47), (30, 590, 31), (35, 455, 24),
         (40, 420, 20), (50, 355, 16), (60, 320, 15), (70, 305, 15), (80, 295, 15),
     ],
+    # Infineon IPP040N08NF2S Rev 2.1 (2022-06-15), Diagram 11 (VGS=0, f=1 MHz).
+    # First curve produced by the datasheet-chart-digitizer AUTO pipeline (adaptive knots,
+    # so the Vds points are error-driven, not a fixed grid). Reproduce (dsdig venv):
+    #   dsdig find datasheets/infineon/IPP040N08NF2S.pdf --out out/ipp040 --dpi 180
+    #   dsdig digitize-capacitance out/ipp040/charts.json --out out/ipp040
+    #   dsdig export-coss-dslib out/ipp040 --out out/ipp040
+    # Anchors (tool values kept, NOT snapped): Coss=620pF@40V (tool 617, -0.4%),
+    # Crss=29pF@40V (tool 28.7, -0.9%), Ciss=3800pF@40V. Qoss(0-40V)=65.5nC integrated vs
+    # 65nC Table (+0.8%). Axis fit position_text, residuals ~1e-5 V / 3e-7 dec; trace +
+    # axis-calibration overlays human-verified 2026-07-13. The 40V knot is the digitized
+    # anchor point added by hand: the adaptive knots straddled 40V and LINEAR interp (what
+    # dslib consumers use) read the convex knee +2.4% there.
+    ("infineon", "IPP040N08NF2S"): [
+        (0, 3905, 857.1), (0.78, 3648, 782.9), (1.95, 3044, 610.3),
+        (3.41, 2844, 520.9), (6.48, 2483, 397.0), (14.21, 1958, 215.5),
+        (17.57, 1729, 155.2), (22.24, 1363, 92.22), (27.64, 992.9, 51.2),
+        (32.02, 748.2, 39.47), (34.79, 683.5, 34.85), (40, 617.3, 28.75),
+        (51.58, 526.8, 22.93), (67.05, 470.5, 21.18), (80, 454.8, 20.94),
+    ],
     # Infineon IPP026N10NF2S Rev 2.1, Diagram 11 (VGS=0, f=1 MHz) -- 100 V Fugu2 LS
     # candidate (dcdc-tools#14 avalanche mitigation). Digitized with the dcdc-tools
     # vector-first C(V) digitizer:
