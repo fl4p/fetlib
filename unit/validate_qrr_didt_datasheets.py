@@ -275,10 +275,10 @@ def trr_shape_residuals(dies):
               f"range {rs[0]*100:+.1f}..{rs[-1]*100:+.1f}%")
     dls.sort()
     n = len(dls)
-    print(f"  -> ls_frac shape band: median {dls[n//2]:+.3f}  "
-          f"IQR {dls[n//4]:+.3f}..{dls[3*n//4]:+.3f}  "
-          f"range {dls[0]:+.3f}..{dls[-1]:+.3f} (percentage points of TOTAL "
-          f"Qrr energy attribution; ls_frac itself ranges 0..0.5)")
+    print(f"  -> ls_frac shape band: median {dls[n//2]*100:+.1f}pp  "
+          f"IQR {dls[n//4]*100:+.1f}..{dls[3*n//4]*100:+.1f}pp  "
+          f"range {dls[0]*100:+.1f}..{dls[-1]*100:+.1f}pp of TOTAL Qrr energy "
+          f"attribution (ls_frac itself ranges 0..0.5)")
     print()
 
 
