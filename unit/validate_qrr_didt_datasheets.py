@@ -223,9 +223,15 @@ def trr_shape_residuals(dies):
     pinned Qrr anchors or the booked-charge estimate at them — but charge
     inter/extrapolation to an operating point remains model-form prediction
     and shares whatever error the shape mismatch implies there. The derived
-    ls_frac band below quantifies the Qa/Qb split sensitivity: ls_frac at the
-    high row computed from the low-anchored vs high-anchored fit (same q0);
-    the spread is the shape-induced split uncertainty. The Ma soft-recovery
+    ls_frac band below quantifies the Qa/Qb split sensitivity: ls_frac
+    (= 0.5*qb/Qrr, range 0..0.5) at the high row computed from the
+    low-anchored vs high-anchored fit (same q0); the spread is the
+    shape-induced split uncertainty in percentage points of total Qrr energy
+    attribution. This is a CONDITIONAL population sensitivity at the observed
+    high rows — parts absent from the 2pt population (e.g. the NF2S Fugu2
+    parts) at operating points far outside these anchors are only covered IF
+    the same shape bias transfers; it cannot bound their split without a
+    per-part second point or shape measurement. The Ma soft-recovery
     extension is the cure if SHAPE ever needs to be right, calibratable from
     exactly these residuals."""
     from dslib import qrr_model as qm
@@ -243,7 +249,7 @@ def trr_shape_residuals(dies):
         try:
             f = qm.fit_lm_2pt(lo, hi)
         except qm.LMFitError:
-            n_skipped += 1  # contamination-dominated pair: no LM fit exists
+            n_skipped += 1  # no LM fit (contamination-dominated OR non-LM pair)
             continue
         fh = qm.fit_lm(hi["Qrr"] - f["q0"], hi["trr"], b[0], b[1])
         r_lo = qm.predict(fh["tau"], fh["TM"], a[0], a[1])["trr"] / a[3] - 1
@@ -260,7 +266,7 @@ def trr_shape_residuals(dies):
         print(f"  {d['mpns'][0].split('/')[1]:22s} trr_hi {f['trr_hi_resid']*100:+6.1f}%"
               f"   trr_lo* {r_lo*100:+6.1f}%   d_ls_frac {d_ls:+.3f}")
     print(f"  eligible same-IF dies: {n_eligible}, solved: {len(res_hi)}, "
-          f"skipped (no LM fit): {n_skipped}")
+          f"no-LM-fit (contamination-dominated or non-LM): {n_skipped}")
     for nm, rs in (("trr_hi", res_hi), ("trr_lo*", res_lo)):
         rs = sorted(rs)
         n = len(rs)
@@ -271,7 +277,8 @@ def trr_shape_residuals(dies):
     n = len(dls)
     print(f"  -> ls_frac shape band: median {dls[n//2]:+.3f}  "
           f"IQR {dls[n//4]:+.3f}..{dls[3*n//4]:+.3f}  "
-          f"range {dls[0]:+.3f}..{dls[-1]:+.3f} (absolute shift of the 0..1 split)")
+          f"range {dls[0]:+.3f}..{dls[-1]:+.3f} (percentage points of TOTAL "
+          f"Qrr energy attribution; ls_frac itself ranges 0..0.5)")
     print()
 
 
