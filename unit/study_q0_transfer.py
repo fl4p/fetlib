@@ -15,8 +15,10 @@ Estimators:
 Committed for auditability (qrr-lm channel, 2026-07-13): the quoted figures —
 current global f=0.1 -> 13.7% median; LOO global 12.3%, family 15.4%,
 q0~a*Qoss 13.9%, TM/tau prior 19.3%; oracle per-part q0 ~0% — support the
-NULL RESULT: the 2pt population cannot tighten 1pt parts; per-part second
-points (bench double-pulse) are the only upgrade path. Run:
+NULL RESULT: none of the TESTED transferable feature models improves
+materially on the global f=0.1 (a null over this feature/model set — it
+cannot exclude future observables). Per-part second points (bench
+double-pulse) remain the one demonstrated upgrade path (oracle bound). Run:
     python3 unit/study_q0_transfer.py
 """
 import os
@@ -104,13 +106,19 @@ print(f"\nTM/tau population: median {tm_taus[n//2]:.3f} "
 
 
 def score(name, q0_of):
-    """q0_of(i, die) -> q0 estimate; fit low row with it, predict high row."""
+    """q0_of(i, die) -> q0 estimate; fit low row with it, predict high row.
+    A None/out-of-range estimate falls back to q0=0 (raw) and is COUNTED as a
+    fallback — so an estimator that cannot produce q0 is scored on raw terms,
+    never silently skipped (an "oracle" row is therefore a true bound only on
+    its solved subset; n_fb says how many rows scored as raw)."""
     errs = []
+    n_fb = 0
     for i, d in enumerate(dies):
         a, b = d["lo"], d["hi"]
         q0 = q0_of(i, d)
-        if q0 is None or q0 >= a[2] * 0.98:
+        if q0 is None or not (0.0 <= q0 < a[2] * 0.98):
             q0 = 0.0
+            n_fb += 1
         try:
             f = qm.fit_lm(a[2] - q0, a[3], d["IF"], a[1])
             pred = qm.predict(f["tau"], f["TM"], d["IF"], b[1])["Qrr"] + q0
@@ -119,7 +127,7 @@ def score(name, q0_of):
         errs.append(abs(pred / b[2] - 1))
     errs.sort()
     m = len(errs)
-    print(f"  {name:34s} n={m:2d} median {errs[m//2]*100:5.1f}%  "
+    print(f"  {name:38s} n={m:2d} (fallback {n_fb:2d}) median {errs[m//2]*100:5.1f}%  "
           f"p90 {errs[int(m*0.9)]*100:5.1f}%")
 
 
@@ -129,7 +137,7 @@ all_frac = [d["frac"] if d["q0"] is not None else None for d in dies]
 print("\n=== LOO out-of-sample (fit low row, predict high row) ===")
 score("raw (f=0)", lambda i, d: 0.0)
 score("global f=0.1 (current)", lambda i, d: 0.1 * d["qoss"])
-score("oracle per-part q0 (bound)", lambda i, d: d["q0"])
+score("oracle q0 (bound on SOLVABLE subset)", lambda i, d: d["q0"])
 
 
 def loo_global(i, d):
@@ -205,3 +213,42 @@ def loo_tmtau(i, d):
 
 
 score("D: TM/tau prior (low row only!)", loo_tmtau)
+
+
+def _lstsq2(rows):
+    """rows of (x1, x2, y): least-squares y = c1*x1 + c2*x2."""
+    s11 = sum(r[0] * r[0] for r in rows)
+    s12 = sum(r[0] * r[1] for r in rows)
+    s22 = sum(r[1] * r[1] for r in rows)
+    sy1 = sum(r[0] * r[2] for r in rows)
+    sy2 = sum(r[1] * r[2] for r in rows)
+    det = s11 * s22 - s12 * s12
+    if abs(det) < 1e-30:
+        return None
+    return ((sy1 * s22 - sy2 * s12) / det, (s11 * sy2 - s12 * sy1) / det)
+
+
+def loo_affine_qoss(i, d):
+    rows = [(1.0, x["qoss"], x["q0"]) for j, x in enumerate(dies)
+            if j != i and x["q0"] is not None]
+    cf = _lstsq2(rows)
+    return cf[0] + cf[1] * d["qoss"] if cf else None
+
+
+def loo_affine_qrr(i, d):
+    rows = [(1.0, x["lo"][2], x["q0"]) for j, x in enumerate(dies)
+            if j != i and x["q0"] is not None]
+    cf = _lstsq2(rows)
+    return cf[0] + cf[1] * d["lo"][2] if cf else None
+
+
+def loo_qoss_qrr(i, d):
+    rows = [(x["qoss"], x["lo"][2], x["q0"]) for j, x in enumerate(dies)
+            if j != i and x["q0"] is not None]
+    cf = _lstsq2(rows)
+    return cf[0] * d["qoss"] + cf[1] * d["lo"][2] if cf else None
+
+
+score("E: q0 = c + a*Qoss (affine)", loo_affine_qoss)
+score("F: q0 = c + a*Qrr_lo (affine)", loo_affine_qrr)
+score("G: q0 = a*Qoss + b*Qrr_lo", loo_qoss_qrr)
