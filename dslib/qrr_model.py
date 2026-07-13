@@ -37,15 +37,11 @@ ASSUMPTIONS a consumer must surface (see fl4p/fetlib#37 item 4):
   * K_TRR = 0.1 — the datasheet trr end criterion (reverse current decayed to 10% of
     IRRM). Vendors rarely state it. It only sets the ta/tail split of trr; fitted Qrr
     is insensitive to it (IRRM moves ~10% between K=0.05 and 0.25).
-  * N_TAU = 2.0 — tau(Tj) = tau0*(Tj_K/Tfit_K)^N_TAU. Datasheets give NO Qrr(Tj)
-    curve. NB (2026-07-13 physics review): the model's Qrr responds ~quadratically to
-    tau at datasheet-like conditions, so matching the empirical "Si body-diode Qrr
-    roughly doubles 25->125 C" rule through the MODEL actually implies n ~ 1.2 — the
-    2.0 shared with lm_diode.py sits at the AGGRESSIVE (over-predicting) end, not the
-    conservative one as previously claimed (~+10% Qrr at Tj 80 C, ~1.5-1.9x at 125 C).
-    Kept at 2.0 for lock-step with lm_diode.py pending a joint recalibration (tracked
-    in dcdc-tools). The Tj axis is a MODEL GUESS, not a datasheet fact — Qrr_op
-    results at Tj != Tj_fit carry `tj_extrapolated=True`.
+  * N_TAU = 1.2 — tau(Tj) = tau0*(Tj_K/Tfit_K)^N_TAU. Datasheets give NO Qrr(Tj)
+    curve. Recalibrated 2026-07-13 (#18) so the MODEL's Qrr doubles 25->125 C per the
+    empirical Si rule (see the constant's comment); in lock-step with lm_diode.py.
+    The Tj axis is a MODEL GUESS, not a datasheet fact — Qrr_op results at
+    Tj != Tj_fit carry `tj_extrapolated=True`.
   * Basic LM is calibrated for SOFT recovery (Si trench body diodes are; snappy SiC
     needs the Ma 2013 three-charge extension). VR does not enter the charge dynamics.
 """
@@ -62,11 +58,18 @@ N_TAU = 1.2
 
 # Fraction of the junction displacement charge Qoss(VR) assumed to be counted INSIDE the
 # datasheet Qrr integral (JESD24-10-style). The datasheet Qrr is measured while the diode
-# charges to VR, so it contains a large capacitive share that the LM fit would otherwise
+# charges to VR, so it contains a capacitive share that the LM fit would otherwise
 # mis-attribute to diffusion charge — double-counting it against a separately-booked Coss
-# loss bucket. 0.5 is an ASSUMPTION (the true share depends on the integration window vs
-# the voltage rise); consumers must surface it. See calibration_qrr().
-QRR_QOSS_FRACTION = 0.5
+# loss bucket. CALIBRATED 2026-07-13 against 36 dies whose datasheets quote Qrr at TWO
+# di/dt points AND a Qoss spec (Infineon NM6/LM6/M5 families + onsemi FDMS, extracted
+# from the local datasheet library): fit on one point, predict the other, sweep the
+# fraction. Median out-of-sample |err| minimizes flat at f = 0.10-0.15 (13.3-13.7%,
+# median bias -5% in the fit-low/predict-high direction the loss tool uses); f = 0
+# gives 19.9% (+7% bias) and the old assumption f = 0.5 gives 47-51% (-47% bias, i.e.
+# systematic Qrr UNDER-prediction) plus fit failures on small-charge dies. The per-die
+# implied offset q0 (root-solved so both rows are LM-consistent) has median 0.13*Qoss.
+# The true share still varies by family (unit test enforces the band only loosely).
+QRR_QOSS_FRACTION = 0.1
 
 
 def calibration_qrr(qrr_ds, qoss_vr, fraction=QRR_QOSS_FRACTION):
