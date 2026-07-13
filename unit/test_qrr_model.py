@@ -52,10 +52,44 @@ def test_tj_axis_flagged_and_increasing():
     hot = qrr_model.qrr_op(d["Qrr"], d["trr"], cond, IF=33.3, didt=5.7e9, Tj=100.0)
     assert not cold["tj_extrapolated"] and hot["tj_extrapolated"]
     assert hot["Qrr"] > cold["Qrr"] > 0
-    # N_TAU=2: tau grows (373/298)^2 = 1.57x from 25->100C. Qrr responds slightly
-    # SUPER-linearly (measured 1.76x): the tail (IRRM*td) and the triangle
-    # (IRRM^2/2a) both grow with tau.
-    assert 1.5 < hot["Qrr"] / cold["Qrr"] < 2.0
+    # N_TAU=1.2 (recalibrated #18: the MODEL's Qrr doubles 25->125C, matching the
+    # empirical Si rule): tau grows (373/298)^1.2 = 1.31x from 25->100C; Qrr responds
+    # slightly super-linearly -> measured 1.41x.
+    assert 1.3 < hot["Qrr"] / cold["Qrr"] < 1.55
+
+
+def test_n_tau_matches_qrr_doubling_rule():
+    """The N_TAU calibration contract itself: Qrr(125C)/Qrr(25C) ~ 2 at DATASHEET
+    conditions (that is what the empirical Si rule states), for every curated part."""
+    for mpn, d in DS.items():
+        fit = qrr_model.fit_lm(d["Qrr"], d["trr"], d["IF"], d["didt"], tj_fit=25.0)
+        tau_h = qrr_model.tau_at_tj(fit["tau0"], 125.0, 25.0)
+        r = qrr_model.predict(tau_h, fit["TM"], d["IF"], d["didt"])["Qrr"] / d["Qrr"]
+        assert 1.8 < r < 2.25, (mpn, r)
+
+
+def test_calibration_qrr():
+    """Qoss decontamination of the datasheet Qrr (#18 item 1)."""
+    # IPP024: Qrr=242nC @ VR=40V, Qoss(0-40V)~105nC -> half-Qoss removes 52.5nC
+    q = qrr_model.calibration_qrr(242e-9, 105e-9)
+    assert abs(q - (242e-9 - 0.5 * 105e-9)) < 1e-15
+    assert qrr_model.calibration_qrr(242e-9, None) == 242e-9      # no curve -> raw
+    try:
+        qrr_model.calibration_qrr(50e-9, 105e-9, fraction=1.0)    # eats the whole Qrr
+    except qrr_model.LMFitError:
+        pass
+    else:
+        raise AssertionError("calibration_qrr must fail loud when subtraction >= Qrr")
+
+
+def test_predict_charge_partition():
+    """predict() exposes the qa (pre-snap triangle) / qb (tail) split used for the
+    HS/LS thermal attribution; they must sum to Qrr."""
+    d = DS["IPP024N08NF2S"]
+    fit = qrr_model.fit_lm(d["Qrr"], d["trr"], d["IF"], d["didt"])
+    p = qrr_model.predict(fit["tau"], fit["TM"], 15.0, 2.85e9)
+    assert abs(p["qa"] + p["qb"] - p["Qrr"]) < 1e-15
+    assert p["qa"] > 0 and p["qb"] > 0
 
 
 def test_qrr_op_fugu2_operating_point():

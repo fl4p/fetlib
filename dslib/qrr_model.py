@@ -52,7 +52,41 @@ ASSUMPTIONS a consumer must surface (see fl4p/fetlib#37 item 4):
 import math
 
 K_TRR = 0.1   # datasheet trr end criterion (fraction of IRRM) — see module docstring
-N_TAU = 2.0   # tau temperature exponent — ASSUMPTION, see module docstring
+# tau temperature exponent — ASSUMPTION, recalibrated 2026-07-13 (#18): chosen so the
+# MODEL's Qrr (not tau) doubles 25->125 C at datasheet conditions, per the empirical Si
+# body-diode rule. Solving Qrr(125C)/Qrr(25C)=2 through fit+predict gives n = 1.16-1.19
+# across IPP018/019/022/024 (remarkably part-independent); 1.2 rounded. The old 2.0
+# (inherited from lm_diode.cir) doubled TAU instead, which over-predicts Qrr(125C) ~3.2x.
+# Kept in lock-step with loss/lib/lm_diode.py.
+N_TAU = 1.2
+
+# Fraction of the junction displacement charge Qoss(VR) assumed to be counted INSIDE the
+# datasheet Qrr integral (JESD24-10-style). The datasheet Qrr is measured while the diode
+# charges to VR, so it contains a large capacitive share that the LM fit would otherwise
+# mis-attribute to diffusion charge — double-counting it against a separately-booked Coss
+# loss bucket. 0.5 is an ASSUMPTION (the true share depends on the integration window vs
+# the voltage rise); consumers must surface it. See calibration_qrr().
+QRR_QOSS_FRACTION = 0.5
+
+
+def calibration_qrr(qrr_ds, qoss_vr, fraction=QRR_QOSS_FRACTION):
+    """Diffusion-only calibration charge: datasheet Qrr minus the assumed capacitive
+    share `fraction`*Qoss(VR) counted inside the Qrr integral (#18 item 1).
+
+    qoss_vr [C] is the part's output charge integrated 0..VR at the Qrr test voltage
+    (from the digitized Coss(V) curve). Pass qoss_vr=None to skip decontamination
+    (returns qrr_ds unchanged) — consumers should then say so in provenance.
+    Raises LMFitError when the subtraction consumes the whole Qrr (the contamination
+    assumption is inconsistent with the datasheet pair — fail loud)."""
+    if qoss_vr is None:
+        return qrr_ds
+    q = qrr_ds - fraction * qoss_vr
+    if not (q > 0):
+        raise LMFitError(
+            f"Qoss decontamination consumed the whole datasheet Qrr "
+            f"({qrr_ds*1e9:.0f} nC - {fraction:g}*{qoss_vr*1e9:.0f} nC <= 0) — "
+            f"check Qoss(VR)/fraction; this pair cannot be diffusion-only-fitted")
+    return q
 
 
 class LMFitError(ValueError):
@@ -158,9 +192,10 @@ def predict(tau, TM, IF, didt):
         else:
             hi = mid
     irrm = 0.5 * (lo + hi)
-    qrr = irrm * irrm / (2.0 * a) + irrm * td
+    qa = irrm * irrm / (2.0 * a)          # pre-snap triangle (diode still low-voltage)
+    qb = irrm * td                         # post-snap exponential tail (diode blocking)
     trr = irrm / a + td * math.log(1.0 / K_TRR)
-    return dict(irrm=irrm, Qrr=qrr, trr=trr, td=td)
+    return dict(irrm=irrm, Qrr=qa + qb, trr=trr, td=td, qa=qa, qb=qb)
 
 
 def tau_at_tj(tau0, tj, tj_fit=25.0):
