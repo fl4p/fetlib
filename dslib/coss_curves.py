@@ -156,15 +156,11 @@ CISS_CURVES = {
 def _curve_for(curves, mfr, mpn):
     if not isinstance(mfr, str) or not isinstance(mpn, str):
         return None
-    exact = curves.get((mfr, mpn)) or curves.get((mfr.lower(), mpn))
-    if exact:
-        return exact
-    # orderable-suffix fallback: a curve key whose MPN is a prefix of the requested MPN.
-    cand = [(k_mpn, v) for (k_mfr, k_mpn), v in curves.items()
-            if k_mfr.lower() == mfr.lower() and mpn.startswith(k_mpn)]
-    if cand:
-        return max(cand, key=lambda kv: len(kv[0]))[1]   # longest base-MPN match
-    return None
+    # exact key, then the SHARED orderable-suffix fallback (dslib/mpn_match.py):
+    # a bare prefix match also hits FAMILY VARIANTS (IPP040N06N vs
+    # IPP040N06NF2S) and would serve a different die's curve.
+    from dslib.mpn_match import lookup_base_variant
+    return lookup_base_variant(curves, mfr, mpn)
 
 
 def coss_curve_for(mfr, mpn):

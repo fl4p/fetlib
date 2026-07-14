@@ -456,13 +456,8 @@ QRR_POINTS = {
 def qrr_points_for(mfr, mpn):
     """(mfr, mpn) -> list of row dicts or None. Same base-MPN prefix
     fallback as qrr_conditions (orderable suffixes resolve to the base)."""
-    if not mfr or not mpn:
-        return None
-    hit = (QRR_POINTS.get((mfr, mpn))
-           or QRR_POINTS.get((str(mfr).lower(), mpn)))
-    if hit:
-        return [dict(r) for r in hit]
-    for (m, p), v in QRR_POINTS.items():
-        if str(m).lower() == str(mfr).lower() and str(mpn).startswith(p):
-            return [dict(r) for r in v]
-    return None
+    # exact key + the shared orderable-suffix fallback (dslib/mpn_match.py) —
+    # strict so a family variant never inherits another die's RR rows
+    from dslib.mpn_match import lookup_base_variant
+    hit = lookup_base_variant(QRR_POINTS, mfr, mpn)
+    return [dict(r) for r in hit] if hit else None

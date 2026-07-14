@@ -58,17 +58,11 @@ QRR_CONDITIONS = {
 
 
 def _cond_for(mfr, mpn):
-    if not mfr or not mpn:
-        return None
-    hit = QRR_CONDITIONS.get((mfr, mpn)) or QRR_CONDITIONS.get((str(mfr).lower(), mpn))
-    if hit:
-        return dict(hit)
-    # Same base-MPN fallback as coss_curves: an orderable suffix (IPP024N08NF2S -> ...AKMA1)
-    # still resolves to the base part's conditions.
-    for (m, p), v in QRR_CONDITIONS.items():
-        if str(m).lower() == str(mfr).lower() and str(mpn).startswith(p):
-            return dict(v)
-    return None
+    # exact key + the shared orderable-suffix fallback (dslib/mpn_match.py) —
+    # strict so a family variant never inherits another die's conditions
+    from dslib.mpn_match import lookup_base_variant
+    hit = lookup_base_variant(QRR_CONDITIONS, mfr, mpn)
+    return dict(hit) if hit else None
 
 
 def qrr_conditions_for(mfr, mpn):
