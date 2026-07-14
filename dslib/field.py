@@ -458,6 +458,26 @@ class DatasheetFields():
         # Some datasheet only show Coss at given Vds
         coss_cond = _select_cond_values('Coss', 'Vds') or _select_cond_values('Qoss', 'Vds')
 
+        # Gate-charge TABLE test current: the Id condition on the Qg/Qgs/Vpl rows — the
+        # current Vplateau and the charge partition were measured at. NOT the ID_25
+        # continuous rating in `Id` above (1.4-4x apart on parts checked 2026-07-14); a
+        # channel/gm anchored on the rating is that factor too stiff. Consumers:
+        # dcdc-tools loss recon gm + curve-tier channel derivation.
+        id_gc_cond = (_select_cond_values('Qg', 'Id') or _select_cond_values('Qgs', 'Id')
+                      or _select_cond_values('Vpl', 'Id'))
+        id_gfs_cond = _select_cond_values('gfs', 'Id')
+
+        def _sane(v, lo, hi, what):
+            # range-sanitize the auxiliary channel anchors to NaN (with a warning)
+            # instead of asserting in the MosfetSpecs ctor: an assert there drops the
+            # part's ENTIRE spec object (get_row wraps this in except->None) over a
+            # mis-parsed free-text condition. Consumers refuse on NaN, loudly.
+            if v is None or math.isnan(v) or lo < v < hi:
+                return v if v is not None else math.nan
+            warnings.warn(f"{self.part}: parsed {what}={v!r} out of range "
+                          f"({lo}..{hi}) — dropped to NaN (check the datasheet parse)")
+            return math.nan
+
         from dslib.mosfet import MosfetSpecs
         return MosfetSpecs(
             Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
@@ -469,6 +489,13 @@ class DatasheetFields():
             **{k: field_mul(k, ds.get_typ_or_max_or_min(k), ds.get_unit(k)) for k in mf_fields},
             Vpl=ds.get_typ_or_max_or_min('Vpl'),
             Coss_Vds=max(coss_cond) if coss_cond else None,  # small numbers are usually wrong
+            Id_gc=_sane(max(id_gc_cond) if id_gc_cond else math.nan,
+                        0.05, 2000, 'Id_gc'),
+            gfs_min=_sane(ds.get('gfs', ('min',)), 0.05, 5000, 'gfs_min'),
+            gfs_typ=_sane(ds.get('gfs', ('typ',)), 0.05, 5000, 'gfs_typ'),
+            Id_gfs=_sane(max(id_gfs_cond) if id_gfs_cond else math.nan,
+                         0.05, 2000, 'Id_gfs'),
+            Vgs_th=_sane(ds.get('Vgs_th', ('typ',)), 0.3, 8, 'Vgs_th'),
             part=self.part,
         )
 

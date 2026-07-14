@@ -12,7 +12,9 @@ class MosfetSpecs:
                  Qsw=None,
                  Vpl=None, Vsd=None,
                  Coss=math.nan, Coss_Vds=None,
-                 Rg=math.nan, Id=math.nan, part=None, coss_curve=None):
+                 Rg=math.nan, Id=math.nan, part=None, coss_curve=None,
+                 Id_gc=math.nan, gfs_min=math.nan, gfs_typ=math.nan, Id_gfs=math.nan,
+                 Vgs_th=math.nan, Id_vsd=math.nan):
         """
 
         :param Vds_max: Vds break-down voltage (also referred as `BVdss` or `V (BR)DSS`), in volt
@@ -168,6 +170,23 @@ class MosfetSpecs:
         self.Id = Id
         # if not math.isnan(Rg):
         # assert 0.2 < Rg < 200, ("Rg out of range", Rg)
+
+        # Gate/channel anchor specs (see dslib/gate_specs.py). Id_gc is the gate-charge
+        # TABLE's test current — the current Qgs/Qg_th/Qgd and Vplateau were measured at —
+        # NOT the ID_25 continuous rating stored in `Id` (1.4-4x apart on parts checked).
+        # gfs (usually a MIN spec, at Id_gfs) and Vgs_th (TYP) back the channel-derivation
+        # cross-checks. NaN when the datasheet/curation doesn't supply them.
+        # NO range asserts here: these are AUXILIARY anchors, and an assert in this
+        # ctor drops the part's ENTIRE spec object at DB-rebuild time (field.py wraps
+        # get_mosfet_specs in except->None) over a field whose consumers already refuse
+        # on bad values (loss models.derive_channel). field.py range-sanitizes to NaN
+        # with a warning instead.
+        self.Id_gc = Id_gc if Id_gc is not None else math.nan
+        self.gfs_min = gfs_min if gfs_min is not None else math.nan
+        self.gfs_typ = gfs_typ if gfs_typ is not None else math.nan
+        self.Id_gfs = Id_gfs if Id_gfs is not None else math.nan
+        self.Vgs_th = Vgs_th if Vgs_th is not None else math.nan
+        self.Id_vsd = Id_vsd if Id_vsd is not None else math.nan
 
     @staticmethod
     def from_mpn(mpn, mfr) -> 'MosfetSpecs':

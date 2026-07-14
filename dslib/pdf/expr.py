@@ -301,7 +301,7 @@ def line_regex_variations(dim: Dimension):
     any_head = '|'.join(d.head_regex for d in DIMENSIONS.values() if d.head_regex)
 
     param_name_char = '[- .,()a-z0-9]'  # "Reverse transfer capacitance"
-    misc_ref = '[- \t_.,;:#*"\'()\[\]a-z0-9]'  # "see Figure 14; see Fig. 15", "(see Figure 14: "Test circuit for"
+    misc_ref = r'[- \t_.,;:#*"\'()\[\]a-z0-9]'  # "see Figure 14; see Fig. 15", "(see Figure 14: "Test circuit for"
     annotations = '[- *.,()0-9]'
 
     cond_sym = rf'([a-z]{{1,2}}([/a-z0-9]*|[_ ][a-z]{{1,3}})(\([a-z0-9]{{1,6}}\))?)'
@@ -682,7 +682,7 @@ def get_field_detect_regex(mfr):
         # others:       Qgs1* = charge from Qg_th to miller plateau start (0 Qgs_th|TH|Qgs1|)
         qgs += '1?'
     else:
-        qgs += '([^1]|($|\*))'  # dont match Qgs1
+        qgs += r'([^1]|($|\*))'  # dont match Qgs1
         qgs1 = r'|^Q[ _]?gs[ _]?1($|\*)'
 
     def rec(pat: str, flags):
