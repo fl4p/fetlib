@@ -43,6 +43,11 @@ QRR_CONDITIONS = {
     # trr=37ns at these conditions. Without this entry the loss tool silently fell back
     # to the flat datasheet Qrr for an LS built from this part.
     ("infineon", "IPP050N10NF2S"): dict(IF=60.0, didt=500e6, VR=50.0, Tj=25.0),
+    # fisi HS FET (dcdc-tools loss/examples/fisi.yaml). Qrr=189nC, trr=33ns at these
+    # conditions. Needed because --body-diode lm builds the LM diode for BOTH sides of a
+    # curve-mode deck (the HS body diode barely matters for a buck's Qrr, but the fit
+    # fails loud without an operating point).
+    ("infineon", "IPP040N08NF2S"): dict(IF=80.0, didt=500e6, VR=40.0, Tj=25.0),
     ("infineon", "IPP018N10N5"): dict(IF=100.0, didt=100e6, VR=50.0, Tj=25.0),
     # IPP022N12NM6 quotes TWO di/dt points (300 and 1000 A/us) -- the primary Qrr/trr row
     # in the parts DB is the 300 A/us one. BOTH rows now live in the generated
