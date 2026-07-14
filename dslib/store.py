@@ -197,6 +197,57 @@ def load_parts():
             pts = qrr_points_for(mfr, mpn)
             if pts:
                 specs.qrr_points = pts
+    # And the digitized V(BR)DSS(Tj) breakdown-onset lines (dslib/bv_specs.py):
+    # min-anchored intercept + typical-die slope from the human-verified chart
+    # digitization. The pickle never carried BV-vs-Tj, so this is fill-if-absent.
+    try:
+        from dslib.bv_specs import bv_specs_for
+    except ImportError:
+        bv_specs_for = None
+    if bv_specs_for is not None:
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None or getattr(specs, 'bv_tj', None):
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            bv = bv_specs_for(mfr, mpn)
+            if bv:
+                specs.bv_tj = bv
+    # And the curated gate/channel specs (dslib/gate_specs.py): the gate-charge TEST
+    # current Id_gc (NOT the ID_25 rating already in `Id`), gfs and Vgs_th — parsed by
+    # the PDF layer but not consumed into the pickle; fill only what's absent/NaN so a
+    # rebuilt DB that carries them natively wins over the curated values.
+    try:
+        from dslib.gate_specs import gate_specs_for
+    except ImportError:
+        gate_specs_for = None
+    if gate_specs_for is not None:
+        import math as _math
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None:
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            gs = gate_specs_for(mfr, mpn)
+            if not gs:
+                continue
+            for k, v in gs.items():
+                cur = getattr(specs, k, None)
+                if cur is None or (isinstance(cur, float) and _math.isnan(cur)):
+                    setattr(specs, k, v)
+                elif (isinstance(v, float) and not _math.isnan(v)
+                      and isinstance(cur, (int, float))
+                      and abs(cur - v) > 0.2 * max(abs(v), 1e-12)):
+                    # a rebuilt DB carries parser-populated values that WIN over the
+                    # curated ones — but the curated numbers here are human-verified,
+                    # so a >20% disagreement means the parser picked a different table
+                    # row/condition and must not displace them silently
+                    import warnings as _w
+                    _w.warn(f"gate_specs: {mfr}:{mpn} parser {k}={cur!r} disagrees "
+                            f">20% with the curated (human-verified) {v!r} — parser "
+                            f"value kept; re-check the datasheet parse or the curation")
     return parts
 
 
