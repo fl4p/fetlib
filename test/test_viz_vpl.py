@@ -3,13 +3,15 @@ Validation for ``dslib.viz.find_vpl``
 
 Run::
 
-    python3 test/test_viz_vpl.py
+    VPL_REQUIRE_ALL=1 python3 test/test_viz_vpl.py
 """
 from __future__ import annotations
 
 import os
 import sys
-from typing import List, Optional, Tuple
+import tempfile
+import unittest
+from typing import Callable, List, Optional, Tuple
 
 
 
@@ -21,7 +23,6 @@ if ROOT not in sys.path:
 sys.path.insert(0, '/opt/homebrew/bin') # PATH="$PATH:/opt/homebrew/bin"
 
 from dslib.viz import find_vpl  # noqa: E402
-from dslib.pdf import fix_encoding
 
 def find_vpl_(pdf, enable_ocr=False):
     from apps.vpl_from_chart import vpl_from_pdf, _pick_best
@@ -109,9 +110,9 @@ SAMPLES: List[Tuple[str, float]] = [
     ('datasheets/infineon/IAUC28N08S5L230ATMA1.pdf', 3.1),  # rasterized
     ('datasheets/infineon/F3L3MR12W3M1HH11BPSA1.pdf', 7.25),
 
-    # Not folded into hard-pass tests yet:
-    # - PSMN1R2-55SLH passes in the overlay harness via local-axis repair, but
-    #   dslib.viz.find_vpl still returns the upper-panel-axis value.
+    # Additional reviewed samples outside this 63-case list:
+    # - PSMN1R2-55SLH is hard-gated upstream in datasheet-chart-digitizer after
+    #   the local-axis repair.
     # - R6509KND3TL1-HXY and SIHD6N65ET4-GE3-HXY are still off/reference-disputed.
 
     # Human-verified samples from chart-extraction.md entries 16-40 that are
@@ -131,26 +132,35 @@ SAMPLES: List[Tuple[str, float]] = [
 
 # SAMPLES = SAMPLES[:20]
 
-def test_main():
-    tol = float(os.environ.get('VPL_TOL', 0.5))
-    enable_ocr = os.environ.get('VPL_OCR', '').lower() in ('1', 'true', 'yes')
-    if enable_ocr:
-        print('ocr enabled')
+EXPECTED_SAMPLE_COUNT = 63
+Row = Tuple[str, Optional[float], float, str]
+
+
+def _evaluate_samples(
+    samples: List[Tuple[str, float]],
+    *,
+    estimator: Callable[[str], Optional[float]],
+    tol: float,
+    require_all: bool,
+) -> Tuple[List[Row], int, int, int, int]:
+    """Evaluate a corpus while keeping missing-fixture policy explicit."""
 
     n_ok = 0
     n_ref = 0
     n_skip = 0
     n_fail = 0
-    rows: List[Tuple[str, Optional[float], float, str]] = []
+    rows: List[Row] = []
 
-    for path, ref in SAMPLES:
+    for path, ref in samples:
         if not os.path.exists(path):
             rows.append((path, None, ref, 'MISSING'))
             n_skip += 1
+            if require_all:
+                n_fail += 1
             continue
         n_ref += 1
         try:
-            est = find_vpl(path, enable_ocr=enable_ocr)
+            est = estimator(path)
         except Exception as e:
             rows.append((path, None, ref, f'ERROR: {type(e).__name__}: {e}'))
             n_fail += 1
@@ -158,6 +168,7 @@ def test_main():
 
         if est is None:
             rows.append((path, None, ref, 'no chart'))
+            n_fail += 1
             continue
 
         ok = abs(est - ref) <= tol
@@ -166,6 +177,23 @@ def test_main():
         else:
             n_fail += 1
         rows.append((path, est, ref, 'OK' if ok else f'OFF ({est - ref:+.2f})'))
+
+    return rows, n_ok, n_ref, n_skip, n_fail
+
+
+def test_main():
+    if len(SAMPLES) != EXPECTED_SAMPLE_COUNT:
+        raise AssertionError(
+            f'Vpl corpus size changed: {len(SAMPLES)} != {EXPECTED_SAMPLE_COUNT}'
+        )
+    tol = float(os.environ.get('VPL_TOL', 0.5))
+    require_all = os.environ.get('VPL_REQUIRE_ALL', '').lower() in ('1', 'true', 'yes')
+    rows, n_ok, n_ref, n_skip, n_fail = _evaluate_samples(
+        SAMPLES,
+        estimator=find_vpl,
+        tol=tol,
+        require_all=require_all,
+    )
 
     width = max(len(r[0]) for r in rows)
     for path, est, ref, status in rows:
@@ -177,6 +205,35 @@ def test_main():
           + (f'  ({n_skip} files missing)' if n_skip else ''))
     if n_fail:
         raise SystemExit(1)
+
+
+class VplRegressionRunnerTests(unittest.TestCase):
+    def test_missing_policy_and_unresolved_results(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            missing = [(os.path.join(tmp, 'missing.pdf'), 4.0)]
+            relaxed = _evaluate_samples(
+                missing,
+                estimator=lambda _path: 4.0,
+                tol=0.5,
+                require_all=False,
+            )
+            strict = _evaluate_samples(
+                missing,
+                estimator=lambda _path: 4.0,
+                tol=0.5,
+                require_all=True,
+            )
+        self.assertEqual(relaxed[3:], (1, 0))
+        self.assertEqual(strict[3:], (1, 1))
+
+        with tempfile.NamedTemporaryFile(suffix='.pdf') as pdf:
+            unresolved = _evaluate_samples(
+                [(pdf.name, 4.0)],
+                estimator=lambda _path: None,
+                tol=0.5,
+                require_all=True,
+            )
+        self.assertEqual(unresolved[3:], (0, 1))
 
 
 if __name__ == '__main__':
