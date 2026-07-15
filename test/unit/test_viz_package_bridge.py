@@ -1,15 +1,43 @@
 import sys
 import unittest
-from types import ModuleType
+from types import ModuleType, SimpleNamespace
 from unittest import mock
 
 from dslib.viz import find_vpl, find_vpl_package_result
-from dslib.viz.curve_extract import find_vpl as legacy_find_vpl
 
 
 class VizPackageBridgeTests(unittest.TestCase):
-    def test_legacy_find_vpl_remains_the_default(self):
-        self.assertIs(find_vpl, legacy_find_vpl)
+    def test_package_find_vpl_is_the_default_scalar(self):
+        package_result = SimpleNamespace(vpl=4.25)
+        with (
+            mock.patch(
+                "dslib.viz.find_vpl_package_result",
+                return_value=package_result,
+            ) as package,
+            mock.patch("dslib.viz._find_vpl_legacy") as legacy,
+        ):
+            result = find_vpl("sample.pdf")
+
+        self.assertEqual(result, 4.25)
+        package.assert_called_once_with("sample.pdf")
+        legacy.assert_not_called()
+
+    def test_package_find_vpl_returns_none_without_a_result(self):
+        with mock.patch("dslib.viz.find_vpl_package_result", return_value=None):
+            self.assertIsNone(find_vpl("sample.pdf"))
+
+    def test_nondefault_extraction_controls_delegate_to_legacy(self):
+        cases = (
+            {"enable_raster": False, "enable_ocr": False},
+            {"enable_raster": True, "enable_ocr": True},
+        )
+        for kwargs in cases:
+            with self.subTest(**kwargs), mock.patch(
+                "dslib.viz._find_vpl_legacy",
+                return_value=3.5,
+            ) as legacy:
+                self.assertEqual(find_vpl("sample.pdf", **kwargs), 3.5)
+                legacy.assert_called_once_with("sample.pdf", **kwargs)
 
     def test_package_bridge_returns_the_full_result(self):
         sentinel = object()
