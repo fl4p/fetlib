@@ -1,7 +1,7 @@
 pandas~=2.2.2
 pyyaml
 aiohttp
-datasheet-chart-digitizer @ git+https://github.com/fl4p/datasheet-chart-digitizer.git@3ee5c4f0e4f4daeb35198a121ffaf8762f6ef807
+datasheet-chart-digitizer @ git+https://github.com/fl4p/datasheet-chart-digitizer.git@f20752c3dbe15115f97a02beb2a2afbf43618a19
 
 fontTools
 pympler
