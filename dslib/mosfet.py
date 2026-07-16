@@ -126,6 +126,10 @@ class MosfetSpecs:
         # Parts carrying two same-IF rows get a per-part (tau, TM, q0) fit in Qrr_op —
         # the part's own di/dt data replaces the global QRR_QOSS_FRACTION assumption.
         self.qrr_points = None
+        # Optional human-verified saturation-channel Vth_eff(T)+K(T) fit.
+        # Attached by load_parts() from dslib.channel_temp_specs; it deliberately
+        # does not replace or modify the independent Rds(on,Tj) behavior.
+        self.channel_temp = None
         self.tRise = tRise or math.nan
         self.tFall = tFall or math.nan
         self.Qrr = math.nan if Qrr is None else Qrr  # GaN have Qrr = 0

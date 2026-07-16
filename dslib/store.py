@@ -262,6 +262,23 @@ def load_parts():
                     _w.warn(f"gate_specs: {mfr}:{mpn} parser {k}={cur!r} disagrees "
                             f">20% with the curated (human-verified) {v!r} — parser "
                             f"value kept; re-check the datasheet parse or the curation")
+    # Finally attach human-verified saturation-channel Vth_eff(T)+K(T) fits.
+    # An attached fit is safety-significant: consumers refuse any status other
+    # than verified and require an explicit cold_anchor_conflict=False.
+    try:
+        from dslib.channel_temp_specs import channel_temp_specs_for
+    except ImportError:
+        channel_temp_specs_for = None
+    if channel_temp_specs_for is not None:
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None or getattr(specs, 'channel_temp', None) is not None:
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            temp = channel_temp_specs_for(mfr, mpn)
+            if temp:
+                specs.channel_temp = temp
     return parts
 
 
