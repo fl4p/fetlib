@@ -21,17 +21,30 @@ class CissCurveForTests(unittest.TestCase):
         self.assertEqual(vs[0], 0)
 
     def test_unknown_part_returns_none_not_fallback(self):
-        # A wholly unknown part, and a part that HAS a Coss curve but no curated Ciss,
-        # must both read None -- never a cross-fallback to the Coss dict. The Coss-only
-        # example is chosen dynamically so curating its Ciss later can't stale this test
-        # (as hardcoding IPP024 once did); if every Coss part gains a Ciss curve the
-        # unknown-part assertions still pin the no-fallback contract.
-        from dslib.coss_curves import COSS_CURVES, CISS_CURVES
+        # A wholly unknown part reads None. (Curating IPP024 once staled the old hardcoded
+        # example; the dynamic COSS_CURVES-CISS_CURVES form that replaced it then went dead
+        # once every Coss part gained a Ciss curve -- a guard whose precondition silently
+        # stopped holding. See test_coss_hit_ciss_miss_returns_none for the guaranteed-live
+        # version of the Coss-hit/Ciss-miss check.)
         self.assertIsNone(ciss_curve_for('nope', 'NOPART123'))
-        for (mfr, mpn) in COSS_CURVES:
-            if (mfr, mpn) not in CISS_CURVES:
-                self.assertIsNone(ciss_curve_for(mfr, mpn),
-                                  f"{mfr}:{mpn} has Coss but no Ciss -> None, not a fallback")
+        self.assertIsNone(ciss_curve_for('infineon', 'DEFINITELY_NOT_A_PART'))
+
+    def test_coss_hit_ciss_miss_returns_none(self):
+        # The no-fallback contract: a part present in COSS_CURVES but ABSENT from CISS_CURVES
+        # must read Ciss=None (never a cross-fallback to the Coss dict). Rather than depend on
+        # a real Coss-only part existing -- which full Ciss curation removes, silently killing
+        # coverage -- inject a synthetic Coss-only key so this guard ALWAYS has a live case.
+        from dslib import coss_curves
+        key = ('faketest', 'COSSONLY_NOCISS_ZZ')
+        assert key not in coss_curves.CISS_CURVES  # would defeat the test's purpose
+        coss_curves.COSS_CURVES[key] = [(0, 1000, 100), (40, 500, 20), (80, 400, 15)]
+        try:
+            self.assertIsNotNone(coss_curve_for(*key),
+                                 "fixture broken: synthetic Coss part must resolve a Coss curve")
+            self.assertIsNone(ciss_curve_for(*key),
+                              "Coss-present but Ciss-absent must return None, not a Coss fallback")
+        finally:
+            del coss_curves.COSS_CURVES[key]
 
     def test_ciss_above_crss_on_shared_span(self):
         # Downstream derives Cgs = Ciss - Crss; a curated pair of curves whose traces
