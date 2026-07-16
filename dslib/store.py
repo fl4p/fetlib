@@ -153,16 +153,30 @@ def load_parts():
         from dslib.coss_curves import coss_curve_for
     except ImportError:
         coss_curve_for = None
+    # Import Ciss SEPARATELY: a combined import would let a broken/renamed
+    # ciss_curve_for silently disable the Coss attach too (same except clause),
+    # violating the never-silently-degrade contract stated above.
+    try:
+        from dslib.coss_curves import ciss_curve_for
+    except ImportError:
+        ciss_curve_for = None
     if coss_curve_for is not None:
         for key, p in parts.items():
             specs = getattr(p, 'specs', None)
-            if specs is None or getattr(specs, 'coss_curve', None):
+            if specs is None:
                 continue
             mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
                                                             getattr(p, 'mpn', None)))
-            curve = coss_curve_for(mfr, mpn)
-            if curve:
-                specs.coss_curve = curve
+            if not getattr(specs, 'coss_curve', None):
+                curve = coss_curve_for(mfr, mpn)
+                if curve:
+                    specs.coss_curve = curve
+            # Ciss(V) pairs ride the same module; older pickled specs predate the
+            # attribute, so set it via getattr-guarded assignment (unpickling bypasses
+            # __init__). None -> consumers keep their gate-charge-partition Cgs basis.
+            if ciss_curve_for is not None and not getattr(specs, 'ciss_curve', None):
+                ciss = ciss_curve_for(mfr, mpn)
+                specs.ciss_curve = ciss if ciss else None
     # Same for the body-diode reverse-recovery test conditions (IF/di-dt/VR/Tj the datasheet
     # Qrr+trr were measured at). Scalars without their operating point can't be re-scaled or
     # fitted to a charge-control diode; see dslib/qrr_conditions.py and fl4p/fetlib#37.

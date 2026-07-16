@@ -111,6 +111,11 @@ class MosfetSpecs:
         # Attached by load_parts() from dslib.coss_curves (by MPN). Consumers use it for a
         # curve-faithful output cap; None -> they warn and fall back to the scalar Coss.
         self.coss_curve = coss_curve
+        # Optional datasheet Ciss(V) curve: [(Vds_V, Ciss_pF), ...] or None.
+        # Attached by load_parts() from dslib.coss_curves CISS_CURVES (by MPN). Together
+        # with the Crss column of coss_curve it yields a datasheet Cgs(V) = Ciss - Crss;
+        # None -> consumers keep their gate-charge-partition Cgs basis (Qgs/Vpl).
+        self.ciss_curve = None
         # Optional datasheet reverse-recovery TEST CONDITIONS: dict(IF, didt, VR, Tj) or None.
         # Attached by load_parts() from dslib.qrr_conditions (by MPN). Qrr/trr below are
         # scalars measured AT this operating point; a consumer that needs to re-scale them

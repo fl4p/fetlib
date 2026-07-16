@@ -114,7 +114,8 @@ def _cond_vds(field) -> Optional[float]:
 
 
 def _interp_curve(curve, col: int, vds: Optional[float]) -> Optional[float]:
-    """curve = list[(Vds, Coss_pF, Crss_pF)]; col 1=Coss 2=Crss. pF at vds, or None.
+    """curve = list[(Vds, ...)] knot rows — Coss triples (col 1=Coss, 2=Crss) or
+    Ciss pairs (col 1=Ciss). pF at vds, or None.
     Refuses to extrapolate past the digitised span."""
     if not curve or vds is None:
         return None
@@ -173,6 +174,21 @@ def build_card(specs, ds) -> list:
         m = _interp_curve(curve, 2, vds)
         note = "" if m is not None else f"nameplate Vds={vds} outside curve span"
         rows.append(Row("Crss(V) curve @Vds", m, fr.typ, "pF", f"Vds={vds}V", "cap", note))
+
+    # Ciss(V) curve vs nameplate (optional pairs; serves the Cgs = Ciss - Crss basis)
+    ciss_curve = getattr(specs, "ciss_curve", None)
+    fi = _field(ds, "Ciss")
+    if ciss_curve is None:
+        rows.append(Row("Ciss(V) curve @Vds", None, fi.typ if fi else None, "pF",
+                        "", "cap", note="no digitised Ciss curve in dslib"))
+    elif fi is None:
+        rows.append(Row("Ciss(V) curve @Vds", None, None, "pF", "", "cap",
+                        note="datasheet has no Ciss field"))
+    else:
+        vds = _cond_vds(fi)
+        m = _interp_curve(ciss_curve, 1, vds)
+        note = "" if m is not None else f"nameplate Vds={vds} outside curve span"
+        rows.append(Row("Ciss(V) curve @Vds", m, fi.typ, "pF", f"Vds={vds}V", "cap", note))
 
     # Qoss integral cross-check (independent of the scalar model).
     # Integrate to the SAME Vds the datasheet quotes Qoss at, else it is a
