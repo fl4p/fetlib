@@ -11,12 +11,27 @@ Quick start::
     v = find_vpl('datasheets/onsemi/FDD86367.pdf')
     print(v)  # ≈ 5.0
 """
-from dslib.viz.curve_extract import (
-    find_in_pdf,
-    find_plateau,
-    find_vpl as _find_vpl_legacy,
-)
-from dslib.viz.chart_finder import ChartLocation, find_gate_charge_charts
+try:
+    # Optional heavy PDF-extraction stack (needs pymupdf). Guarded so the
+    # lightweight, parts-DB-only tools below (fidelity_card) stay importable in
+    # the canonical loss/parts venv where pymupdf isn't installed.
+    from dslib.viz.curve_extract import (
+        find_in_pdf,
+        find_plateau,
+        find_vpl as _find_vpl_legacy,
+    )
+    from dslib.viz.chart_finder import ChartLocation, find_gate_charge_charts
+except ImportError as _pdf_err:  # pragma: no cover - env-dependent
+    _PDF_IMPORT_ERROR = _pdf_err
+
+    def _pdf_stack_missing(*_a, **_k):
+        raise ImportError(
+            "dslib.viz PDF-chart extraction requires optional deps "
+            f"(pymupdf): {_PDF_IMPORT_ERROR}")
+
+    find_in_pdf = find_plateau = _find_vpl_legacy = _pdf_stack_missing
+    find_gate_charge_charts = _pdf_stack_missing
+    ChartLocation = None
 
 
 def find_vpl_package_result(pdf_path: str):
