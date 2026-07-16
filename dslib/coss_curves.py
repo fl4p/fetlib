@@ -150,6 +150,28 @@ CISS_CURVES = {
         (40, 8700), (50, 8665), (60, 8665), (70, 8665),
         (80, 8665),
     ],
+    # Infineon IPP055N08NF2S Rev 2.1, Diagram 11 (VGS=0, f=1 MHz) -- Fugu2 HS device.
+    # dsdig full pipeline (find -> digitize-capacitance -> export-coss-dslib), export gate
+    # PASS with all three anchors inside 2% (Coss -1.8%, Crss +0.9%, Ciss -1.2%). The
+    # validated 542-pt Ciss trace was resampled onto this 5 V grid (median window), snapped
+    # at the 40 V Table anchor (2500pF; tool 2470); knot-vs-raw median 0.01% / max 1.84%.
+    # Axis calibration position_text, residuals ~1e-5 V / 3e-7 dec; trace + axis-tick
+    # overlays human-verified 2026-07-16. Ciss>Crss holds at every knot.
+    ("infineon", "IPP055N08NF2S"): [
+        (0, 3002), (5, 2739), (10, 2646), (15, 2571), (20, 2527), (25, 2499),
+        (30, 2470), (35, 2470), (40, 2500), (45, 2470), (50, 2470), (55, 2470),
+        (60, 2470), (65, 2470), (70, 2470), (75, 2470), (80, 2470),
+    ],
+    # Infineon IPP024N08NF2S Rev 2.1, Diagram 11 (VGS=0, f=1 MHz) -- Fugu2 LS device.
+    # Same dsdig pipeline; export gate PASS (Coss -0.2%, Crss -1.0%, Ciss -0.2%). Validated
+    # 542-pt trace resampled onto the 5 V grid, snapped at the 40 V Table anchor (6200pF;
+    # tool 6185); knot-vs-raw median 0.00% / max 1.65%. Axis position_text, residuals
+    # ~1e-5 V / 3e-7 dec; trace + axis-tick overlays human-verified 2026-07-16.
+    ("infineon", "IPP024N08NF2S"): [
+        (0, 7431), (5, 6858), (10, 6626), (15, 6439), (20, 6329), (25, 6256),
+        (30, 6185), (35, 6185), (40, 6200), (45, 6185), (50, 6185), (55, 6185),
+        (60, 6185), (65, 6185), (70, 6185), (75, 6185), (80, 6185),
+    ],
 }
 
 

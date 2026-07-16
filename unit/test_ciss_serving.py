@@ -21,8 +21,17 @@ class CissCurveForTests(unittest.TestCase):
         self.assertEqual(vs[0], 0)
 
     def test_unknown_part_returns_none_not_fallback(self):
-        self.assertIsNone(ciss_curve_for('infineon', 'IPP024N08NF2S'))
+        # A wholly unknown part, and a part that HAS a Coss curve but no curated Ciss,
+        # must both read None -- never a cross-fallback to the Coss dict. The Coss-only
+        # example is chosen dynamically so curating its Ciss later can't stale this test
+        # (as hardcoding IPP024 once did); if every Coss part gains a Ciss curve the
+        # unknown-part assertions still pin the no-fallback contract.
+        from dslib.coss_curves import COSS_CURVES, CISS_CURVES
         self.assertIsNone(ciss_curve_for('nope', 'NOPART123'))
+        for (mfr, mpn) in COSS_CURVES:
+            if (mfr, mpn) not in CISS_CURVES:
+                self.assertIsNone(ciss_curve_for(mfr, mpn),
+                                  f"{mfr}:{mpn} has Coss but no Ciss -> None, not a fallback")
 
     def test_ciss_above_crss_on_shared_span(self):
         # Downstream derives Cgs = Ciss - Crss; a curated pair of curves whose traces
