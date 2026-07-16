@@ -34,6 +34,15 @@ except ImportError as _pdf_err:  # pragma: no cover - env-dependent
     ChartLocation = None
 
 
+def __getattr__(name):  # PEP 562: lazy re-export of the parts-DB fidelity tools.
+    # Deferred so `python -m dslib.viz.fidelity_card` doesn't eager-import the
+    # __main__ target (RuntimeWarning) and so plain `import dslib.viz` stays cheap.
+    if name in ("build_card", "audit", "render_html"):
+        from dslib.viz import fidelity_card
+        return getattr(fidelity_card, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def find_vpl_package_result(pdf_path: str):
     """Return the package-owned Vpl result with diagnostics."""
 
@@ -71,4 +80,7 @@ __all__ = [
     'find_plateau',
     'find_gate_charge_charts',
     'ChartLocation',
+    'build_card',
+    'audit',
+    'render_html',
 ]
