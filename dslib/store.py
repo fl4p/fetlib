@@ -163,20 +163,29 @@ def load_parts():
     if coss_curve_for is not None:
         for key, p in parts.items():
             specs = getattr(p, 'specs', None)
-            if specs is None:
+            if specs is None or getattr(specs, 'coss_curve', None):
                 continue
             mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
                                                             getattr(p, 'mpn', None)))
-            if not getattr(specs, 'coss_curve', None):
-                curve = coss_curve_for(mfr, mpn)
-                if curve:
-                    specs.coss_curve = curve
-            # Ciss(V) pairs ride the same module; older pickled specs predate the
-            # attribute, so set it via getattr-guarded assignment (unpickling bypasses
-            # __init__). None -> consumers keep their gate-charge-partition Cgs basis.
-            if ciss_curve_for is not None and not getattr(specs, 'ciss_curve', None):
-                ciss = ciss_curve_for(mfr, mpn)
-                specs.ciss_curve = ciss if ciss else None
+            curve = coss_curve_for(mfr, mpn)
+            if curve:
+                specs.coss_curve = curve
+    # Ciss(V) pairs ride the same module but attach in an INDEPENDENT pass gated only on
+    # ciss_curve_for: nesting this under `coss_curve_for is not None` (as it first shipped)
+    # would let a broken/renamed coss_curve_for silently disable the Ciss attach too — the
+    # exact combined-failure anti-pattern the separate imports above exist to prevent. Two
+    # passes over parts.items() is cheap vs the unpickle cost. Older pickled specs predate
+    # the attribute, so set it via getattr-guarded assignment (unpickling bypasses __init__).
+    # None -> consumers keep their gate-charge-partition Cgs basis.
+    if ciss_curve_for is not None:
+        for key, p in parts.items():
+            specs = getattr(p, 'specs', None)
+            if specs is None or getattr(specs, 'ciss_curve', None):
+                continue
+            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                            getattr(p, 'mpn', None)))
+            ciss = ciss_curve_for(mfr, mpn)
+            specs.ciss_curve = ciss if ciss else None
     # Same for the body-diode reverse-recovery test conditions (IF/di-dt/VR/Tj the datasheet
     # Qrr+trr were measured at). Scalars without their operating point can't be re-scaled or
     # fitted to a charge-control diode; see dslib/qrr_conditions.py and fl4p/fetlib#37.

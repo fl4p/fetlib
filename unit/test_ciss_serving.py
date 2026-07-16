@@ -95,5 +95,48 @@ class FidelityCardCissRowTests(unittest.TestCase):
         self.assertEqual(row.verdict, 'PASS')
 
 
+class StoreAttachIndependenceTests(unittest.TestCase):
+    """The Ciss attach in store.load_parts() must be gated ONLY on ciss_curve_for.
+
+    Regression for the review finding that the Ciss loop first shipped nested under
+    `if coss_curve_for is not None:` — so a broken/renamed coss_curve_for (its import
+    raising) would silently disable the Ciss attach too. We simulate that failure by
+    deleting coss_curve_for from the module so `from dslib.coss_curves import
+    coss_curve_for` raises ImportError, then assert Ciss still attaches.
+    """
+
+    CURATED = ('infineon', 'IPP019N08NF2S')
+
+    def setUp(self):
+        import dslib.coss_curves as cc
+        self._cc = cc
+        self._saved = cc.coss_curve_for
+        # Make the `from dslib.coss_curves import coss_curve_for` in load_parts fail,
+        # exactly as a rename/removal of that symbol would.
+        del cc.coss_curve_for
+
+    def tearDown(self):
+        self._cc.coss_curve_for = self._saved
+        # Drop the specs mutated during the test so later tests re-attach cleanly.
+        from dslib.store import parts_db
+        parts_db.load(reload=True)
+
+    def test_ciss_attaches_when_coss_lookup_import_fails(self):
+        from dslib.store import parts_db, load_parts
+        # Fresh specs (the shared _lib_mem cache would otherwise carry a prior run's
+        # already-attached curves and skip the attach we want to exercise).
+        parts_db.load(reload=True)
+        parts = load_parts()
+        part = parts.get(self.CURATED)
+        self.assertIsNotNone(part, f"{self.CURATED} missing from parts DB")
+        # Ciss attached despite coss_curve_for's import having failed:
+        self.assertIsNotNone(getattr(part.specs, 'ciss_curve', None),
+                             "Ciss attach was suppressed by the coss import failure")
+        # ...and Coss did NOT attach (its lookup was unavailable) — proves the two are
+        # genuinely independent, not both riding a single successful import.
+        self.assertIsNone(getattr(part.specs, 'coss_curve', None),
+                          "coss_curve attached even though its lookup import failed")
+
+
 if __name__ == '__main__':
     unittest.main()
