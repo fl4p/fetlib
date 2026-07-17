@@ -81,3 +81,43 @@ def test_uncorrected_capacitive_share_biases_n_low():
     fit = fit_n_tau(anchor, [("if", matched_ratio_grid(cold_raw, hot_raw))])
     assert fit["n_tau"] < n_true - 0.03, (
         "contaminated fit must sit visibly below the true diffusion exponent")
+
+
+# ---------------------------------------------- three-state wiring (qrr_model)
+
+def test_resolve_n_tau_three_states():
+    from dslib.qrr_model import N_TAU, resolve_n_tau
+
+    m = resolve_n_tau("ao:AOT414")
+    assert m["state"] == "measured-fit" and m["n_tau"] == pytest.approx(0.660)
+    fam = resolve_n_tau("ao:AOD4126")  # AO part WITHOUT its own valid fit
+    assert fam["state"] == "ao-family-pool" and fam["n_tau"] == pytest.approx(0.657)
+    for part in ("infineon:IPP024N08NF2S", None, "onsemi:FDPF085N10A"):
+        c = resolve_n_tau(part)
+        assert c["state"] == "conservative-bound" and c["n_tau"] == N_TAU
+
+
+def test_best_lm_fit_stamps_resolved_exponent():
+    from dslib.qrr_model import best_lm_fit
+
+    cond = dict(IF=20.0, didt=8e8, Tj=25.0)
+    fit_ao = best_lm_fit(100e-9, 30e-9, cond, part="ao:AOT414")
+    assert fit_ao["n_tau"] == pytest.approx(0.660)
+    assert fit_ao["n_tau_state"] == "measured-fit"
+    fit_other = best_lm_fit(100e-9, 30e-9, cond, part="infineon:IPP024N08NF2S")
+    assert fit_other["n_tau_state"] == "conservative-bound"
+    # part omitted: stamped conservative, never silent/absent
+    fit_none = best_lm_fit(100e-9, 30e-9, cond)
+    assert fit_none["n_tau_state"] == "conservative-bound"
+
+
+def test_tau_at_tj_override_matches_convention():
+    from dslib.qrr_model import N_TAU, tau_at_tj
+
+    t0 = 3e-8
+    assert tau_at_tj(t0, 100.0) == pytest.approx(
+        t0 * ((373.15) / (298.15)) ** N_TAU)
+    assert tau_at_tj(t0, 100.0, n_tau=0.657) == pytest.approx(
+        t0 * ((373.15) / (298.15)) ** 0.657)
+    # measured exponent must predict LESS hot lifetime growth than the bound
+    assert tau_at_tj(t0, 100.0, n_tau=0.657) < tau_at_tj(t0, 100.0)

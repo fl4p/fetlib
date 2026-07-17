@@ -48,12 +48,16 @@ ASSUMPTIONS a consumer must surface (see fl4p/fetlib#37 item 4):
 import math
 
 K_TRR = 0.1   # datasheet trr end criterion (fraction of IRRM) — see module docstring
-# tau temperature exponent — ASSUMPTION, recalibrated 2026-07-13 (#18): chosen so the
-# MODEL's Qrr (not tau) doubles 25->125 C at datasheet conditions, per the empirical Si
-# body-diode rule. Solving Qrr(125C)/Qrr(25C)=2 through fit+predict gives n = 1.16-1.19
-# across IPP018/019/022/024 (remarkably part-independent); 1.2 rounded. The old 2.0
-# (inherited from lm_diode.cir) doubled TAU instead, which over-predicts Qrr(125C) ~3.2x.
-# Kept in lock-step with loss/lib/lm_diode.py.
+# tau temperature exponent — since 2026-07-17 the CONSERVATIVE-BOUND state of a
+# three-state resolution (see resolve_n_tau / dslib/qrr_tj_specs.py). History:
+# recalibrated 2026-07-13 (#18) so the MODEL's Qrr doubles 25->125 C per the empirical
+# Si folk rule (n = 1.16-1.19 across IPP018/019/022/024; 1.2 rounded; the older 2.0
+# doubled TAU instead, over-predicting Qrr(125C) ~3.2x). MEASURED evidence (five
+# human-verified AO dies with 25/125 C charts, dsdig-verify-backlog/qrr-tj-fit/) puts
+# the diffusion exponent at ~0.66 — the doubles rule is ~2x too steep, so 1.2
+# OVER-predicts hot Qrr for parts without their own measurement: retained deliberately
+# as the conservative default (the safe direction for a loss budget), never as fact.
+# Kept in lock-step with loss/lib/lm_diode.py (test_lm_parity pins equality).
 N_TAU = 1.2
 
 # Fraction of the junction displacement charge Qoss(VR) assumed to be counted INSIDE the
@@ -201,10 +205,43 @@ def predict(tau, TM, IF, didt):
     return dict(irrm=irrm, Qrr=qa + qb, trr=trr, td=td, qa=qa, qb=qb)
 
 
-def tau_at_tj(tau0, tj, tj_fit=25.0):
+def resolve_n_tau(part=None):
+    """Three-state Qrr(Tj) exponent resolution (Fab 2026-07-17).
+
+    `part` is a "mfr:MPN" string, a (mfr, mpn) pair, or None. Returns
+    dict(n_tau, state, source) with state in:
+    measured-fit | ao-family-pool | conservative-bound.
+    Unknown/absent parts get the conservative bound — never silently the
+    measured value of a different family.
+    """
+    from dslib.qrr_tj_specs import (
+        AO_FAMILY_POOL_N_TAU, MEASURED_SOURCE, QRR_TJ_MEASURED)
+    mfr = mpn = None
+    if isinstance(part, str) and ":" in part:
+        mfr, mpn = part.split(":", 1)
+    elif isinstance(part, (tuple, list)) and len(part) == 2:
+        mfr, mpn = part
+    if mfr is not None:
+        key = (str(mfr).lower(), str(mpn))
+        if key in QRR_TJ_MEASURED:
+            return dict(n_tau=QRR_TJ_MEASURED[key], state="measured-fit",
+                        source=MEASURED_SOURCE)
+        if key[0] == "ao":
+            return dict(n_tau=AO_FAMILY_POOL_N_TAU, state="ao-family-pool",
+                        source=MEASURED_SOURCE)
+    return dict(n_tau=N_TAU, state="conservative-bound",
+                source="legacy 'Qrr doubles' rule — no measured Tj data for this family")
+
+
+def tau_at_tj(tau0, tj, tj_fit=25.0, n_tau=None):
     """Scale the fitted carrier lifetime from the datasheet Tj to the operating Tj.
-    N_TAU is an assumption — see module docstring; flag results as extrapolated."""
-    return tau0 * ((tj + 273.15) / (tj_fit + 273.15)) ** N_TAU
+
+    `n_tau=None` applies the conservative-bound N_TAU; pass a resolved
+    per-part exponent (fit["n_tau"] from best_lm_fit(part=...)) to apply
+    measured evidence — deck and analytic consumers must use the SAME value
+    (read it off the shared fit record, don't resolve twice)."""
+    n = N_TAU if n_tau is None else float(n_tau)
+    return tau0 * ((tj + 273.15) / (tj_fit + 273.15)) ** n
 
 
 def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
@@ -332,7 +369,7 @@ def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None):
                 method="2pt", fit=fit)
 
 
-def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None):
+def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None, part=None):
     """ONE calibration decision point, shared by the analytic Qrr loss bucket
     (dcdc-tools loss.py) and the SPICE deck emitter (loss/lib/lm_diode.py) so
     the two can never fit different diodes again (qrr-lm coordination
@@ -349,6 +386,13 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None):
     A 2pt attempt that admits no fit falls back EXPLICITLY
     (fallback_from_2pt carries the reason); no conditions at all raises.
 
+    `part` ("mfr:MPN") resolves the Qrr(Tj) exponent ONCE, here at the shared
+    decision point: the fit record carries n_tau/n_tau_state/n_tau_source and
+    every consumer must scale tau via tau_at_tj(..., n_tau=fit["n_tau"]) —
+    resolving separately in the deck and the bucket is the same divergence
+    class this function was created to kill. part=None resolves to the
+    conservative bound (stamped, never silent).
+
     CONTRACT (encoded in tests): q0 is calibration PROVENANCE only — the
     capacitive share excluded from the diffusion fit. predict(tau, TM, ...)
     on this fit yields the DIFFUSION charge, which is what both the deck and
@@ -356,12 +400,15 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None):
     bucket owns displacement charge — adding q0 would recreate the exact
     double-count this function exists to prevent).
     """
+    n_res = resolve_n_tau(part)
+    n_stamp = dict(n_tau=n_res["n_tau"], n_tau_state=n_res["state"],
+                   n_tau_source=n_res["source"])
     fallback = None
     if qrr_points:
         try:
             p_lo, p_hi = _pick_2pt_rows(qrr_points)
             fit = fit_lm_2pt(p_lo, p_hi, tj_fit=float(p_lo.get("Tj", 25.0)))
-            return dict(fit, method="2pt", decontaminated=True)
+            return dict(fit, method="2pt", decontaminated=True, **n_stamp)
         except LMFitError as e:
             fallback = str(e)
     if cond is None:
@@ -376,7 +423,7 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None):
     # ambiguous beside q0 — name what the fit consumed and what was measured
     out = dict(fit, method="1pt", q0=Qrr - q_cal,
                qrr_diffusion=q_cal, qrr_measured_equiv=Qrr,
-               decontaminated=qoss_vr is not None)
+               decontaminated=qoss_vr is not None, **n_stamp)
     if fallback:
         out["fallback_from_2pt"] = fallback
     return out
