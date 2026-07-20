@@ -1,6 +1,8 @@
+import argparse
 import asyncio
 import math
 import os
+import sys
 from collections import defaultdict
 from typing import List, Dict, Tuple
 
@@ -106,9 +108,83 @@ def is_benchmark_part(part: DiscoveredPart):
     return (part.mfr, part.mpn) in benchmark_mpns() or (part.mfr, part.mpn2) in benchmark_mpns()
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description='')
+    parser.add_argument('--config-file')
+    return parser.parse_args(sys.argv[1:])
+
+
+def load_config(config_file):
+    if not config_file:
+        return None
+    import yaml
+    with open(config_file) as fh:
+        return yaml.safe_load(fh)
+
+
+def filter_parts_by_config(parts, conf):
+    substrates = conf.get('substrates')
+    if substrates:
+        substrates = set(map(lambda s: s.strip(), substrates.split(','))) if isinstance(substrates, str) \
+            else set(substrates)
+        parts = [p for p in parts if
+                 not hasattr(p.specs, 'substrate') or not p.specs.substrate or p.specs.substrate in substrates]
+
+    packages = conf.get('packages')
+    if packages:
+        packages = set(map(lambda s: s.strip(), packages.split(','))) if isinstance(packages, str) \
+            else set(packages)
+
+        def _match_package(part, packages):
+            if not part.package:
+                return True
+            for pk in packages:
+                p = part.package.upper()
+                if pk == 'TO-220' and 'TO220' in p or 'TO-220' in p or 'T220' in p:
+                    return True
+            return False
+
+        parts = [p for p in parts if _match_package(p, packages)]
+
+    vds_range = conf.get('vdsRange')
+    if vds_range:
+        assert len(vds_range) == 2 and vds_range[0] < vds_range[1]
+        parts = [p for p in parts if
+                 p.specs.Vds_max > 1 and p.specs.Vds_max >= vds_range[0] and p.specs.Vds_max <= vds_range[1]]
+
+    return parts
+
+
+def dcdc_load_params_from_config(conf):
+    from dslib.spec_models import DcDcLoadParams
+
+    load_points = conf['loadPoints']
+    assert len(load_points) == 1
+    l = load_points[0]
+    assert l['pointWeight'] == 1
+
+    return DcDcLoadParams(l['vIn'], l['vOut'], float(l['f']),
+                          tDead=float(conf['gateDrive']['deadTime']),
+                          pin=l['pIn'],
+                          ripple_factor=conf['inductor']['rippleFactor'])
+
+
 async def main():
+    try:
+        await _main()
+    finally:
+        await close_browser()
+
+
+async def _main():
+    cargs = parse_args()
+    conf = load_config(cargs.config_file)
+
     # discover available MOSFETS:
-    parts = await discover_mosfets()
+    parts = await discover_mosfets(no_obsolete=not (conf.get('includeObsolete', False) if conf else False))
+
+    if conf:
+        parts = filter_parts_by_config(parts, conf)
 
     # move_low_voltage_datasheets(parts)
     # exit(0)
@@ -120,8 +196,11 @@ async def main():
     for p in parts:
         by_mfr[p.mfr].append(p)
 
-    from dslib.spec_models import DcDcLoadParams
-    dcdc_params = DcDcLoadParams.default()
+    if conf:
+        dcdc_params = dcdc_load_params_from_config(conf)
+    else:
+        from dslib.spec_models import DcDcLoadParams
+        dcdc_params = DcDcLoadParams.default()
     #parts = dcdc_params.select_mosfets(parts, max_parallel=10)
 
     #parts = [p for p in parts if (p.specs.ID_25 >= 2 and p.specs.Rds_on_10v_max < 20e-3)]
