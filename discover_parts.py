@@ -33,7 +33,9 @@ def unique_parts(parts: List[DiscoveredPart]):
 
     by: Dict[Tuple[str, str], DiscoveredPart] = {}
     for part in parts:
-        assert part.mpn and isinstance(part.mpn, str) and part.mpn.lower() != 'nan', part.mpn
+        if not (part.mpn and isinstance(part.mpn, str) and part.mpn.lower() != 'nan'):
+            print('SKIP part with invalid mpn:', part.mfr, repr(part.mpn), part.specs and part.specs.source)
+            continue
         k = part.mfr, normal_mpn(part.mpn, part.mfr)
         if k in by:
             if part.specs and part.specs.source == ['digikey']:
