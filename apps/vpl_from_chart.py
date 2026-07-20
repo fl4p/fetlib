@@ -21,9 +21,12 @@ import warnings
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
-import cv2
 import fitz  # PyMuPDF
 import numpy as np
+
+# cv2 is imported lazily inside the functions that use it: its native bootstrap can take
+# 30+ s on a cold start (macOS Gatekeeper scanning the dylibs), which stalled every
+# importer of this module -- including `main.py -h` -- before argparse even ran.
 
 X_AXIS_KEYWORDS = ('q', 'qg', 'qgate', 'charge', 'gate charge', 'nc')
 # Y axis covers V_GS for MOSFETs and V_GE for IGBTs — the Miller-plateau
@@ -800,6 +803,7 @@ def extract_curves(page, chart: ChartFrame, dpi: int = 300) -> Tuple[np.ndarray,
     """Rasterise the chart's plot area and return the clean curve mask plus a
     transform mapping mask pixels to (Q_gate, V_GS) data coordinates.
     """
+    import cv2
     xs_pdf, xv, ys_pdf, yv = _axis_arrays(chart)
     a_x, b_x = _linear_fit(xs_pdf, xv)   # Qg = a_x * pdf_x + b_x
     a_y, b_y = _linear_fit(ys_pdf, yv)   # Vgs = a_y * pdf_y + b_y  (a_y < 0)
@@ -946,6 +950,7 @@ def find_plateau_vpl(inner_mask: np.ndarray, transform: np.ndarray, debug=None) 
       3. Pick the candidate with the longest run, then refine the y position
          by centroid for sub-pixel accuracy.
     """
+    import cv2
     a_x, b_x, a_y, b_y, scale, x0_pdf, y0_pdf, inner_off_x, inner_off_y = transform
     H, W = inner_mask.shape
     if H == 0 or W == 0:
@@ -1139,6 +1144,7 @@ def main():
 
 
 def _write_debug(results, pdf_path: str):
+    import cv2
     import os
     out = '/tmp/vpl_debug'
     os.makedirs(out, exist_ok=True)

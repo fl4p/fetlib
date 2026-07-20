@@ -11,16 +11,37 @@ import pandas as pd
 import pymupdf
 import timeout_decorator
 
-from apps.vpl_from_chart import _pick_best, vpl_from_pdf
 from dslib.cache import disk_cache
 from dslib.field import Field, DatasheetFields
 from dslib.pdf import expr
-from dslib.pdf.expr import get_field_detect_regex, dim_regs_csv, dim_regs_multiline, date_regexs, months_short
+from dslib.pdf.expr import get_field_detect_regex, date_regexs, months_short
 from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
     whitespaces_remove, normalize_text, ocr_strip_string, whitespace_to_space
 from dslib.pdf.pipeline import convertapi, pdf2pdf
 
 pymupdf.TOOLS.mupdf_display_errors(False)
+
+
+class _LazyRegs:
+    """Defers building expr's regex tables (~1.7 s of regex.compile, see expr._LAZY_TABLES) until
+    first real use. Keeps the original bare names in this module so functions hashed via
+    disk_cache(hash_func_code=True) keep their exact source, and thus their cache keys."""
+
+    def __init__(self, name):
+        self._name = name
+
+    def _table(self):
+        return getattr(expr, self._name)
+
+    def __getitem__(self, k):
+        return self._table()[k]
+
+    def __contains__(self, k):
+        return k in self._table()
+
+
+dim_regs_csv = _LazyRegs('dim_regs_csv')
+dim_regs_multiline = _LazyRegs('dim_regs_multiline')
 
 
 def _empty(s):
@@ -121,7 +142,10 @@ def extract_text(pdf_path, try_ocr=False, auto_decrypt=True) -> Tuple[str, DataS
     return pdf_text, meta
 
 
-regex_ver_salt = ('v51', dim_regs_csv, dim_regs_multiline, get_field_detect_regex('any'))
+def regex_ver_salt():
+    # callable so decoration doesn't force expr's lazy regex tables (~1.7 s of regex.compile) at
+    # import; must return the same tuple the eager version produced or existing entries are orphaned
+    return 'v51', expr.dim_regs_csv, expr.dim_regs_multiline, get_field_detect_regex('any')
 
 
 @disk_cache(ttl='999d', salt=(regex_ver_salt, 'v01'), hash_func_code=True)
@@ -303,6 +327,7 @@ def read_charts(pdf_path):
     src = 'viz'
 
     if vpl is None:
+        from apps.vpl_from_chart import _pick_best, vpl_from_pdf
         vpl = _pick_best(vpl_from_pdf(pdf_path))
         if vpl is not None:
             vpl = vpl['vpl']

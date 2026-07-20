@@ -835,7 +835,17 @@ def disk_cache(ttl, ignore_kwargs=None, file_dependencies=None, out_files=None, 
                     if
                     not ignore_missing_inp_paths or fn is not None}
             if salt is not None:
-                mtimes['__salt__'] = salt
+                # callable salts (also inside a tuple) resolve at call time, so decoration (import)
+                # stays cheap when the salt is expensive to build (e.g. parse.py's regex tables).
+                # The resolved value must equal what an eager salt would have been, or existing
+                # cache entries are orphaned. NB hash_func_code hashes the decorator line too, so
+                # the call-site spelling `salt=(regex_ver_salt, 'v01')` must not change either.
+                if callable(salt):
+                    mtimes['__salt__'] = salt()
+                elif isinstance(salt, tuple):
+                    mtimes['__salt__'] = tuple(s() if callable(s) else s for s in salt)
+                else:
+                    mtimes['__salt__'] = salt
             if hash_func_code:
                 mtimes['__target_source'] = source_code
             cache_key_str = disk_cache_key(mod, target, ignore_kwargs, args=args, kwargs={**kwargs, **mtimes})
