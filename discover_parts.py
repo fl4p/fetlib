@@ -1,3 +1,5 @@
+import json
+
 import argparse
 import asyncio
 import math
@@ -271,7 +273,8 @@ async function downloadAll(urls) {
     }
   }
 }
-        
+
+downloadAll(""" + json.dumps(man) +  """)        
         """)
 
     from wakepy import keep
