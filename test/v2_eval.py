@@ -182,6 +182,17 @@ def compare(v2_ds, ref_ds, rtol: float, symbols: Optional[set] = None,
     return counts, details
 
 
+def _same_value(a, b) -> bool:
+    """Two Fields carrying the same numbers (nan == nan for this purpose)."""
+    for stat in STATS:
+        x, y = getattr(a, stat), getattr(b, stat)
+        if math.isnan(x) and math.isnan(y):
+            continue
+        if math.isnan(x) or math.isnan(y) or x != y:
+            return False
+    return True
+
+
 def selection_audit(v2_ds, symbols=None):
     """Can a consumer address each candidate BY ITS OWN CONDITION?
 
@@ -223,7 +234,18 @@ def selection_audit(v2_ds, symbols=None):
                                     value=f.typ_or_max_or_min))
                 continue
             got = v2_ds._get_by_cond(sym, cond)
-            if got is f:
+            # Equivalence, not identity. Datasheets repeat their parameter
+            # table (nxp prints it on p1 and again on p5), so the same row is
+            # extracted twice into two equal Field objects. Asking for that
+            # condition returns whichever came first, and scoring the other as
+            # unaddressable counted 22 of 36 "failures" that were nothing of
+            # the kind — a metric that reports a duplicate as a defect will
+            # send someone to fix a non-problem.
+            same = got is f or (
+                got is not None
+                and got.cond == f.cond
+                and _same_value(got, f))
+            if same:
                 counts['selectable'] += 1
             else:
                 counts['unselectable'] += 1

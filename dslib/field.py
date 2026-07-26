@@ -553,7 +553,20 @@ class DatasheetFields():
                 d = f.cond
                 if not d or not isinstance(d, dict):
                     d = {}
-                e = (sum(((d.get(k, 0) - v) / (abs(v) + 1e-3)) ** 2 for k, v in cond.items()) / len(cond)) ** .5
+                # A condition the candidate does not state is a MISMATCH, not a
+                # match. The old form read an absent key as 0 via d.get(k, 0),
+                # which only penalises while the requested value is non-zero:
+                # ask for Vgs=0 -- what every Coss/Ciss/Crss/Vds row is specced
+                # at -- and (0-0)/(0+1e-3) scored a candidate with NO conditions
+                # at all as a PERFECT match, so it displaced the row that
+                # actually says "VGS = 0 V". Measured on 3 toshiba and 3 st
+                # parts: Coss at Vgs=0 returned 92 instead of 145, and 80
+                # instead of 977. Absence of evidence must not read as
+                # agreement; an unstated condition is charged a full relative
+                # error, so it loses to any row that states it and still beats
+                # a row that states a plainly wrong one.
+                e = (sum((1.0 if k not in d else ((d[k] - v) / (abs(v) + 1e-3)) ** 2)
+                         for k, v in cond.items()) / len(cond)) ** .5
                 if e < e_min:
                     e_min = e
                     f_min = f
