@@ -358,6 +358,12 @@ class ExtractedRow:
     unit: Optional[str]
     cond: Optional[str]
     page_num: int
+    # How ``cond`` was established: "cell" when the sheet's own ruling lines
+    # bounded the Conditions cell, "wrap" when it was inferred from proximity.
+    # These are not equally trustworthy and must not look alike downstream --
+    # a detector that silently degrades to a guess while reporting success is
+    # worse than one that says it had no boundary evidence.
+    cond_src: Optional[str] = None
 
 
 def _value_str_from_column(row: TextRow,
@@ -889,6 +895,99 @@ def _cond_with_continuation(scan: List[dict], idx: int,
     return ' '.join(parts).strip() or None
 
 
+def _cond_from_cell(page: Page, scan: List[dict], idx: int,
+                    cols: Dict[str, Tuple[float, float]]) -> Optional[str]:
+    """Condition text of the whole ruled Conditions CELL containing this row.
+
+    This is the answer to the case ``_cond_with_continuation`` documents and
+    refuses: a Conditions cell merged down several value rows. Where the sheet
+    draws its table, the cell's extent is a fact rather than a proximity guess,
+    so the two shapes that look identical to a heuristic --
+
+        QG(tot)  <- shares the gate-charge block's merged condition cell
+        VDS      <- abs-max row that must NOT inherit "VGS = 5 V" above it
+
+    -- are separated by whether a ruling runs between them in this column.
+
+    Returns None whenever the page cannot answer: no rulings, an unbounded
+    band, or a band with no interior ruling in a neighbouring column (which
+    means only the table outline is drawn, so every column would claim to be
+    one merged cell). The caller then falls back to the wrap heuristic, i.e.
+    exactly today's behaviour -- this only ever adds knowledge, never
+    substitutes a guess for a gap.
+    """
+    if "cond" not in cols or not page.pdf_path:
+        return None
+    from dslib.v2 import rules as _rules
+
+    rs = _rules.page_rules(page.pdf_path, page.page_num)
+    if not rs:
+        return None
+
+    x1, x2 = cols["cond"]
+    if not math.isfinite(x2):
+        # An open-ended Conditions column has no right edge to measure a
+        # ruling against; bound it by the widest ruling on the page so
+        # "covers 60% of the column" stays a meaningful test.
+        x2 = max((r[2] for r in rs), default=x1)
+        if x2 <= x1:
+            return None
+
+    row = scan[idx]["row"]
+    band = _rules.cell_band(rs, x1, x2, row.bbox.cy)
+    if band is None or not _rules.band_is_credible(rs, band, x1, x2):
+        return None
+
+    top, bottom = band
+    symbol = scan[idx]["sym"].symbol if scan[idx].get("sym") else None
+    parts: List[str] = []
+    same_symbol = 0
+    own_cond_rows = 0
+    for item in scan:
+        cy = item["row"].bbox.cy
+        if not (bottom < cy < top):
+            continue
+        if symbol and item.get("sym") and item["sym"].symbol == symbol:
+            same_symbol += 1
+        text = _cond_from_column(item["row"], cols)
+        if text:
+            parts.append(text)
+            # A row that carries conditions AND is itself a value row states
+            # its own; a bare continuation line (no symbol, no numbers) is the
+            # rest of somebody else's cell.
+            if item["has_num"] or item.get("sym"):
+                own_cond_rows += 1
+
+    # A merged cell holds ONE cell's worth of text, however many lines it wraps
+    # onto. If several VALUE rows inside the band each carry their own
+    # condition text, the column is not merged there -- it simply was not ruled
+    # between them, and joining them produces a blob that destroys the
+    # distinctions the sheet did draw. rohm/RJ1P04BBHTL1 prints
+    #     VGS = 10V   -  38.0  -
+    #     VDD = 50V   -  25.0  -
+    # as two separately-conditioned Qg rows; concatenating them gave both the
+    # same conditions and made two different values answer the same question.
+    if own_cond_rows > 1:
+        return None
+
+    # If the SAME symbol occurs twice inside one condition cell, the cell
+    # cannot be what separates those rows -- something outside it does, and on
+    # this corpus that something is the symbol's own label: ao/AOT284L prints
+    #     Qg (10V)  Total Gate Charge   71  100 nC
+    #     Qg(4.5V)  Total Gate Charge  33.5  48 nC
+    # under one merged "VDS=40V, VGS=10V" cell. Giving both rows VGS=10 attaches
+    # to the 4.5 V row a condition the datasheet never claimed for it, and makes
+    # two different values look like equally valid answers to the same question.
+    # Refusing here costs a condition; inheriting would manufacture a false one,
+    # and a wrong condition is worse than a missing one because it is
+    # confidently selectable.
+    if same_symbol > 1:
+        return None
+    if not parts:
+        return None
+    return ' '.join(parts).strip() or None
+
+
 def parse_rows_for_page(mfr: str,
                         page: Page,
                         headers: List[HeaderRow]) -> List[ExtractedRow]:
@@ -951,13 +1050,22 @@ def parse_rows_for_page(mfr: str,
                 # on a split row the wrapped condition line follows the row the
                 # condition was printed against, not the label above it.
                 v_idx = i if value_row is item["row"] else _scan_index(scan, value_row)
-                cond = (_cond_with_continuation(scan, v_idx, header.cols)
-                        if v_idx is not None
-                        else _cond_from_column(value_row, header.cols))
+                cond_src = None
+                if v_idx is None:
+                    cond = _cond_from_column(value_row, header.cols)
+                else:
+                    # The ruled cell is authoritative where the sheet draws
+                    # one; the wrap heuristic is what we have when it does not.
+                    cond = _cond_from_cell(page, scan, v_idx, header.cols)
+                    cond_src = "cell" if cond else None
+                    if not cond:
+                        cond = _cond_with_continuation(scan, v_idx, header.cols)
+                        cond_src = "wrap" if cond else None
                 out.append(ExtractedRow(symbol=symbol,
                                         row=value_row,
                                         values=values,
                                         unit=unit,
                                         cond=cond,
-                                        page_num=page.page_num))
+                                        page_num=page.page_num,
+                                        cond_src=cond_src))
     return out

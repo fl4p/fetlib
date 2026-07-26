@@ -186,6 +186,11 @@ class Page:
     # cells lost to glyphs the backend could not name. Non-zero means a whole
     # table cell is missing from ``rows``, not that the page is merely odd.
     n_undecoded: int = 0
+    # Source file, so cell boundaries can be read from the page's ruling lines
+    # on demand (dslib.v2.rules). Kept as a path rather than an open document
+    # because that extraction is lazy: vector operators are expensive and most
+    # pages never need them.
+    pdf_path: str = ""
 
 
 # ---------- low-level char extraction ----------
@@ -782,7 +787,8 @@ def extract_pages_with_rows(pdf_path: str,
                           mediabox=mb,
                           rows=rows,
                           char_count=len(chars),
-                          n_undecoded=lost))
+                          n_undecoded=lost,
+                          pdf_path=pdf_path))
     return pages
 
 

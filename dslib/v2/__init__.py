@@ -32,7 +32,7 @@ from dslib.v2.tables import (ExtractedRow, _num_with_unit, find_headers,
 
 _V2_DIR = os.path.dirname(os.path.abspath(__file__))
 _DSLIB_DIR = os.path.dirname(_V2_DIR)
-_V2_SOURCES = ('__init__.py', 'chars.py', 'tables.py')
+_V2_SOURCES = ('__init__.py', 'chars.py', 'tables.py', 'rules.py')
 
 # Code OUTSIDE dslib/v2 that helps derive a parsed field. Each is reached from
 # parse_datasheet and each can change the numbers it returns, so each belongs
@@ -399,6 +399,13 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
         return None
 
     src = ["v2", f"pg{ex.page_num + 1}", f"y{round(ex.row.bbox.y2)}"]
+    # Say how the conditions were established. "cond:cell" means the sheet's
+    # own ruling lines bounded the Conditions cell; "cond:wrap" means proximity
+    # inferred it. Provenance has to distinguish them: a cell-boundary detector
+    # that silently degrades to the old guess, while the result looks identical,
+    # would let anyone downstream read a guess as a measurement.
+    if cond_parsed and getattr(ex, "cond_src", None):
+        src.append(f"cond:{ex.cond_src}")
 
     try:
         return Field(ex.symbol,
