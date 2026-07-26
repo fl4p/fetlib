@@ -746,6 +746,11 @@ def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
 # continues. Tighter than _PAIR_MAX_ROW_GAP: this is the next line of one cell,
 # not a neighbouring row of the table.
 _COND_WRAP_MAX_GAP = 1.6
+# Reach allowed when the line above ends on a dangling "," or ";". The
+# separator is the evidence that a continuation exists; distance is only a
+# sanity bound, so it can be looser. Measured need: st/ST8L65N044M9 puts the
+# overflow 1.77 row-heights below its line, past the 1.6 above.
+_COND_DANGLING_MAX_GAP = 2.5
 
 
 def _scan_index(scan: List[dict], row: TextRow) -> Optional[int]:
@@ -792,13 +797,31 @@ def _cond_with_continuation(scan: List[dict], idx: int,
     row = scan[idx]["row"]
     base = _cond_from_column(row, cols)
     parts = [base] if base else []
-    reach = max(row.bbox.height, 1.0) * _COND_WRAP_MAX_GAP
+    h = max(row.bbox.height, 1.0)
     prev_cy = row.bbox.cy
     for j in range(idx + 1, len(scan)):
         nxt = scan[j]
-        if nxt["sym"] or nxt["has_num"]:
+        if nxt["has_num"]:
             break
+        dangling = bool(parts and parts[-1].rstrip().endswith((',', ';')))
+        reach = h * (_COND_DANGLING_MAX_GAP if dangling else _COND_WRAP_MAX_GAP)
         if prev_cy - nxt["row"].bbox.cy > reach:
+            break
+        # A wrapped line does not always get a row to itself. On
+        # st/ST8L65N044M9 the overflow shares a row with the NEXT parameter's
+        # symbol:
+        #     trr Reverse recovery time  ISD = 58 A, di/dt = 100 A/us,  - 410 ns
+        #     Qrr                        VDD = 60 V, TJ = 150 C
+        #     Reverse recovery charge                                   - 0.8 uC
+        # so requiring the row to name no symbol drops TJ = 150 C, and TJ is the
+        # only thing separating that trr from the 25 C one printed above it.
+        #
+        # The signal that it IS a continuation comes from the text, not the
+        # geometry: the line above ends on a comma or semicolon, i.e. the list
+        # is unfinished. A row whose own conditions merely happen to sit nearby
+        # does not follow a dangling separator, so this stays out of the case
+        # the block-inheritance note below refuses to guess at.
+        if nxt["sym"] and not dangling:
             break
         text = _cond_from_column(nxt["row"], cols)
         if not text:
