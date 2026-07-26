@@ -6,14 +6,50 @@ or dslib.pdf.ascii so the v2 pipeline can evolve independently.
 """
 from __future__ import annotations
 
-import math
+import os
 from dataclasses import dataclass, field
-from typing import Iterator, List, Optional, Tuple
+from typing import Iterator, List, NamedTuple, Optional, Sequence, Tuple
 
-from pdfminer.high_level import extract_pages
-from pdfminer.layout import LAParams, LTChar, LTPage, LTTextLine
+from pdfminer.layout import LTChar, LTPage
 
 from dslib.pdf.pdf2txt import normalize_text
+
+# Which library reads glyphs out of the PDF. "fitz" (PyMuPDF, C-backed) is
+# 3-100x faster than pdfminer and produces the same rows; pdfminer stays as the
+# fallback for files fitz reads badly. "auto" runs fitz and falls back.
+# Override with DSLIB_V2_BACKEND=pdfminer.
+DEFAULT_BACKEND = os.environ.get("DSLIB_V2_BACKEND", "auto")
+
+# Below this many characters on the best page, a PDF is treated as unreadable
+# (scanned, or a font encoding the backend could not decode).
+MIN_CHARS_READABLE = 50
+
+# Baseline tolerances, as a fraction of the font size. Two regimes, because
+# glyphs of the row's own size and sub/superscripts behave differently:
+# same-size glyphs on one line share a baseline exactly, so they get only
+# enough slack for rounding, while a sub/superscript is deliberately offset.
+# 0.20 sits between two measured bounds: same-line glyphs of mixed fonts need
+# more than ~0.11 em of slack (a diodes sheet loses tRise/tDoff below that),
+# while an infineon multi-line condition cell sits 0.317 em off its neighbour's
+# baseline and must stay out. Anything in 0.15-0.30 passes the known cases.
+_SAME_LINE_TOL = 0.20
+_SCRIPT_TOL = 0.45
+
+# A glyph smaller than this fraction of the row's size counts as a
+# sub/superscript and is the only kind allowed the larger tolerance.
+_SCRIPT_MAX_SIZE_RATIO = 0.9
+
+# A cluster of at most this many glyphs is a stray cell rather than a line, and
+# may be folded into a nearby row from up to _STRAY_MERGE_TOL em away.
+_STRAY_MAX_GLYPHS = 2
+_STRAY_MERGE_TOL = 0.6
+# If the two nearest rows are this close to equidistant, the stray's owner is
+# ambiguous and it is discarded instead of guessed.
+_STRAY_TIE_MARGIN = 0.25
+
+# Fallback descender when a backend does not report one, as a fraction of the
+# font size — used to recover the baseline from a glyph box bottom.
+_DEFAULT_DESCENT = -0.2
 
 
 @dataclass
@@ -141,9 +177,28 @@ class Page:
     mediabox: BBox
     rows: List[TextRow]
     char_count: int  # used to decide "needs OCR"
+    # cells lost to glyphs the backend could not name. Non-zero means a whole
+    # table cell is missing from ``rows``, not that the page is merely odd.
+    n_undecoded: int = 0
 
 
 # ---------- low-level char extraction ----------
+
+
+class RawChar(NamedTuple):
+    """One glyph, backend-agnostic.
+
+    ``bbox`` is (x1, y1, x2, y2) in PDF user space (y grows *upwards*), which
+    is pdfminer's convention; the fitz backend flips into it.
+
+    ``baseline`` is the y the glyph sits on. It is what rows are clustered by:
+    every glyph typeset on one line shares it exactly, while box overlap only
+    correlates with it.
+    """
+    text: str
+    bbox: Tuple[float, float, float, float]
+    size: float
+    baseline: float
 
 
 def _iter_chars(layout: LTPage) -> Iterator[LTChar]:
@@ -155,7 +210,22 @@ def _iter_chars(layout: LTPage) -> Iterator[LTChar]:
             yield obj
         elif hasattr(obj, "__iter__"):
             # push children in reverse so we visit them in their natural order
-            stack.extend(reversed(list(obj)))
+            stack.extend(reversed(list(obj)))  # type: ignore[arg-type]
+
+
+_norm_char_memo: dict = {}
+
+# ASCII letters/digits and the punctuation normalize_text leaves alone. Skipping
+# the memo dict for these avoids a hash lookup on the ~90% common case.
+_ASCII_PASSTHROUGH = frozenset(
+    "0123456789"
+    "abcdefghijklmnopqrstuvwxyz"
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    " ()[]{}/\\|.,:;+*=<>#$%&?!'\"@^_`~"
+    # U+FFFD must survive normalisation (which would strip it) so that a
+    # glyph the backend could not decode stays countable — see _scrub_undecodable.
+    "�"
+)
 
 
 def _normalize_char(c: str) -> str:
@@ -165,17 +235,27 @@ def _normalize_char(c: str) -> str:
     normalize_text handles the common cases (NFKD + unidecode w/ Greek
     preserved). We feed each char individually so positional info is not
     disturbed.
+
+    ``normalize_text`` costs ~20 Python-level operations (custom_subs, NFKD,
+    unidecode, a regex sub) and is called once per glyph — tens of thousands
+    of times per datasheet. It is a pure function of the single character, so
+    memoizing on the character is exact, not an approximation.
     """
     if not c:
         return ""
-    n = normalize_text(c)
+    if c in _ASCII_PASSTHROUGH:
+        return c
+    n = _norm_char_memo.get(c)
+    if n is None:
+        n = normalize_text(c)
+        _norm_char_memo[c] = n
     return n
 
 
 # ---------- word / row grouping ----------
 
 
-def _group_chars_into_words(chars: List[LTChar],
+def _group_chars_into_words(chars: List[RawChar],
                             word_gap_ratio: float = 0.25) -> List[Word]:
     """Group horizontally adjacent characters into words.
 
@@ -194,7 +274,7 @@ def _group_chars_into_words(chars: List[LTChar],
     cur_y1 = chars[0].bbox[1]
     cur_x2 = chars[0].bbox[2]
     cur_y2 = chars[0].bbox[3]
-    cur_size = chars[0].size if hasattr(chars[0], "size") else (cur_y2 - cur_y1)
+    cur_size = chars[0].size
 
     def flush():
         if cur_text:
@@ -205,7 +285,7 @@ def _group_chars_into_words(chars: List[LTChar],
     prev_h = chars[0].bbox[3] - chars[0].bbox[1]
 
     for i, ch in enumerate(chars):
-        c = _normalize_char(ch.get_text())
+        c = _normalize_char(ch.text)
         cx1, cy1, cx2, cy2 = ch.bbox
         ch_h = cy2 - cy1
         gap = cx1 - prev_x2 if i > 0 else 0.0
@@ -220,7 +300,7 @@ def _group_chars_into_words(chars: List[LTChar],
             if not is_space:
                 cur_text = c
                 cur_x1, cur_y1, cur_x2, cur_y2 = cx1, cy1, cx2, cy2
-                cur_size = ch.size if hasattr(ch, "size") else ch_h
+                cur_size = ch.size
         else:
             if is_space:
                 # whitespace inside a "word" -> still treat as a break
@@ -229,7 +309,7 @@ def _group_chars_into_words(chars: List[LTChar],
             else:
                 if not cur_text:
                     cur_x1, cur_y1, cur_x2, cur_y2 = cx1, cy1, cx2, cy2
-                    cur_size = ch.size if hasattr(ch, "size") else ch_h
+                    cur_size = ch.size
                 else:
                     cur_x2 = max(cur_x2, cx2)
                     cur_y1 = min(cur_y1, cy1)
@@ -244,57 +324,113 @@ def _group_chars_into_words(chars: List[LTChar],
     return [w for w in words if w.text.strip()]
 
 
-def _cluster_lines(line_chars: List[LTChar],
-                   min_overlap_ratio: float = 0.4) -> List[List[LTChar]]:
-    """Cluster characters into horizontal lines.
+def _cluster_lines(line_chars: List[RawChar]) -> List[List[RawChar]]:
+    """Cluster characters into horizontal lines, by baseline.
 
-    A new character joins an existing cluster when its vertical range
-    overlaps the cluster's vertical range by ``min_overlap_ratio`` of the
-    shorter of the two heights. This handles subscripts and superscripts:
-    a small "gd" subscript sitting under a Q has only ~75% overlap with
-    Q's full bbox but >40% relative to its own (smaller) height, so they
-    still cluster together.
+    Every glyph typeset on one line shares a baseline exactly, so a tolerance
+    of a fraction of the font size separates rows cleanly while still pulling
+    in sub/superscripts, whose baseline is offset by only ~0.2-0.33 em.
 
-    The cluster's reference y-range is the *running min/max* of every
-    char added, so subscript-heavy rows don't gradually drift away from
-    the main baseline like a running-mean approach would.
+    Clustering by *bounding-box overlap* — the obvious alternative — cannot
+    do this, because a glyph box is over a point tall and table cells are not
+    aligned to a common top. Two failures made that concrete:
+
+    * A unit cell "A" sitting vertically centred between the "Continuous
+      Drain Current" and "Pulsed Drain Current" rows overlapped both. It
+      joined the first, dragged that row's band down, and the band then
+      swallowed the second row whole: the two came out interleaved character
+      by character — "ID"+"IDM" as "IIDDM", 90 and 360 as "39600" — losing
+      both rows. By baseline the "A" is 5.5 pt off either row and joins
+      neither.
+    * An nxp condition cell "Tj = 25 C" belonging to the row above overlapped
+      the "Q_GS(th) pre-threshold" row by 51% of a glyph height, enough to
+      merge them, which then left that row's own subscript out of reach.
+      Their baselines differ by 4.4 pt on a 9 pt font, so they separate,
+      while the subscript is 1.7 pt away and stays.
+
+    The cluster's reference is the baseline of the *largest* glyph seen, so a
+    superscript that happens to be visited first cannot pin the row to itself.
     """
     if not line_chars:
         return []
 
-    heights = [c.bbox[3] - c.bbox[1] for c in line_chars]
-    heights = [h for h in heights if h > 0]
-    if not heights:
-        return [line_chars]
+    # Descending baseline: rows are then produced roughly top to bottom, and a
+    # glyph only ever has to look at rows at or above it.
+    line_chars = sorted(line_chars, key=lambda c: -c.baseline)
 
-    line_chars = sorted(line_chars, key=lambda c: -c.bbox[3])
-
-    clusters: List[List[LTChar]] = []
-    cluster_y: List[Tuple[float, float, float]] = []  # (y1, y2, anchor_h)
-
-    def overlap(a1: float, a2: float, b1: float, b2: float) -> float:
-        return max(0.0, min(a2, b2) - max(a1, b1))
+    clusters: List[List[RawChar]] = []
+    refs: List[Tuple[float, float]] = []  # (baseline, size of the largest glyph)
 
     for ch in line_chars:
-        y1, y2 = ch.bbox[1], ch.bbox[3]
-        h = max(y2 - y1, 0.1)
+        size = ch.size if ch.size > 0 else max(ch.bbox[3] - ch.bbox[1], 0.1)
         assigned = False
-        for i, (cy1, cy2, ch_anchor_h) in enumerate(cluster_y):
-            ov = overlap(y1, y2, cy1, cy2)
-            ref = min(h, ch_anchor_h)
-            if ref > 0 and ov / ref >= min_overlap_ratio:
+        for i, (cb, csize) in enumerate(refs):
+            is_script = size < csize * _SCRIPT_MAX_SIZE_RATIO
+            tol = (_SCRIPT_TOL if is_script else _SAME_LINE_TOL) * max(size, csize)
+            if abs(ch.baseline - cb) <= tol:
                 clusters[i].append(ch)
-                cluster_y[i] = (min(cy1, y1), max(cy2, y2), ch_anchor_h)
+                if size > csize:
+                    refs[i] = (ch.baseline, size)
                 assigned = True
                 break
         if not assigned:
             clusters.append([ch])
-            cluster_y.append((y1, y2, h))
+            refs.append((ch.baseline, size))
 
-    return clusters
+    return _absorb_stray_glyphs(clusters, refs)
 
 
-def _build_rows(chars: List[LTChar]) -> List[TextRow]:
+def _absorb_stray_glyphs(clusters: List[List[RawChar]],
+                         refs: List[Tuple[float, float]]) -> List[List[RawChar]]:
+    """Fold one- or two-glyph clusters into the nearest real row.
+
+    Some glyphs sit off their row's baseline by more than typographic jitter
+    but less than a line: an Omega from a Symbol font in an onsemi unit cell
+    is raised 0.275 em, and a unit "A" shared between two rows is centred
+    between them. Widening the same-line tolerance to reach them is not an
+    option — an infineon condition cell sits 0.317 em from its neighbour and
+    must stay separate — so the discriminator is mass rather than distance: a
+    lone glyph is a stray cell, whereas a genuine line brings a crowd.
+
+    Dropping the stray instead is not neutral. The Omega *is* the unit cell,
+    and losing it leaves 0.0067 where the datasheet says 6.7 mOhm.
+
+    A near-tie is refused outright. A unit cell shared by two rows is centred
+    between them, i.e. equidistant *by construction*, so "nearest" would be
+    decided by rounding noise and glyph order — attaching a unit to one of two
+    rows nondeterministically. That is the same shape as the 1000x error this
+    rule exists to prevent, and a miss is recoverable where a wrong unit is
+    not.
+    """
+    # Whitespace does not make a cluster substantial — the Omega above arrives
+    # as "  (cid:2)", and counting its two padding spaces hid it from this
+    # rule entirely.
+    weight = [sum(1 for ch in c if ch.text.strip()) for c in clusters]
+
+    tiny = [i for i, w in enumerate(weight) if w <= _STRAY_MAX_GLYPHS]
+    if not tiny:
+        return clusters
+
+    absorbed = set()
+    for i in tiny:
+        reach = _STRAY_MERGE_TOL * refs[i][1]
+        near = sorted(
+            (abs(refs[i][0] - refs[j][0]), j)
+            for j in range(len(clusters))
+            if j != i and weight[j] > _STRAY_MAX_GLYPHS and j not in absorbed
+            and abs(refs[i][0] - refs[j][0]) <= _STRAY_MERGE_TOL * max(refs[i][1], refs[j][1])
+        )
+        if not near:
+            continue
+        if len(near) > 1 and near[1][0] - near[0][0] < _STRAY_TIE_MARGIN * reach:
+            continue  # ambiguous owner — leave it out rather than guess
+        clusters[near[0][1]].extend(clusters[i])
+        absorbed.add(i)
+
+    return [c for i, c in enumerate(clusters) if i not in absorbed]
+
+
+def _build_rows(chars: List[RawChar]) -> List[TextRow]:
     """Build TextRows: cluster chars vertically, then group horizontally."""
     rows: List[TextRow] = []
     for cluster in _cluster_lines(chars):
@@ -312,41 +448,210 @@ def _build_rows(chars: List[LTChar]) -> List[TextRow]:
     return rows
 
 
+# ---------- backends ----------
+
+
+def _pdfminer_baseline(c: LTChar) -> float:
+    """Recover a glyph's baseline from pdfminer's box.
+
+    pdfminer puts the box bottom at ``baseline + descent * size``, so the
+    baseline is that offset removed. ``LTChar`` does not expose the font
+    object — only ``fontname`` as a string — so the real descent is not
+    reachable here and a typical value is used instead. Real descents run
+    about -0.21 to -0.25, and the residual error is a few hundredths of an em:
+    far inside ``_SAME_LINE_TOL``, so it shifts a glyph within its own row and
+    never into another one.
+
+    Note this makes pdfminer baselines *approximate* where fitz baselines are
+    exact (fitz reports the glyph origin directly). The two backends therefore
+    agree within tolerance rather than identically.
+    """
+    size = getattr(c, "size", c.bbox[3] - c.bbox[1])
+    return c.bbox[1] - _DEFAULT_DESCENT * size
+
+
+def _pages_pdfminer(pdf_path: str, max_pages: int
+                    ) -> Iterator[Tuple[List[RawChar], BBox, int]]:
+    """Reference backend. Slow but battle-tested on odd embedded fonts.
+
+    ``laparams=None`` skips pdfminer's layout analysis entirely. v2 rebuilds
+    words and rows from raw glyph boxes itself and never looks at the
+    LTTextLine/LTTextBox tree, so that analysis was pure waste — dropping it
+    is up to 3x faster and yields byte-identical glyphs.
+    """
+    from pdfminer.high_level import extract_pages
+
+    for layout in extract_pages(pdf_path, maxpages=max_pages, laparams=None):
+        chars = [RawChar(c.get_text(),
+                         (c.bbox[0], c.bbox[1], c.bbox[2], c.bbox[3]),
+                         getattr(c, "size", c.bbox[3] - c.bbox[1]),
+                         _pdfminer_baseline(c))
+                 for c in _iter_chars(layout)]
+        # LTPage exposes the page box as .bbox (there is no .mediabox); the
+        # mediabox is only carried for callers that want page dimensions.
+        # pdfminer never drops a glyph — it emits "(cid:N)" — so 0 undecodable.
+        yield chars, BBox(*layout.bbox), 0
+
+
+# What fitz returns for a glyph whose font gives no usable Unicode mapping.
+# pdfminer instead emits a "(cid:N)" token for the same glyph, and the unit
+# handling downstream (``(cid:2)`` -> Omega) is keyed on pdfminer's numbering.
+# fitz's glyph *index* is not that number — on an onsemi sheet fitz's gid 2 is
+# pdfminer's cid 3 — and the offset is font-dependent, so the two cannot be
+# translated in general. A page with any of these is therefore handed to
+# pdfminer rather than guessed at: dropping the glyph silently cost the Omega
+# in an rDS(ON) unit cell, leaving the value unscaled and wrong by 1000x
+# (0.0067 instead of 6.7 mOhm) — worse than a miss, because nothing looks
+# broken.
+_UNDECODABLE = "�"
+
+
+def _pages_fitz(pdf_path: str, max_pages: int
+                ) -> Iterator[Tuple[List[RawChar], BBox, int]]:
+    """PyMuPDF backend — 3-100x faster than pdfminer.
+
+    Two things matter for speed here:
+
+    * ``flags`` deliberately omits ``TEXT_PRESERVE_IMAGES``. Datasheets are
+      full of raster plots; decoding them cost 2.3 s of 2.4 s on a toshiba
+      sheet and yields nothing a text parser can use.
+    * fitz never walks the vector-graphics operators. pdfminer spent 17 s on a
+      single onsemi sheet parsing 640k PostScript tokens for 43k chart paths.
+
+    fitz uses a y-down coordinate system with the origin at the page's top
+    left; PDF user space (what pdfminer and the rest of v2 expect) is y-up
+    from the bottom left, so y is flipped here.
+
+    The vertical extent is *rebuilt* rather than taken from ``ch["bbox"]``.
+    fitz reports the full line box (ascender-to-descender, measured at
+    1.374 x font size on a TI sheet) whereas pdfminer reports a box exactly
+    1.000 x font size. The remaining box-relative thresholds — the 0.25 word
+    gap, the 1.5 phrase gap, the 2.5 pt minimum header font — were tuned
+    against pdfminer's proportions, so taller boxes would silently shift all
+    of them. Rebuilding with height == font size keeps one set of constants
+    valid for both backends.
+    """
+    import fitz
+
+    flags = fitz.TEXT_PRESERVE_WHITESPACE | fitz.TEXT_PRESERVE_LIGATURES
+
+    doc = fitz.open(pdf_path)
+    try:
+        for page_num, page in enumerate(doc):
+            if max_pages and page_num >= max_pages:
+                break
+            height = page.rect.height
+            chars: List[RawChar] = []
+            n_bad = 0
+            for block in page.get_text("rawdict", flags=flags).get("blocks", ()):
+                for line in block.get("lines", ()):
+                    for span in line.get("spans", ()):
+                        size = span.get("size", 0.0) or 0.0
+                        desc = span.get("descender", _DEFAULT_DESCENT)
+                        for ch in span.get("chars", ()):
+                            text = ch["c"]
+                            if text == _UNDECODABLE:
+                                n_bad += 1
+                            x1, _, x2, _ = ch["bbox"]
+                            baseline = height - ch["origin"][1]
+                            y1 = baseline + desc * size
+                            chars.append(RawChar(text, (x1, y1, x2, y1 + size),
+                                                 size, baseline))
+            yield chars, BBox(0.0, 0.0, page.rect.width, height), n_bad
+    finally:
+        doc.close()
+
+
+def _scrub_undecodable(rows: List[TextRow]) -> int:
+    """Remove undecodable glyphs from rows; return how many *cells* were lost.
+
+    A glyph fitz could not name is only a problem when it was the whole cell.
+    Inside a word it is cosmetic — "1.5�" still parses as a value — but a
+    cell consisting of nothing else disappears completely, and a vanished
+    unit cell turns into a wrongly-scaled number rather than a visible gap.
+
+    Counting lost *cells* rather than lost glyphs is what makes the pdfminer
+    fallback affordable: an onsemi sheet with 34 undecodable glyphs, all of
+    them inside words, needs no fallback at all, while the one whose Omega
+    formed its own unit cell does.
+    """
+    lost = 0
+    for row in rows:
+        if _UNDECODABLE not in row.text:
+            continue
+        kept: List[Word] = []
+        for w in row.words:
+            cleaned = w.text.replace(_UNDECODABLE, "")
+            if not cleaned:
+                lost += 1
+                continue
+            w.text = cleaned
+            kept.append(w)
+        if len(kept) != len(row.words):
+            row.words = kept
+        row.build_text()
+    return lost
+
+
 # ---------- public API ----------
 
 
 def extract_pages_with_rows(pdf_path: str,
                             max_pages: int = 0,
-                            char_margin: float = 2.0,
-                            line_overlap: float = 0.3) -> List[Page]:
+                            backend: Optional[str] = None) -> List[Page]:
     """Parse a PDF file and return a list of pages, each with TextRows.
 
     Pages with no extracted characters are returned with ``char_count=0`` so
     callers can detect scanned pages.
+
+    ``backend`` is "auto" (default), "fitz", or "pdfminer". "auto" uses fitz
+    and hands the file to pdfminer when fitz raised, found almost no text, or
+    could not decode some glyph. That last case is the important one: fitz
+    drops an undecodable glyph entirely, and a dropped unit is not a visible
+    failure, it is a wrong number. ~20% of the corpus trips it, so the
+    fallback is not free — but it keeps "auto" no worse than pdfminer
+    anywhere, which a speedup that loses values would not be.
     """
-    laparams = LAParams(line_overlap=line_overlap,
-                        char_margin=char_margin,
-                        line_margin=0.5,
-                        all_texts=True)
+    backend = backend or DEFAULT_BACKEND
+
+    if backend == "auto":
+        try:
+            pages = extract_pages_with_rows(pdf_path, max_pages, backend="fitz")
+        except Exception:  # noqa: BLE001 - fall back rather than fail the parse
+            return extract_pages_with_rows(pdf_path, max_pages, backend="pdfminer")
+
+        readable = max((p.char_count for p in pages), default=0) >= MIN_CHARS_READABLE
+        if readable and not any(p.n_undecoded for p in pages):
+            return pages
+
+        # Either fitz read nothing usable (possibly a genuine scan, which
+        # pdfminer will also fail) or it hit glyphs it cannot name. Prefer
+        # pdfminer, but only if it actually did better — so a scanned PDF
+        # still comes back empty and reports as needing OCR.
+        try:
+            alt = extract_pages_with_rows(pdf_path, max_pages, backend="pdfminer")
+        except Exception:  # noqa: BLE001
+            return pages
+        if not readable:
+            return alt if sum(p.char_count for p in alt) > sum(p.char_count for p in pages) else pages
+        return alt if sum(p.char_count for p in alt) else pages
+
+    reader = _pages_fitz if backend == "fitz" else _pages_pdfminer
 
     pages: List[Page] = []
-    iter_pages = extract_pages(pdf_path,
-                               maxpages=max_pages,
-                               laparams=laparams)
-
-    for page_num, layout in enumerate(iter_pages):
-        chars = list(_iter_chars(layout))
+    for page_num, (chars, mb, n_bad) in enumerate(reader(pdf_path, max_pages)):
         rows = _build_rows(chars)
-        mb = BBox(*layout.mediabox) if hasattr(layout, "mediabox") else BBox(0, 0, 612, 792)
+        lost = _scrub_undecodable(rows) if n_bad else 0
         pages.append(Page(page_num=page_num,
                           mediabox=mb,
                           rows=rows,
-                          char_count=len(chars)))
+                          char_count=len(chars),
+                          n_undecoded=lost))
     return pages
 
 
 def page_likely_needs_ocr(pages: List[Page],
-                          min_chars_per_page: int = 50) -> bool:
+                          min_chars_per_page: int = MIN_CHARS_READABLE) -> bool:
     """Heuristic: a PDF needs OCR when too few real chars are found.
 
     Returns True if every page has fewer than ``min_chars_per_page`` chars.

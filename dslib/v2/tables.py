@@ -18,14 +18,12 @@ from __future__ import annotations
 
 import math
 import re
-import warnings
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Dict, List, Optional, Tuple
 
-from dslib.field import Field
-from dslib.pdf.expr import get_field_detect_regex
 from dslib.pdf.parse import detect_fields
-from dslib.v2.chars import BBox, Page, TextRow, Word
+from dslib.v2.chars import Page, TextRow, Word
 
 # inlined from dslib/pdf/sheet/__init__.py so v2 doesn't drag in PIL etc.
 head_re = re.compile(
@@ -79,19 +77,6 @@ def _row_is_header(row: TextRow, m: re.Match,
     return True
 
 
-def _required_header_groups(m: re.Match) -> bool:
-    """A row only qualifies as a value header when it has at least two of
-    min/typ/max OR one of those plus the unit/cond columns.
-
-    Prevents matching loose "Parameter" / "Symbol" labels that happen to
-    appear in body copy.
-    """
-    g = m.groupdict()
-    mtm = sum(bool(g.get(k)) for k in ("min", "typ", "max", "values"))
-    other = sum(bool(g.get(k)) for k in ("sym", "param", "unit", "cond"))
-    return (mtm >= 2) or (mtm >= 1 and other >= 1)
-
-
 @dataclass
 class HeaderRow:
     row: TextRow
@@ -100,6 +85,10 @@ class HeaderRow:
 
 
 _VALUE_COLS = ("min", "typ", "max", "values", "unit")
+
+# How far apart (in multiples of the symbol row's height) a symbol row and its
+# value row may sit and still be treated as one table row.
+_PAIR_MAX_ROW_GAP = 2.5
 
 
 def _header_columns(row: TextRow, m: re.Match) -> Dict[str, Tuple[float, float]]:
@@ -216,7 +205,7 @@ def find_headers(page_rows: List[TextRow]) -> List[HeaderRow]:
         for cj in range(ci + 1, len(cands)):
             if used[cj]:
                 continue
-            j, r2, cols2 = cands[cj]
+            _, r2, cols2 = cands[cj]
             dy = anchor_row.bbox.y1 - r2.bbox.y2
             # max one line-height gap between the two header rows
             if dy > median_h * 1.6:
@@ -250,8 +239,6 @@ def find_headers(page_rows: List[TextRow]) -> List[HeaderRow]:
 
 
 _NUM_RE = re.compile(r"^[+\-]?\d+(?:\.\d+)?$")
-_NUM_NAN_RE = re.compile(r"^(?:[+\-]?\d+(?:\.\d+)?|[-+]+|nan|\.\.\.|---?|~|N/A)$",
-                         re.IGNORECASE)
 _PM_NUM_RE = re.compile(r"^\+\-?\d+(?:\.\d+)?$")
 
 
@@ -267,14 +254,24 @@ def _is_numeric_token(s: str) -> bool:
         s2 = s[1:-1]
         if _NUM_RE.match(s2):
             return True
-    return False
+    # A cell may carry its own unit instead of relying on a unit column
+    # ("150 V", "3700 pF"). Rejecting those dropped every row of a diotec
+    # sheet, which then extracted nothing at all.
+    return _num_with_unit(s)[0] is not None
 
 
-def _is_nan_token(s: str) -> bool:
-    s = s.strip().strip(",;")
-    if not s:
-        return True
-    return bool(re.match(r"^[-+]+$", s)) or s.lower() in {"nan", "n/a", "--", "---", "—", "~"}
+def _num_with_unit(s: str):
+    """Split "150 V" into (150.0, "V"); (None, None) when it is not that.
+
+    Delegates to ``dslib.field.get_value_with_unit`` so v2 accepts exactly the
+    units the rest of the project does, rather than a second private list that
+    could drift out of step.
+    """
+    from dslib.field import get_value_with_unit
+    v, u = get_value_with_unit(s)
+    if isinstance(v, (int, float)) and not math.isnan(v):
+        return float(v), u
+    return None, None
 
 
 # units recognized by dslib.pdf.expr.any_unit, but we keep a small whitelist
@@ -353,23 +350,144 @@ def _value_str_from_column(row: TextRow,
     return sj.strip()
 
 
+_UNIT_ONLY_RE = None
+
+_CID_GLYPHS = ((r"\(cid:2\)", "Ω"), (r"\(cid:4\)", "μ"))
+
+_SI_PREFIXES = frozenset("mkM")
+# Base unit per dimension, for rebuilding a cell that kept only its prefix.
+# Resistance only: it is the dimension where the lost glyph (Omega, from a
+# Symbol font) is common and where the reconstruction is safe — "m" rebuilds
+# to the mOhm dslib already assumes, so the number cannot move, only become
+# emittable. Charge and time have no such guarantee ("m" on a Qg row would
+# read as milli-coulomb, a unit no datasheet uses), so they are left alone
+# until there is evidence for them.
+_DIMENSION_BASE_UNIT = {"R": "Ω"}
+
+
+def _map_cid_glyphs(s: str) -> str:
+    """Resolve the ``(cid:N)`` tokens pdfminer emits for undecodable glyphs.
+
+    Must happen *before* a unit is validated, not after: the Omega in an
+    onsemi rDS(ON) unit cell arrives only as ``(cid:2)``, so validating first
+    would discard it as unreadable and leave the value unscaled.
+    """
+    for pat, repl in _CID_GLYPHS:
+        s = re.sub(pat, repl, s)
+    return s
+
+
+def _clean_unit(s: Optional[str], symbol: Optional[str] = None) -> Optional[str]:
+    """Reduce a unit cell to a bare unit token, or None.
+
+    The unit column's x-range is derived from a header label's centre, so it
+    routinely catches neighbouring cells: real captures include
+    ``"2.7 2.7 3.1 m V =10V,I"`` for an Rds_on row and ``"1.0 1.5 W -"`` for
+    Rg. Passing those through is not a cosmetic wart — ``dslib.field.Field``
+    converts resistance to the canonical mOhm only when it *recognises* the
+    unit, so an unrecognised one silently skips conversion and leaves 0.00685
+    where the datasheet says 6.85 mOhm. On an independent 120-part sample that
+    accounted for 48 of 92 disagreements, all of them factor-1000, and it is
+    invisible to any metric that normalises units before comparing.
+
+    Returning None for an unreadable cell is the safe answer: ``Field`` then
+    has no unit to trust rather than a bogus one to ignore.
+    """
+    global _UNIT_ONLY_RE
+    if _UNIT_ONLY_RE is None:
+        from dslib.pdf.expr import any_unit
+        _UNIT_ONLY_RE = re.compile(r"^(%s)$" % any_unit)
+
+    if not s:
+        return None
+    s = _map_cid_glyphs(s).strip().strip(",;:()")
+    if not s:
+        return None
+    dim = _symbol_dimension(symbol) if symbol else None
+
+    # A unit cell holding nothing but an SI prefix means the base glyph was
+    # lost in decoding: a renesas rDS(on) row reads "- 6.9 8.9 m", i.e. "mΩ"
+    # minus its Omega. A bare prefix is not a unit in any dimension, and the
+    # symbol pins down the base, so this reads the cell rather than guessing
+    # at it. (For resistance it does not even change the number — mOhm is what
+    # dslib assumes anyway — it just lets the value be emitted at all instead
+    # of being dropped as unitless.)
+    if dim is not None and s in _SI_PREFIXES and dim in _DIMENSION_BASE_UNIT:
+        return s + _DIMENSION_BASE_UNIT[dim]
+
+    unit = None
+    if _UNIT_ONLY_RE.match(s):
+        unit = s
+    else:
+        # a cell like "nC 1)" — keep it only if exactly one token is a unit
+        hits = [t for t in re.split(r"[\s/]+", s) if _UNIT_ONLY_RE.match(t)]
+        if len(hits) == 1:
+            unit = hits[0]
+
+    if unit is None or symbol is None:
+        return unit
+
+    # The unit must belong to the symbol's dimension. Salvaging a lone token
+    # out of a mis-captured cell otherwise yields nonsense like unit="V" on an
+    # Rds_on row (from "2.7 2.7 3.1 m V =10V,I"), which reads as a real unit
+    # downstream and is worse than admitting we could not read it.
+    dim = _symbol_dimension(symbol)
+    if dim is not None and not _dimension_unit_re(dim).match(unit):
+        return None
+    return unit
+
+
+# Symbol -> key in dslib.pdf.expr.DIMENSIONS. A unit from another dimension is
+# always a mis-capture, and accepting one rescales the value silently.
+_SYMBOL_DIMENSION = {
+    "Rds_on": "R", "Rg": "R", "Rds_on_10v": "R",
+    "Qg": "Q", "Qgs": "Q", "Qgd": "Q", "Qg_th": "Q", "Qgs2": "Q", "Qsw": "Q",
+    "Qoss": "Q", "Qrr": "Q", "Qg_sync": "Q", "Qsync": "Q",
+    "tRise": "t", "tFall": "t", "tDon": "t", "tDoff": "t", "trr": "t",
+    "Coss": "C", "Ciss": "C", "Crss": "C", "Coss_TR": "C", "Coss_ER": "C",
+    "Vds": "V", "Vgs_th": "V", "Vpl": "V", "Vsd": "V",
+    "Id": "I", "Idp": "I", "ID_25": "I",
+    "gfs": "g",
+}
+
+
+def _symbol_dimension(symbol: str) -> Optional[str]:
+    return _SYMBOL_DIMENSION.get(symbol)
+
+
+@lru_cache(maxsize=None)
+def _dimension_unit_re(dim: str):
+    from dslib.pdf.expr import DIMENSIONS
+    return re.compile(r"^(%s)$" % DIMENSIONS[dim].unit_regex)
+
+
 def _unit_from_column(row: TextRow,
                       cols: Dict[str, Tuple[float, float]],
-                      next_row: Optional[TextRow] = None) -> Optional[str]:
+                      symbol: Optional[str] = None) -> Optional[str]:
     """Look up the unit string in the unit column (if a header was defined)."""
     if "unit" not in cols:
         # try to infer from the right-most word of the row
         if row.words:
             tail = row.words[-1].text.strip(",;")
             if _looks_like_unit(tail) or tail in {"Ω", "nC", "pF", "ns"}:
-                return tail
+                return _clean_unit(tail, symbol)
         return None
 
     x1, x2 = cols["unit"]
     cand = [w for w in row.words if x1 <= w.bbox.cx <= x2]
-    if not cand:
-        return None
-    return _join_value_words(cand).strip()
+    unit = _clean_unit(_join_value_words(cand).strip(), symbol) if cand else None
+    if unit is not None:
+        return unit
+
+    # The column is derived from a header label's centre, so it misses the
+    # cell on plenty of rows. Before giving up — and an absent unit is not
+    # neutral, it makes Field treat a resistance as already-canonical mOhm —
+    # look for a unit of the right dimension among the row's trailing words.
+    for w in reversed(row.words):
+        got = _clean_unit(w.text, symbol)
+        if got is not None:
+            return got
+    return None
 
 
 def _cond_from_column(row: TextRow,
@@ -433,28 +551,6 @@ def _values_for_row(row: TextRow,
         if v is not None:
             values[k] = v
     return values
-
-
-def _strip_symbol_words(row: TextRow,
-                        m: re.Match,
-                        cols: Dict[str, Tuple[float, float]]) -> List[Word]:
-    """Words *outside* the symbol/param/cond columns (left side of table).
-
-    Helpful for spotting a unit/condition that's been written together with
-    the parameter description.
-    """
-    excluded = []
-    for k in ("sym", "param", "cond"):
-        if k in cols:
-            excluded.append(cols[k])
-
-    out: List[Word] = []
-    for w in row.words:
-        cx = w.bbox.cx
-        if any(x1 <= cx <= x2 for (x1, x2) in excluded):
-            continue
-        out.append(w)
-    return out
 
 
 def _detect_symbol_on_row(mfr: str,
@@ -527,6 +623,74 @@ def _detect_symbol_on_row(mfr: str,
     return None
 
 
+def _headers_that_explain_numbers(headers: List[HeaderRow],
+                                  rows: List[TextRow]) -> List[HeaderRow]:
+    """Drop headers whose numeric columns sit above no numbers at all.
+
+    ``head_re`` matches on words, so a section title reads as a header: TI's
+    "absolute maximum ratings over operating free-air temperature" yields
+    max="maximum" and values="ratings", and the columns derived from it are
+    nonsense (typ="VDS", max="voltage"). ``head_stop`` exists to catch exactly
+    this, but it matches case-sensitively and that sheet is lowercase — a
+    guard that is right in intent and silently never fires.
+
+    Validating the *derived columns* instead of blacklisting words is monotone
+    and indifferent to case, language and vendor: a real header explains
+    numbers, so at least one row beneath it must parse as numeric in one of
+    its numeric columns. A bogus header is not merely useless — it truncates
+    the row range of the real header above it.
+    """
+    keep: List[HeaderRow] = []
+    for hi in range(len(headers)):
+        for body_row in _row_chunks_below_header(headers, rows, hi):
+            values = _values_for_row(body_row, headers[hi].cols)
+            if any(_is_numeric_token(v) for v in values.values()):
+                keep.append(headers[hi])
+                break
+    return keep
+
+
+def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
+    """Value rows belonging to a symbol row that carries no numbers.
+
+    Where one parameter is measured under several conditions, the label and
+    symbol are often set once, vertically centred against the block of
+    condition rows::
+
+        Static Drain-Source On-Resistance  RDS(ON)  -  3.1  4.0  mOhm  VGS = 10V
+                                                    -  4.4  5.7  mOhm  VGS = 6V
+
+    The label lands on its own row with no numbers while the numbers land on
+    rows with no symbol, and taking either alone yields nothing.
+
+    Both neighbours are returned, above first, because which side holds the
+    *primary* condition varies by vendor — a diodes sheet centres the label
+    below its first condition row, an mcc sheet puts it above. Returning both
+    in page order lets the normal merge pick the topmost, which is the
+    condition datasheets lead with; guessing a side got Rds_on wrong on 15
+    parts by silently reading the secondary condition.
+
+    Only rows that name no symbol of their own are eligible — a neighbour with
+    its own symbol owns its values, and stealing them would attach real
+    numbers to the wrong parameter, which is worse than the miss this repairs.
+    Adjacency in the row list is not enough either: rows are dropped along the
+    way, so neighbours in the list can be far apart on the page.
+    """
+    row = scan[i]["row"]
+    reach = max(row.bbox.height, 1.0) * _PAIR_MAX_ROW_GAP
+
+    out: List[TextRow] = []
+    for j in (i - 1, i + 1):
+        if not (0 <= j < len(scan)):
+            continue
+        other = scan[j]
+        if not other["has_num"] or other["sym"]:
+            continue
+        if abs(other["row"].bbox.cy - row.bbox.cy) <= reach:
+            out.append(other["row"])
+    return out
+
+
 def parse_rows_for_page(mfr: str,
                         page: Page,
                         headers: List[HeaderRow]) -> List[ExtractedRow]:
@@ -536,25 +700,50 @@ def parse_rows_for_page(mfr: str,
         return out
 
     rows = page.rows
+    headers = _headers_that_explain_numbers(headers, rows)
 
     for hi, header in enumerate(headers):
         body = _row_chunks_below_header(headers, rows, hi)
+
+        # Describe every body row once: what symbol it names, what numbers it
+        # holds. Both halves are needed up front because they are frequently
+        # on *different* rows (see _pair_split_row).
+        scan: List[dict] = []
         for body_row in body:
-            text = body_row.text
-            if not text:
-                continue
-            sym = _detect_symbol_on_row(mfr, body_row, header.cols)
-            if not sym:
+            if not body_row.text:
                 continue
             values = _values_for_row(body_row, header.cols)
-            unit = _unit_from_column(body_row, header.cols)
-            cond = _cond_from_column(body_row, header.cols)
-            if not any(_is_numeric_token(v) for v in values.values()):
+            scan.append(dict(
+                row=body_row,
+                sym=_detect_symbol_on_row(mfr, body_row, header.cols),
+                values=values,
+                has_num=any(_is_numeric_token(v) for v in values.values()),
+            ))
+
+        for i, item in enumerate(scan):
+            if not item["sym"]:
                 continue
-            out.append(ExtractedRow(symbol=sym.symbol,
-                                    row=body_row,
-                                    values=values,
-                                    unit=unit,
-                                    cond=cond,
-                                    page_num=page.page_num))
+            if item["has_num"]:
+                value_rows = [item["row"]]
+            else:
+                value_rows = _pair_split_rows(scan, i)
+            for value_row in value_rows:
+                values = (item["values"] if value_row is item["row"]
+                          else _values_for_row(value_row, header.cols))
+                symbol = item["sym"].symbol
+                unit = _unit_from_column(value_row, header.cols, symbol)
+                if unit is None and value_row is not item["row"]:
+                    # On a split row the unit is printed once, against the
+                    # label — vishay/SiSS126DN puts "Ohm" there while the
+                    # condition row carries only numbers. Reading only the
+                    # value row left the unit unknown, and an unknown
+                    # resistance unit is not a gap: Field then treats 0.00685
+                    # as already-canonical mOhm instead of 6.85.
+                    unit = _unit_from_column(item["row"], header.cols, symbol)
+                out.append(ExtractedRow(symbol=symbol,
+                                        row=value_row,
+                                        values=values,
+                                        unit=unit,
+                                        cond=_cond_from_column(value_row, header.cols),
+                                        page_num=page.page_num))
     return out
