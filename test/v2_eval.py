@@ -182,6 +182,71 @@ def compare(v2_ds, ref_ds, rtol: float, symbols: Optional[set] = None,
     return counts, details
 
 
+# A curated value that differs from the printed one by one of these is a lost
+# or added SI prefix, not a misread digit.
+_PREFIX_RATIOS = (1e-9, 1e-6, 1e-3, 1e3, 1e6, 1e9)
+
+
+def suspect_truth(v2_ds, ref_ds, truth_ds, rtol, symbols=None):
+    """Keys where the hand-curated truth is the OUTLIER, not the extractor.
+
+    Twice now a key that no method could reproduce turned out to be a bad
+    reference rather than a bad parser: dslib/manual_fields.py records
+    vishay/SUM70042E-GE3 Qrr as 126/189 nC while the sheet prints "126 189 uC",
+    and a ti/TPS Vds.typ=3.0 went the same way. Scored blind, those punish the
+    extractor for being right, and they do it permanently because a curated
+    file is exactly what nobody re-checks.
+
+    The obvious signal — "v2 and the shipped DB agree, only truth differs" —
+    DOES NOT WORK, and finding out why is the useful part. dslib/manual_fields
+    is priority 1 inside parse_datasheet, and the DB is built by that same
+    pipeline, so an overridden value propagates INTO the DB. Checked on the
+    case above: manual_fields says 126/189 nC and the DB says 126/189 nC,
+    identically. The DB is therefore NOT an independent witness for any key
+    manual_fields covers, and a corroboration rule can never fire for exactly
+    the class it was written to catch. Anyone reading DB-vs-truth agreement as
+    confirmation is reading a tautology.
+
+    What remains usable without a second source is the SHAPE of the
+    disagreement. A curated number that differs from the printed one by a round
+    power of ten is a lost or added SI prefix, not a misread digit -- uC
+    recorded as nC gives exactly 1000. So the queue flags truth-vs-v2
+    disagreements at a prefix ratio and leaves a human to open the page. The DB
+    value rides along as context, labelled, never as evidence.
+
+    This only ever produces a REVIEW LIST. Nothing is reclassified, excluded or
+    scored differently: a harness that quietly forgave its own disagreements
+    could be made to agree with anything, and the curated file must be edited
+    by a human who has looked at the page.
+    """
+    out = []
+    syms = set(truth_ds.keys())
+    if symbols:
+        syms &= symbols
+    for sym in sorted(syms):
+        tf = truth_ds.fields_filled.get(sym)
+        gf = v2_ds.fields_filled.get(sym)
+        rf = ref_ds.fields_filled.get(sym) if ref_ds is not None else None
+        if tf is None or gf is None:
+            continue
+        for stat in STATS:
+            tv, gv = getattr(tf, stat), getattr(gf, stat)
+            if math.isnan(tv) or math.isnan(gv) or tv == 0:
+                continue
+            if _rel_eq(tv, gv, rtol):
+                continue          # truth and v2 agree — nothing to review
+            ratio = gv / tv
+            if not any(abs(ratio / r - 1.0) <= 0.02 for r in _PREFIX_RATIOS):
+                continue          # not a prefix-shaped difference
+            rv = getattr(rf, stat) if rf is not None else math.nan
+            out.append(dict(
+                symbol=sym, stat=stat, truth=tv, v2=gv,
+                db=(None if math.isnan(rv) else rv),
+                db_is_independent=not _rel_eq(rv, tv, rtol) if not math.isnan(rv) else None,
+                ratio=ratio))
+    return out
+
+
 def _same_value(a, b) -> bool:
     """Two Fields carrying the same numbers (nan == nan for this purpose)."""
     for stat in STATS:
@@ -234,17 +299,23 @@ def selection_audit(v2_ds, symbols=None):
                                     value=f.typ_or_max_or_min))
                 continue
             got = v2_ds._get_by_cond(sym, cond)
-            # Equivalence, not identity. Datasheets repeat their parameter
-            # table (nxp prints it on p1 and again on p5), so the same row is
-            # extracted twice into two equal Field objects. Asking for that
-            # condition returns whichever came first, and scoring the other as
-            # unaddressable counted 22 of 36 "failures" that were nothing of
-            # the kind — a metric that reports a duplicate as a defect will
-            # send someone to fix a non-problem.
-            same = got is f or (
-                got is not None
-                and got.cond == f.cond
-                and _same_value(got, f))
+            # Success is "the consumer gets this candidate's VALUE", not "gets
+            # this exact object". Two reasons, both measured rather than
+            # assumed. Datasheets repeat their parameter table (nxp prints it
+            # on p1 and again on p5), so the same row is extracted twice into
+            # two equal Fields — 22 of an early 36 "failures" were that. And a
+            # candidate can be beaten by a sibling holding the SAME number
+            # under a richer condition (epc_space/EPC7018GSH: asking
+            # {Id:40, Vgs:5} returns the row that also states Tc=25, value 5.2
+            # either way). Nothing is lost for the caller in either case.
+            #
+            # This was relaxed AFTER a run flagged those two as a regression,
+            # which deserves saying out loud. It is not a mute button: the
+            # criterion is still whether a wrong NUMBER comes back, and the two
+            # genuine failures in the same run (st/ST8L65N050DM9 trr, 315 asked
+            # for vs 157 returned) are still counted. What was dropped is a
+            # proxy — cond equality — that never spoke to value correctness.
+            same = got is f or (got is not None and _same_value(got, f))
             if same:
                 counts['selectable'] += 1
             else:
@@ -364,6 +435,9 @@ def run(args) -> dict:
                 c, d = compare(ds, tr, args.rtol, symbols)
                 rec['truth'] = dict(c)
                 rec['truth_details'] = d[:args.max_details]
+                s = suspect_truth(ds, ref, tr, args.rtol, symbols)
+                if s:
+                    rec['suspect_truth'] = s[:args.max_details]
 
             parts_out.append(rec)
 
@@ -407,17 +481,39 @@ def _fmt_acc(a: Optional[float]) -> str:
 
 
 def _sel_rate(c: Dict[str, int]) -> Optional[float]:
-    """Share of multi-candidate rows reachable by their own condition.
+    """Of the candidates that STATE a condition, the share reachable by it.
 
-    ``no_cond`` is in the denominator on purpose — a candidate with no
-    condition is unaddressable, which is the failure, not an abstention.
-    Returns None when no symbol had competing candidates at all, so "nothing to
-    disambiguate" cannot read as a perfect score.
+    ``no_cond`` is deliberately NOT in this denominator, and that is a
+    correction. Audited over 120 no_cond candidates by going back to the source
+    row: 0 were conditions v2 failed to read, 58 (48%) were rows where the
+    sheet states none at all — "VDS drain-source voltage - - 150 V" is an
+    absolute-maximum rating with nothing to extract — and 62 had one on a
+    neighbouring row, of which only some are legitimately inheritable (a shared
+    gate-charge block header) while others belong to a different parameter
+    entirely. Charging all 120 to the parser made the rate say more about how
+    many abs-max rows a sheet prints than about extraction quality.
+
+    Returns None when nothing stated a condition, so "nothing to disambiguate"
+    cannot read as a perfect score.
     """
-    n = c.get('selectable', 0) + c.get('unselectable', 0) + c.get('no_cond', 0)
+    n = c.get('selectable', 0) + c.get('unselectable', 0)
     if n == 0:
         return None
     return c.get('selectable', 0) / n
+
+
+def _cond_coverage(c: Dict[str, int]) -> Optional[float]:
+    """Share of multi-candidate rows that state a condition at all.
+
+    Reported ALONGSIDE the rate rather than folded into it: moving a candidate
+    out of no_cond and into unselectable would otherwise look like an
+    improvement in one number while the other hid it.
+    """
+    n = (c.get('selectable', 0) + c.get('unselectable', 0)
+         + c.get('no_cond', 0))
+    if n == 0:
+        return None
+    return (c.get('selectable', 0) + c.get('unselectable', 0)) / n
 
 
 def report(res: dict, verbose: bool = False) -> None:
@@ -434,11 +530,13 @@ def report(res: dict, verbose: bool = False) -> None:
     sel = _sum(parts, 'sel')
     if sel:
         print('-' * 78)
-        print('select  selectable=%d unselectable=%d no_cond=%d  rate=%s'
+        print('select  selectable=%d unselectable=%d no_cond=%d'
               % (sel.get('selectable', 0), sel.get('unselectable', 0),
-                 sel.get('no_cond', 0), _fmt_acc(_sel_rate(sel))))
-        print('        (multi-candidate rows reachable by their own cond;'
-              ' reference-free)')
+                 sel.get('no_cond', 0)))
+        print('        rate=%s of those that state a cond; coverage=%s state one'
+              % (_fmt_acc(_sel_rate(sel)), _fmt_acc(_cond_coverage(sel))))
+        print('        (reference-free; ~48%% of no_cond is rows the sheet'
+              ' gives no condition)')
 
     for tier in ('truth', 'db'):
         tot = _sum(parts, tier)
@@ -470,6 +568,22 @@ def report(res: dict, verbose: bool = False) -> None:
             print('    %-9s dis=%-4d miss=%-4d only=%-4d'
                   % (sym, kinds.get('disagree', 0), kinds.get('v2_miss', 0),
                      kinds.get('v2_only', 0)))
+
+    susp = [(p['mfr'], p['mpn'], d)
+            for p in parts for d in (p.get('suspect_truth') or [])]
+    if susp:
+        print('-' * 78)
+        print('SUSPECT TRUTH: %d key(s) where manual_fields differs from the'
+              ' printed value by an SI prefix' % len(susp))
+        print('  (review queue for a human — nothing is rescored. db shown as'
+              ' context only: it inherits manual_fields overrides, so it is'
+              ' NOT an independent witness)')
+        for mfr, mpn, d in susp[:12]:
+            indep = d.get('db_is_independent')
+            tag = '' if indep is None else ('  db-indep' if indep else '  db=echo-of-truth')
+            print('   %s/%s %s.%s truth=%s v2=%s db=%s ratio=%.4g%s'
+                  % (mfr, mpn, d['symbol'], d['stat'], d['truth'], d['v2'],
+                     d['db'], d['ratio'], tag))
 
     if uneval:
         print('-' * 78)
@@ -527,6 +641,9 @@ def compare_runs(a_path: str, b_path: str) -> None:
                   % ('select', k, va, vb, vb - va, flag))
         print('%-6s %-12s %s -> %s'
               % ('select', 'rate', _fmt_acc(_sel_rate(sa)), _fmt_acc(_sel_rate(sb))))
+        print('%-6s %-12s %s -> %s'
+              % ('select', 'coverage', _fmt_acc(_cond_coverage(sa)),
+                 _fmt_acc(_cond_coverage(sb))))
 
     for tier in ('truth', 'db'):
         ta, tb = _sum(a['parts'], tier), _sum(b['parts'], tier)

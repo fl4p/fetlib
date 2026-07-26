@@ -182,6 +182,7 @@ _COND_ALIASES = {
     "id": "Id", "is": "Is", "ids": "Id", "if": "IF", "isd": "Isd",
     "tj": "Tj", "tc": "Tc", "ta": "Ta", "tcase": "Tc", "tamb": "Ta",
     "rg": "Rg", "vbr": "Vbr", "didt": "didt", "dvdt": "dvdt",
+    "difdt": "didt", "dvfdt": "dvdt", "vdd": "VDD",
     "f": "f", "freq": "f",
 }
 
@@ -207,7 +208,12 @@ def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
     out = {}
     for k, v in cond.items():
         if isinstance(k, str):
-            flat = re.sub(r"[\s_.\-]+", "", k).lower()
+            # "/" is a separator here too. Without it "di/dt" flattened to
+            # itself, missed the alias, and then met two different fates: the
+            # column path kept it verbatim (inert but present) while the phrase
+            # path's canonical-name filter DROPPED it. One physical condition,
+            # two outcomes depending on which code path happened to run.
+            flat = re.sub(r"[\s_./\-]+", "", k).lower()
             k = _COND_ALIASES.get(flat, k)
         # First spelling wins: a row repeating a condition under two spellings
         # is stating it once.
@@ -363,8 +369,21 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
                 # value columns, so it is exposed to the identical
                 # last-number-wins corruption as the phrase path.
                 cond_parsed = _parse_cond_text(ex.cond, parse_cond_str) or None
-            if not cond_parsed:
-                cond_parsed = _cond_from_phrases(ex.row, parse_cond_str) or None
+            # Fill gaps rather than only stepping in when the column produced
+            # nothing at all. "The column yielded something" is weak evidence
+            # it yielded the RIGHT something — the whole reason this fallback
+            # exists is that the column lands in the wrong place — so a cell
+            # that catches a stray "TJ=125C" but misses the "VGS=10V" beside it
+            # would otherwise lock in a half dict. A partial cond is not a
+            # partial credit either: dslib/field.py charges a full error for
+            # every requested key the candidate does not state, so the missing
+            # Vgs costs exactly as much as having no condition at all.
+            #
+            # The COLUMN still wins per key: it has positional evidence behind
+            # it, the phrase path only has proximity.
+            phrase = _cond_from_phrases(ex.row, parse_cond_str)
+            if phrase:
+                cond_parsed = dict(phrase, **(cond_parsed or {})) or None
         except Exception:
             cond_parsed = None
 
