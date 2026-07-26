@@ -20,6 +20,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import re
 import warnings
 from typing import Optional
 
@@ -107,13 +108,78 @@ _UNIT_REQUIRED = frozenset({"Rds_on", "Rg", "Rds_on_10v"})
 # *is* readable, so gating them on unit-readability suppressed an arbitrary
 # subset of one bug via an unrelated mechanism. Unit provenance and condition
 # selection are independent concerns and are better fixed independently.
-_MIN_PLAUSIBLE_MILLIOHM = 0.5
+#
+# The floor is PER SYMBOL, because "plausible" is a property of the quantity
+# and not of the dimension. Rds_on and Rg are both resistances and their
+# physical ranges do not overlap at the bottom: a gate resistance is a real
+# resistor in series with the gate, 0.4-20 Ohm on real parts, so 1.3 "mOhm" is
+# not a low value, it is an Ohm-denominated number that lost its unit.
+# infineon/BSZ070N08LS5ATMA1 prints "Gate resistance RG - 1.3 2 -" with the
+# Ohm living outside the row, and a single 0.5 floor believed it and emitted
+# 1.3 against a true 1300 mOhm — the exact 1000x this rule exists to stop,
+# reintroduced by tuning the threshold for the other symbol.
+_MIN_PLAUSIBLE_MILLIOHM = {
+    "Rds_on": 0.5,     # best trench parts bottom out near 0.5-1 mOhm
+    "Rds_on_10v": 0.5,
+    "Rg": 50.0,        # 0.05 Ohm, an order of magnitude below any real Rg
+}
 
 
-def _plausible_as_milliohm(*values: float) -> bool:
-    """True if a unitless resistance can be believed as already-mOhm."""
+def _plausible_as_milliohm(symbol: str, *values: float) -> bool:
+    """True if a unitless resistance can be believed as already-mOhm.
+
+    An unknown symbol and an all-nan value both answer False — refuse. This is
+    a trust gate, so "cannot tell" has to mean "do not emit", never "fine".
+    Falling back to some other symbol's floor is the specific mistake that put
+    a 1000x Rg through, so a symbol without a measured floor gets none.
+    """
+    floor = _MIN_PLAUSIBLE_MILLIOHM.get(symbol)
+    if floor is None:
+        return False
     seen = [v for v in values if not math.isnan(v)]
-    return bool(seen) and min(seen) >= _MIN_PLAUSIBLE_MILLIOHM
+    return bool(seen) and min(seen) >= floor
+
+
+# The condition names the consumers actually query by. dslib/field.py:458 asks
+# for Rds_on with cond=dict(Vgs=...) and :502 for Qg the same way; the scorer at
+# :572 iterates the REQUESTED keys and reads each out of the candidate with
+# d.get(k, 0). So a candidate spelled "V GS" contributes 0 for Vgs, its error
+# term blows up, and the correct row LOSES to whatever was merged first —
+# condition-aware selection is silently inoperative rather than merely
+# imprecise, which is why the spelling has to be normalised here and not left
+# for the consumer to be liberal about.
+_COND_ALIASES = {
+    "vgs": "Vgs", "vds": "Vds", "vsd": "Vsd", "vg": "Vgs", "vd": "Vds",
+    "id": "Id", "is": "Is", "ids": "Id", "if": "IF", "isd": "Isd",
+    "tj": "Tj", "tc": "Tc", "ta": "Ta", "tcase": "Tc", "tamb": "Ta",
+    "rg": "Rg", "vbr": "Vbr", "didt": "didt", "dvdt": "dvdt",
+    "f": "f", "freq": "f",
+}
+
+
+def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
+    """Map condition keys onto the canonical names consumers select by.
+
+    ``parse_cond_str`` only recognises an exact case-insensitive 'vgs'/'id'/
+    'vds', so a subscript typeset as its own run — "V GS=10V" on
+    infineon/IPW65R040CM8 — survives as the literal key "V GS". Separators are
+    dropped before lookup so "V GS", "V_GS" and "VGS" all land on Vgs.
+
+    An unrecognised key is kept verbatim rather than guessed at. A bare "V"
+    could be Vgs or Vds and inventing one would hand the selector a confident
+    wrong condition, which is worse than the inert unknown key it gets now.
+    """
+    if not cond:
+        return cond
+    out = {}
+    for k, v in cond.items():
+        if isinstance(k, str):
+            flat = re.sub(r"[\s_.\-]+", "", k).lower()
+            k = _COND_ALIASES.get(flat, k)
+        # First spelling wins: a row repeating a condition under two spellings
+        # is stating it once.
+        out.setdefault(k, v)
+    return out
 
 
 def _make_field(ex: ExtractedRow) -> Optional[Field]:
@@ -175,12 +241,12 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
         # import lazily on demand
         try:
             from dslib.pdf.sheet import parse_cond_str  # noqa
-            cond_parsed = parse_cond_str(cond_str)
+            cond_parsed = _canonical_cond(parse_cond_str(cond_str))
         except Exception:
             cond_parsed = None
 
     if (unit is None and ex.symbol in _UNIT_REQUIRED
-            and not _plausible_as_milliohm(mn, typ, mx)):
+            and not _plausible_as_milliohm(ex.symbol, mn, typ, mx)):
         # Resistance is printed in either Ohm or mOhm and dslib canonicalises
         # to mOhm only when it can see which. Without a unit the value cannot
         # be placed on the scale, and emitting it anyway is not a neutral

@@ -350,6 +350,16 @@ def _cluster_lines(line_chars: List[RawChar]) -> List[List[RawChar]]:
 
     The cluster's reference is the baseline of the *largest* glyph seen, so a
     superscript that happens to be visited first cannot pin the row to itself.
+
+    A glyph joins the *nearest* candidate row, not the first one that happens to
+    be within tolerance. Taking the first is not a harmless tie-break, because
+    the scan runs top-down and the script tolerance is wide: on
+    onsemi/NTMFWS1D5N08XT1G the "DS(on)"/"GS"/"D" subscripts sit 1.63 pt below
+    their own row but 3.49 pt below a lone stray glyph above it — inside the
+    3.60 pt script tolerance — so they were captured by the stray. The merged
+    cluster then held 9 visible glyphs, which is too many for stray absorption
+    to undo, and the row lost every subscript it needed: "RDS(on)" read as "R"
+    and the conditions as "V = 10 V, I = 50" instead of VGS and ID.
     """
     if not line_chars:
         return []
@@ -360,22 +370,83 @@ def _cluster_lines(line_chars: List[RawChar]) -> List[List[RawChar]]:
 
     clusters: List[List[RawChar]] = []
     refs: List[Tuple[float, float]] = []  # (baseline, size of the largest glyph)
+    spans: List[Tuple[float, float]] = []  # (x1, x2) covered by each cluster
+
+    # Widest tolerance any pairing on this page can produce. Since refs are
+    # built in descending-baseline order, scanning them backwards visits the
+    # closest rows first, and once a ref is farther than this bound no earlier
+    # ref can come back into range — so the scan stops there instead of
+    # walking every row on the page for every glyph.
+    #
+    # The doubling is not slack for its own sake. A ref moves *down* when a
+    # larger glyph joins its cluster, by at most one tolerance, so refs can end
+    # up locally out of descending order by that much and a nearer row can hide
+    # behind a farther one. Stopping at a single tolerance would then drop the
+    # glyph into a row of its own — a silently split line, which is the failure
+    # this function exists to prevent — so the bound is set where no reordering
+    # can reach.
+    max_size = max((c.size for c in line_chars), default=0.0)
 
     for ch in line_chars:
         size = ch.size if ch.size > 0 else max(ch.bbox[3] - ch.bbox[1], 0.1)
-        assigned = False
-        for i, (cb, csize) in enumerate(refs):
+        cutoff = 2 * _SCRIPT_TOL * max(size, max_size)
+        best_d = None
+        best_i = -1
+        for i in range(len(refs) - 1, -1, -1):
+            cb, csize = refs[i]
+            d = abs(ch.baseline - cb)
+            if d > cutoff:
+                break
+            # Deliberately one-directional: only an *incoming* glyph smaller
+            # than the row earns the wide tolerance. Making it symmetric — so a
+            # large glyph arriving at a row seeded by a small one also got it —
+            # fixes no observed case and breaks a real one: on
+            # infineon/BSZ070N08LS5ATMA1 the Ohm of the Rg unit cell is a lone
+            # Symbol-font "W" sitting 0.72 pt from its row, and symmetry let
+            # the 2.15 pt footnote marker "1)" 0.75 pt above capture it first.
+            # The pair is then a 3-glyph cluster, one over the stray-absorption
+            # limit, so the Ohm never reaches the row and Rg reads 1.3 instead
+            # of 1300 mOhm.
             is_script = size < csize * _SCRIPT_MAX_SIZE_RATIO
             tol = (_SCRIPT_TOL if is_script else _SAME_LINE_TOL) * max(size, csize)
-            if abs(ch.baseline - cb) <= tol:
-                clusters[i].append(ch)
-                if size > csize:
-                    refs[i] = (ch.baseline, size)
-                assigned = True
-                break
-        if not assigned:
+            if d > tol:
+                continue
+            # A sub/superscript belongs to the text it is attached to, so it
+            # must fall inside that row's horizontal span. Distance alone gets
+            # this wrong whenever a row wraps: on onsemi/NVMFWS2D1N08XT1G the
+            # "d(OFF)" of t_d(OFF) sits 1.63 below its own row but only 0.21
+            # from the condition line "ID = 43 A, RG = 2.5" printed beside it,
+            # so the nearest row is the wrong one — and the right one is
+            # obvious horizontally, since the condition column starts well to
+            # its right. Only applied when the *incoming* glyph is the small
+            # one; a row seeded by a superscript and joined later by its own
+            # body text is the same merge seen from the other side, and that
+            # cluster is still a lone glyph with no meaningful span yet.
+            if is_script and size < csize:
+                sx1, sx2 = spans[i]
+                pad = size
+                if not (sx1 - pad <= ch.bbox[0] <= sx2 + pad):
+                    continue
+            if best_d is None or d < best_d:
+                best_d = d
+                best_i = i
+        if best_d is None:
             clusters.append([ch])
             refs.append((ch.baseline, size))
+            spans.append((ch.bbox[0], ch.bbox[2]))
+        else:
+            clusters[best_i].append(ch)
+            # Whitespace never defines a row's typographic size. A space is
+            # frequently emitted at a nominal size unrelated to the text around
+            # it: diodes/DMT15H017LPS-13 has a lone 12 pt space beside an 8 pt
+            # table row, and letting it set the reference made the row's own
+            # body text register as a *subscript* of it (8.04 < 12 * 0.9),
+            # which then failed the span test below and split the typ value
+            # "0.8" off its row entirely.
+            if ch.text.strip() and size > refs[best_i][1]:
+                refs[best_i] = (ch.baseline, size)
+            sx1, sx2 = spans[best_i]
+            spans[best_i] = (min(sx1, ch.bbox[0]), max(sx2, ch.bbox[2]))
 
     return _absorb_stray_glyphs(clusters, refs)
 

@@ -400,7 +400,12 @@ def _clean_unit(s: Optional[str], symbol: Optional[str] = None) -> Optional[str]
 
     if not s:
         return None
-    s = _map_cid_glyphs(s).strip().strip(",;:()")
+    mapped = _map_cid_glyphs(s).strip()
+    # Note the order: cid tokens are removed from the *unstripped* text,
+    # because stripping ",;:()" first eats the closing paren and leaves
+    # "m(cid:3" for the pattern below to miss.
+    no_cid = re.sub(r"\(cid:\d+\)", "", mapped).strip()
+    s = mapped.strip(",;:()")
     if not s:
         return None
     dim = _symbol_dimension(symbol) if symbol else None
@@ -412,8 +417,17 @@ def _clean_unit(s: Optional[str], symbol: Optional[str] = None) -> Optional[str]
     # at it. (For resistance it does not even change the number — mOhm is what
     # dslib assumes anyway — it just lets the value be emitted at all instead
     # of being dropped as unitless.)
-    if dim is not None and s in _SI_PREFIXES and dim in _DIMENSION_BASE_UNIT:
-        return s + _DIMENSION_BASE_UNIT[dim]
+    if dim is not None and dim in _DIMENSION_BASE_UNIT:
+        # The base glyph may be missing outright ("m") or still present as a
+        # cid token this font's map does not resolve ("m(cid:3)" on
+        # onsemi/NTMFWS1D5N08XT1G). Both are the same cell with the same
+        # reading; requiring the WHOLE remainder to be one prefix plus cid
+        # tokens keeps this from touching a cell that merely contains an
+        # unreadable glyph among real content.
+        if s in _SI_PREFIXES:
+            return s + _DIMENSION_BASE_UNIT[dim]
+        if no_cid != mapped and no_cid in _SI_PREFIXES:
+            return no_cid + _DIMENSION_BASE_UNIT[dim]
 
     unit = None
     if _UNIT_ONLY_RE.match(s):
