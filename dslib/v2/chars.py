@@ -47,6 +47,12 @@ _STRAY_MERGE_TOL = 0.6
 # ambiguous and it is discarded instead of guessed.
 _STRAY_TIE_MARGIN = 0.25
 
+# How close, in ems, two identical glyphs must sit before the second is read as
+# an overstrike (fake bold) rather than as real repeated text. Overstrikes land
+# at 0 to ~0.05 em; the narrowest real advance between two identical glyphs is
+# about 0.22 em ('l', 'i', '.').
+_OVERSTRIKE_MAX_D = 0.10
+
 # Fallback descender when a backend does not report one, as a fraction of the
 # font size — used to recover the baseline from a glyph box bottom.
 _DEFAULT_DESCENT = -0.2
@@ -501,11 +507,70 @@ def _absorb_stray_glyphs(clusters: List[List[RawChar]],
     return [c for i, c in enumerate(clusters) if i not in absorbed]
 
 
+def _drop_overstrikes(cluster: List[RawChar]) -> List[RawChar]:
+    """Remove glyphs that are redrawn on top of an identical glyph.
+
+    Some PDFs emit the same text run twice at the same coordinates to fake a
+    bolder face. ti/TPS1100 does it for every bold run: the header span
+    "PARAMETER TEST CONDITIONS UNIT" appears twice with bit-identical origins,
+    and since rows are rebuilt from glyph positions the two copies interleave
+    into "PPAARRAAMMEETTEERR TTEESSTT CCOONNDDIITTIIOONNSS UUNNIITT".
+
+    That is not merely ugly. It silently changes numbers: the abs-max cell
+    "V = -2.7 V" reads as "VV == -22.77 VV", i.e. -22.77, and "V = -12 V"
+    becomes -1122. A wrong value with no marker of being wrong is the worst
+    outcome this module can produce, and it also costs the whole table, since
+    the doubled header no longer matches ``head_re`` and the Conditions/Unit
+    columns are never derived.
+
+    The discriminator is horizontal distance, in ems so it holds at any font
+    size. Two *legitimately* adjacent identical glyphs are separated by an
+    advance width -- the narrowest in common use is about 0.22 em ('l', 'i',
+    '.') -- while an overstrike sits at 0 to 0.05 em. ``_OVERSTRIKE_MAX_D``
+    sits between the two, nearer the overstrike side.
+
+    A glyph whose size cannot be established is *kept*: with no em to measure
+    against, "is this a duplicate" is unanswerable, and answering "yes" would
+    delete real text. Only a duplicate that can be positively identified is
+    dropped.
+    """
+    if len(cluster) < 2:
+        return cluster
+
+    order = sorted(range(len(cluster)), key=lambda i: cluster[i].bbox[0])
+    drop = set()
+    kept: List[int] = []          # indices into `order`, ascending x, not dropped
+    for oi in order:
+        ch = cluster[oi]
+        size = ch.size if ch.size > 0 else (ch.bbox[3] - ch.bbox[1])
+        if size <= 0:
+            kept.append(oi)
+            continue              # cannot measure -> cannot judge -> keep
+        eps = _OVERSTRIKE_MAX_D * size
+        is_dup = False
+        for kj in range(len(kept) - 1, -1, -1):
+            other = cluster[kept[kj]]
+            if ch.bbox[0] - other.bbox[0] > eps:
+                break             # sorted by x: everything earlier is farther
+            if (other.text == ch.text
+                    and abs(ch.baseline - other.baseline) <= eps):
+                is_dup = True
+                break
+        if is_dup:
+            drop.add(oi)
+        else:
+            kept.append(oi)
+
+    if not drop:
+        return cluster
+    return [ch for i, ch in enumerate(cluster) if i not in drop]
+
+
 def _build_rows(chars: List[RawChar]) -> List[TextRow]:
     """Build TextRows: cluster chars vertically, then group horizontally."""
     rows: List[TextRow] = []
     for cluster in _cluster_lines(chars):
-        words = _group_chars_into_words(cluster)
+        words = _group_chars_into_words(_drop_overstrikes(cluster))
         if not words:
             continue
         bbox = words[0].bbox
