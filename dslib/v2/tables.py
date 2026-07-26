@@ -742,6 +742,74 @@ def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
     return out
 
 
+# A wrapped condition line sits within this many row-heights of the line it
+# continues. Tighter than _PAIR_MAX_ROW_GAP: this is the next line of one cell,
+# not a neighbouring row of the table.
+_COND_WRAP_MAX_GAP = 1.6
+
+
+def _scan_index(scan: List[dict], row: TextRow) -> Optional[int]:
+    for k, it in enumerate(scan):
+        if it["row"] is row:
+            return k
+    return None
+
+
+def _cond_with_continuation(scan: List[dict], idx: int,
+                            cols: Dict[str, Tuple[float, float]]) -> Optional[str]:
+    """Condition text of a row plus any wrapped continuation lines below it.
+
+    A condition cell that does not fit on one line wraps, and the overflow
+    becomes a row of its own holding nothing else. nxp/GANE3R9-150QBAZ::
+
+        QGD gate-drain charge  ID = 30 A; VDS = 75 V; VGS = 5 V;  - 3.5 - nC
+                               Tj = 25 °C; Fig. 11; Fig. 12
+        QG(tot) total gate charge                                 -  20 - nC
+
+    Reading only the first line loses Tj entirely, and Tj is exactly what
+    separates a 25 °C row from a 125 °C one.
+
+    Attached DOWNWARD, and that is the whole trick: the continuation sits 10.8
+    pt below the row it belongs to but only 4.4 pt above the NEXT parameter
+    row, so nearest-row would hand it to the wrong one. Text wraps downward, so
+    line two belongs to the cell that began on line one — direction decides it,
+    distance cannot.
+
+    Only rows naming no symbol and holding no numbers are eaten. A row with
+    either owns its own conditions, and absorbing it would merge two
+    parameters' test setups into one.
+
+    Deliberately NOT block inheritance: this does not give QG(tot) above its
+    conditions, even though on this sheet the cell is vertically merged across
+    the whole gate-charge block and they do apply to it. A row that states no
+    condition is structurally identical to one whose neighbour's conditions are
+    none of its business — in the same sample, an abs-max Vds row sits directly
+    under "ID drain current VGS = 5 V; Tmb = 25 °C", which it must not inherit.
+    Without ruling lines the two cannot be told apart, and inventing a
+    condition is worse than missing one: it makes a candidate confidently
+    selectable under a setup the datasheet never claimed.
+    """
+    row = scan[idx]["row"]
+    base = _cond_from_column(row, cols)
+    parts = [base] if base else []
+    reach = max(row.bbox.height, 1.0) * _COND_WRAP_MAX_GAP
+    prev_cy = row.bbox.cy
+    for j in range(idx + 1, len(scan)):
+        nxt = scan[j]
+        if nxt["sym"] or nxt["has_num"]:
+            break
+        if prev_cy - nxt["row"].bbox.cy > reach:
+            break
+        text = _cond_from_column(nxt["row"], cols)
+        if not text:
+            break
+        parts.append(text)
+        prev_cy = nxt["row"].bbox.cy
+    if not parts:
+        return None
+    return ' '.join(parts).strip() or None
+
+
 def parse_rows_for_page(mfr: str,
                         page: Page,
                         headers: List[HeaderRow]) -> List[ExtractedRow]:
@@ -791,10 +859,17 @@ def parse_rows_for_page(mfr: str,
                     # resistance unit is not a gap: Field then treats 0.00685
                     # as already-canonical mOhm instead of 6.85.
                     unit = _unit_from_column(item["row"], header.cols, symbol)
+                # Continuation is looked up from the VALUE row's own position:
+                # on a split row the wrapped condition line follows the row the
+                # condition was printed against, not the label above it.
+                v_idx = i if value_row is item["row"] else _scan_index(scan, value_row)
+                cond = (_cond_with_continuation(scan, v_idx, header.cols)
+                        if v_idx is not None
+                        else _cond_from_column(value_row, header.cols))
                 out.append(ExtractedRow(symbol=symbol,
                                         row=value_row,
                                         values=values,
                                         unit=unit,
-                                        cond=_cond_from_column(value_row, header.cols),
+                                        cond=cond,
                                         page_num=page.page_num))
     return out
