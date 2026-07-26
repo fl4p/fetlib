@@ -799,12 +799,44 @@ def _headers_that_explain_numbers(headers: List[HeaderRow],
     """
     keep: List[HeaderRow] = []
     for hi in range(len(headers)):
+        if not _header_has_structure(headers[hi]):
+            continue
         for body_row in _row_chunks_below_header(headers, rows, hi):
             values = _values_for_row(body_row, headers[hi].cols)
             if any(_is_numeric_token(v) for v in values.values()):
                 keep.append(headers[hi])
                 break
     return keep
+
+
+# A header offering nothing but a "typ"/"values" column carries no structure:
+# it is a FIGURE CAPTION that matched head_re on the word "Typ.".
+_CAPTION_ONLY_COLS = frozenset({"typ", "values"})
+
+
+def _header_has_structure(header: HeaderRow) -> bool:
+    """Reject a caption that merely contains the word "Typ.".
+
+    Validating that a header explains NUMBERS is necessary but not sufficient,
+    because a chart page trivially satisfies it -- axis ticks are numbers. The
+    two live cases both come from figure captions::
+
+        infineon/IPA65R110CFDXKSA1 pg12
+            "Typ. capacitances Typ. COUU stored energy"   -> cols {typ}
+        nxp/GAN3R2-100CBEAZ pg8
+            "charge; typical values values"               -> cols {typ, values}
+
+    which then read an axis tick as a value: Crss.typ=1.0 and Id.typ=0.0 (0
+    and 1 being axis ORIGINS is the tell). Id.typ=0.0 is not a stray extra --
+    ``DatasheetFields.fill`` merges it into the real Id rating field, so a
+    consumer selects 0.0 for a rating.
+
+    A genuine parameter-table header always says more than "typical": it names
+    a symbol, a parameter, a unit, conditions, or a min/max to sit beside the
+    typ. Requiring one of those is a statement about table STRUCTURE, so
+    unlike a word blacklist it does not care about vendor, language or decade.
+    """
+    return bool(set(header.cols) - _CAPTION_ONLY_COLS)
 
 
 def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
@@ -962,6 +994,16 @@ def _cond_from_cell(page: Page, scan: List[dict], idx: int,
     """
     if "cond" not in cols or not page.pdf_path:
         return None
+    # Rulings are read via fitz in fitz's coordinate space. When the text came
+    # from pdfminer the two frames are only guaranteed to agree for an
+    # unrotated page whose cropbox matches its mediabox; a reviewer reproduced
+    # a synthetic cropbox where they do not, which would put bands and
+    # baselines in different spaces and attach silently wrong conditions.
+    # No datasheet in a 1000-PDF sample trips it, so this costs nothing today
+    # and is not worth guessing a transform for -- refuse instead.
+    from dslib.v2.chars import DEFAULT_BACKEND
+    if DEFAULT_BACKEND == "pdfminer":
+        return None
     from dslib.v2 import rules as _rules
 
     rs = _rules.page_rules(page.pdf_path, page.page_num)
@@ -977,9 +1019,15 @@ def _cond_from_cell(page: Page, scan: List[dict], idx: int,
         if x2 <= x1:
             return None
 
+    # The neighbours are this table's OWN other columns, so "a neighbour is
+    # ruled inside the band" is a statement about this table rather than about
+    # any stroke that happens to sit elsewhere on the page.
+    neighbours = [v for k, v in cols.items()
+                  if k != "cond" and math.isfinite(v[0]) and math.isfinite(v[1])]
+
     row = scan[idx]["row"]
     band = _rules.cell_band(rs, x1, x2, row.bbox.cy)
-    if band is None or not _rules.band_is_credible(rs, band, x1, x2):
+    if band is None or not _rules.band_is_credible(rs, band, x1, x2, neighbours):
         return None
 
     top, bottom = band

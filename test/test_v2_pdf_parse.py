@@ -208,6 +208,39 @@ SAMPLES: List[Tuple[str, object, float]] = [
 ]
 
 
+# (pdf, symbol, stat, forbidden_value) -- values v2 must NOT produce.
+#
+# SAMPLES above can only check that expected symbols are right; it never looks
+# at what else was extracted, so a whole class of damage is invisible to it.
+# The chart-page false positives were exactly that: v2 read a graph's AXIS
+# TICKS as a parameter table, and because DatasheetFields.fill merges stats
+# across candidates, Id.typ=0.0 landed in the REAL Id rating field where a
+# default consumer selects it. 65/65 passed throughout.
+#
+# 0.0 and 1.0 are axis origins -- that they are the values which appeared is
+# the signature of the bug, not a coincidence.
+NEGATIVE_SAMPLES = [
+    ('datasheets/infineon/IPA65R110CFDXKSA1.pdf', 'Crss', 'typ', 1.0),
+    ('datasheets/nxp/GAN3R2-100CBEAZ.pdf', 'Id', 'typ', 0.0),
+    ('datasheets/nxp/GAN7R0-150LBEZ.pdf', 'Id', 'typ', 0.0),
+]
+
+
+def run_negative(pdf_path, symbol, stat, forbidden) -> bool:
+    """True if the forbidden value is absent (i.e. the check passes)."""
+    if not os.path.exists(pdf_path):
+        print(f"    SKIP: {pdf_path} missing")
+        return True
+    ds = parse_datasheet(pdf_path)
+    f = (ds.fields_filled or {}).get(symbol) if ds else None
+    got = getattr(f, stat, math.nan) if f is not None else math.nan
+    bad = (got is not None and not math.isnan(got)
+           and abs(got - forbidden) <= 1e-9)
+    label = "BAD " if bad else "OK  "
+    print(f"    {label} {symbol}.{stat} must not be {forbidden} -- got {got}")
+    return not bad
+
+
 def _ref_to_ds(ref) -> DatasheetFields:
     if isinstance(ref, DatasheetFields):
         return ref
@@ -290,13 +323,20 @@ def main() -> int:
         if miss:
             misses_summary.append((pdf, miss))
 
+    neg_ok = 0
+    print("\n>>> negative checks (values v2 must NOT produce)")
+    for pdf, sym, stat, bad in NEGATIVE_SAMPLES:
+        neg_ok += run_negative(pdf, sym, stat, bad)
+
     print("\n" + "=" * 60)
     print(f"TOTAL  {total_ok} / {total_exp} reference values matched")
+    print(f"       {neg_ok} / {len(NEGATIVE_SAMPLES)} negative checks passed")
     if misses_summary:
         print(f"\nMissing symbols:")
         for pdf, ms in misses_summary:
             print(f"  {pdf}: {ms}")
-    return 0 if total_ok == total_exp else 1
+    return 0 if (total_ok == total_exp
+                 and neg_ok == len(NEGATIVE_SAMPLES)) else 1
 
 
 def test_v2_reference_values():

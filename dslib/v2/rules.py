@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import os
 from functools import lru_cache
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 # A segment thinner than this (pt) is a rule; thicker is a filled box.
 _MAX_RULE_THICKNESS = 1.5
@@ -61,14 +61,35 @@ _INTERIOR_EPS = 1.0
 Rule = Tuple[float, float, float]      # (y, x1, x2), y in PDF-up coordinates
 
 
-@lru_cache(maxsize=64)
 def page_rules(pdf_path: str, page_num: int) -> Tuple[Rule, ...]:
     """Horizontal rulings on one page, deduplicated, y descending.
 
     Returns an empty tuple when the page has none or cannot be read. That is
     an honest "no cell information", and every consumer here treats it as
     refusing to infer rather than as "no merge".
+
+    Memoized on the file's CONTENT signature, not merely its path. Keying on
+    (path, page) alone would pair a replaced file's new text with the old
+    file's rulings for the life of the process -- a signature that proves the
+    file exists rather than that it is unchanged, which is the same mistake
+    that once served stale parses out of the v2 cache salt.
     """
+    try:
+        from dslib.cache import _file_content_sig
+        sig = _file_content_sig(pdf_path)
+    except Exception:
+        sig = None
+    if sig is None:
+        return _page_rules_uncached(pdf_path, page_num)
+    return _page_rules_cached(pdf_path, page_num, sig)
+
+
+@lru_cache(maxsize=64)
+def _page_rules_cached(pdf_path: str, page_num: int, sig: str) -> Tuple[Rule, ...]:
+    return _page_rules_uncached(pdf_path, page_num)
+
+
+def _page_rules_uncached(pdf_path: str, page_num: int) -> Tuple[Rule, ...]:
     try:
         import fitz
     except Exception:
@@ -144,22 +165,38 @@ def cell_band(rules: Tuple[Rule, ...], x1: float, x2: float,
 
 
 def band_is_credible(rules: Tuple[Rule, ...], band: Tuple[float, float],
-                     x1: float, x2: float) -> bool:
+                     x1: float, x2: float,
+                     neighbours: Sequence[Tuple[float, float]]) -> bool:
     """Is this band a real merged cell rather than an unruled table?
 
-    Requires a ruling that lies strictly INSIDE the band and covers something
-    OUTSIDE this column. That is the evidence that the producer draws
-    per-row boundaries and left this one out deliberately. Without it the band
-    is just the table outline, and every column would claim to be merged.
+    Requires a ruling strictly INSIDE the band that COVERS AN ACTUAL
+    NEIGHBOURING COLUMN -- one of the other spans derived from this table's
+    own header. That is the evidence that the producer draws per-row
+    boundaries here and left this one out deliberately.
+
+    The first version of this test only asked that a segment lie wholly to one
+    side of the conditions column. A reviewer showed that is far too weak: any
+    3 pt line anywhere else on the page satisfies it, so an unrelated diagram
+    stroke beside a one-row table made every blank row inherit that row's
+    conditions. "Not overlapping me" is not "a neighbour is ruled here" --
+    the same shape as the other absence-of-evidence bugs this module tries to
+    avoid, written into its own guard.
+
+    With no neighbouring spans supplied there is nothing to establish, so this
+    answers False: no boundary evidence, rather than assume.
     """
     top, bottom = band
+    if not neighbours:
+        return False
     for y, rx1, rx2 in rules:
         if not (bottom + _INTERIOR_EPS < y < top - _INTERIOR_EPS):
             continue
-        # a segment reaching materially beyond this column, or sitting wholly
-        # beside it, belongs to a neighbouring cell
-        if rx2 <= x1 + _INTERIOR_EPS or rx1 >= x2 - _INTERIOR_EPS:
-            return True
+        for nx1, nx2 in neighbours:
+            # a real neighbour, not this column under another name
+            if min(nx2, x2) - max(nx1, x1) > 0:
+                continue
+            if _covers((y, rx1, rx2), nx1, nx2):
+                return True
     return False
 
 
