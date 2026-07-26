@@ -31,7 +31,7 @@ from dslib.v2.tables import (ExtractedRow, _num_with_unit, find_headers,
                              parse_rows_for_page)
 
 _V2_DIR = os.path.dirname(os.path.abspath(__file__))
-_V2_SOURCES = ('chars.py', 'tables.py')
+_V2_SOURCES = ('__init__.py', 'chars.py', 'tables.py')
 _code_sig_memo = {}
 
 
@@ -42,6 +42,14 @@ def v2_code_salt():
     without this an edit to ``chars.py`` or ``tables.py`` would keep serving
     the old — plausible, silently wrong — cached value forever. The symbol
     regex table is folded in for the same reason.
+
+    ``__init__.py`` is in the list too, and leaving it out was a real hole
+    rather than a theoretical one. Everything ``parse_datasheet`` delegates to
+    in this module — ``_make_field``, the unit rules, the condition
+    canonicalisation — is invisible to ``hash_func_code``, which sees only the
+    entry point's own body. Editing the condition handling and re-running
+    served the previous answer unchanged, and it looked exactly like a fix
+    that had not worked.
 
     Callable so decoration doesn't force ``expr``'s lazy regex tables
     (~1.7 s of regex.compile) at import time.
@@ -156,6 +164,10 @@ _COND_ALIASES = {
     "f": "f", "freq": "f",
 }
 
+# The canonical names themselves, for paths that must reject anything they
+# cannot recognise rather than pass it through.
+_CANONICAL_COND_NAMES = frozenset(_COND_ALIASES.values())
+
 
 def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
     """Map condition keys onto the canonical names consumers select by.
@@ -179,6 +191,87 @@ def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
         # First spelling wins: a row repeating a condition under two spellings
         # is stating it once.
         out.setdefault(k, v)
+    return out
+
+
+# One "<symbol> = <number><unit>" statement. The value is the FIRST number
+# after the "=", and nothing past its unit is part of it.
+_COND_ITEM_RE = re.compile(
+    r"([^,;=]{1,24})[=≈]\s*([+-]?\d[\d.]*\s*[a-zA-Zµμ°Ω%]{0,3})")
+
+# pdfminer and fitz emit GREEK SMALL LETTER MU (U+03BC) for the micro prefix,
+# while dslib.pdf.sheet.parse_cond_str only tests MICRO SIGN (U+00B5) — so
+# "ID = 250 μA" scales to 250 instead of 2.5e-4, a factor of a million, and it
+# lands inside every downstream sanity band. Normalised here rather than in
+# the shared parser, which the legacy extractors also depend on.
+_MICRO_NORMALISE = str.maketrans({"μ": "µ"})
+
+
+def _parse_cond_text(text: str, parse_cond_str) -> dict:
+    """Parse conditions out of one cell's text, one statement at a time.
+
+    ``parse_cond_str`` must never see more than a single ``sym = value``: its
+    regex repeats the value group after the ``=``, so it consumes every
+    remaining number in the string and the LAST one wins. Handed a phrase that
+    also contains the row's numbers, ``"VGS=10V 7.8 9.5"`` returns
+    ``{'Vgs': 9.5}`` — the right key with the wrong value. That is more
+    dangerous than an unparseable key, because ``dslib/field.py:572`` scores a
+    canonical key with a near value as a near MATCH, so a corrupted row can
+    win the selection outright.
+    """
+    out = {}
+    for m in _COND_ITEM_RE.finditer(text.translate(_MICRO_NORMALISE)):
+        val = m.group(2).strip()
+        # The symbol is the tail of whatever precedes the "=", and how much of
+        # that tail is narrowed down by trying the shortest reading first.
+        # parse_cond_str's symbol pattern allows one embedded space, so given
+        # "Voltage VGS=0V" it reads the symbol as "ge VGS"; given "V GS=10V"
+        # the space is genuine and one token is not enough. Preferring the
+        # 1-token reading when it names something a consumer queries resolves
+        # both without a per-vendor rule.
+        words = m.group(1).strip().split()
+        for n in (1, 2, len(words)):
+            if not n or n > len(words):
+                continue
+            got = _canonical_cond(
+                parse_cond_str("%s=%s" % (" ".join(words[-n:]), val))) or {}
+            if got:
+                if any(k in _CANONICAL_COND_NAMES for k in got) or n == len(words):
+                    for k, v in got.items():
+                        out.setdefault(k, v)
+                    break
+    return out
+
+
+def _cond_from_phrases(row, parse_cond_str) -> dict:
+    """Recover conditions printed outside the Conditions column.
+
+    ao sheets print "RDS(ON) Static Drain-Source On-Resistance TJ=125°C 7.8
+    9.5": the Conditions column lands on the description, so the cell parses
+    to nothing and two temperature variants of one parameter become
+    indistinguishable.
+
+    Parsed PHRASE BY PHRASE, never over the whole row. The condition regex
+    permits a space inside a symbol — it has to, for subscripts typeset as
+    their own run like "V GS" — so run across a full row it happily reads
+    "On-Resis|tance TJ" as a symbol "ce TJ", yielding {"ce TJ": ...}. Phrases
+    are the row's own cell boundaries, so the description and "TJ=125°C" are
+    separated before matching.
+
+    Only keys that canonicalise to a name a consumer actually queries are
+    kept. Anything else is a mis-parse of prose, and this path has no column
+    position to justify trusting it. Note that this filter guards the SYMBOL
+    only — a wrong VALUE on a right symbol passes it untouched, which is what
+    ``_parse_cond_text`` exists to prevent.
+    """
+    out = {}
+    for ph in row.phrases():
+        text = " ".join(w.text for w in ph).strip()
+        if "=" not in text:
+            continue
+        for k, v in _parse_cond_text(text, parse_cond_str).items():
+            if k in _CANONICAL_COND_NAMES:
+                out.setdefault(k, v)
     return out
 
 
@@ -234,14 +327,22 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
         unit = _re.sub(r"\(cid:2\)", "Ω", unit)
         unit = _re.sub(r"\(cid:4\)", "μ", unit)
 
-    cond_str = ex.cond
     cond_parsed = None
-    if cond_str:
-        # parse_cond_str lives in dslib.pdf.sheet which has heavy deps; only
-        # import lazily on demand
+    if ex.cond or "=" in ex.row.text:
         try:
+            # parse_cond_str lives in dslib.pdf.sheet which has heavy deps;
+            # import lazily, and only for a row that could carry a condition
+            # at all — v2 exists partly to keep that dependency off the hot
+            # path.
             from dslib.pdf.sheet import parse_cond_str  # noqa
-            cond_parsed = _canonical_cond(parse_cond_str(cond_str))
+            if ex.cond:
+                # The column's own text goes through the same one-statement-at-
+                # a-time parser: the cond column routinely over-reaches into the
+                # value columns, so it is exposed to the identical
+                # last-number-wins corruption as the phrase path.
+                cond_parsed = _parse_cond_text(ex.cond, parse_cond_str) or None
+            if not cond_parsed:
+                cond_parsed = _cond_from_phrases(ex.row, parse_cond_str) or None
         except Exception:
             cond_parsed = None
 

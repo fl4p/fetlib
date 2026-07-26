@@ -140,7 +140,21 @@ def _header_columns(row: TextRow, m: re.Match) -> Dict[str, Tuple[float, float]]
             else:
                 x1 = 0.5 * (prev_cx + cx)
             if next_cx is None:
-                x2 = w.bbox.x2 + max(w.bbox.width, 8.0)
+                # A trailing Conditions column runs to the edge of the table,
+                # and its content is routinely many times wider than the word
+                # "Conditions" — so deriving its right edge from the label
+                # truncates it. infineon/IPW65R040CM8 prints
+                # "V GS=10V, I D=25.0A, T j=25°C" and the label-derived bound
+                # cut it at "V GS=10V, I", which silently discarded Tj. That
+                # loss is not a missing extra: the 25°C row (40 mOhm) and the
+                # 150°C row (73 mOhm) then carry IDENTICAL conditions, and no
+                # consumer can tell them apart afterwards.
+                #
+                # Only the trailing edge of `cond` is opened up. The leading
+                # edge of `param` is deliberately left alone — it feeds symbol
+                # detection in _detect_symbol, where a wider span changes which
+                # phrase wins.
+                x2 = math.inf if g == "cond" else w.bbox.x2 + max(w.bbox.width, 8.0)
             else:
                 x2 = 0.5 * (cx + next_cx)
 
@@ -167,6 +181,28 @@ def _candidate_header(row: TextRow) -> Optional[Tuple[re.Match, Dict[str, Tuple[
     if not cols:
         return None
     return m, cols
+
+
+def _clamp_open_cond(cols: Dict[str, Tuple[float, float]]) -> None:
+    """Close an open-ended Conditions column against its real right neighbour.
+
+    ``_header_columns`` opens ``cond`` to infinity when nothing was detected to
+    its right, but it decides that from ONE candidate row, and a two-row header
+    is merged afterwards. A Conditions label that is rightmost on its own row
+    stops being rightmost once Min/Typ/Max/Unit arrive from the row below, and
+    its span then lies across every value column.
+
+    Measured on crmicro/CS20N50FA9R: cond stayed (251.0, inf) over min
+    (413.3, 444.7) and max (477.7, 512.4), so the V(BR)DSS condition cell read
+    "Voltage VGS=0V, ID=250uA 500 -- -- V" and contributed Id=500 A against a
+    printed 250 uA. 25 of 564 detected headers in a 267-file sample were
+    geometrically exposed this way.
+    """
+    span = cols.get("cond")
+    if span is None or span[1] != math.inf:
+        return
+    right = [x1 for k, (x1, _) in cols.items() if k != "cond" and x1 > span[0]]
+    cols["cond"] = (span[0], min(right) if right else math.inf)
 
 
 def find_headers(page_rows: List[TextRow]) -> List[HeaderRow]:
@@ -230,6 +266,7 @@ def find_headers(page_rows: List[TextRow]) -> List[HeaderRow]:
         # final filter: still need at least one numeric column
         if not any(k in merged for k in ("min", "typ", "max", "values")):
             continue
+        _clamp_open_cond(merged)
         headers.append(HeaderRow(row=anchor_row, cols=merged))
 
     return headers
