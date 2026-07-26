@@ -187,6 +187,24 @@ SAMPLES: List[Tuple[str, object, float]] = [
          'tFall': (nan, 58.0, nan),
      },
      1e-3),
+
+    # One logical row split across two baselines 1.6pt apart, with the unit on
+    # the upper half and the numbers on the lower:
+    #   y368.7  Qrr                                IF=20A, di/dt=500A/ms   uC
+    #   y367.1  Body Diode Reverse Recovery Charge                       1.18
+    # Both halves resolve to Qrr, so the lower one is taken as its own value
+    # row and the uC above was never consulted -- emitting a bare 1.18 that
+    # Field reads as nC, 1000x low. This pins the DIRECTION of the fix, not
+    # merely that it runs: 1180 is the microcoulomb reading, 1.18 the bug.
+    # Charge cannot be protected by a plausibility floor the way resistance is
+    # (Qrr's real population reaches 0.18 nC, so 1.18 is not implausible), so
+    # this reference value is the only thing standing between the corpus and a
+    # silent 1000x here.
+    ('datasheets/ao/AOB66515L.pdf',
+     {
+         'Qrr': (nan, 1180.0, nan),
+     },
+     1e-3),
 ]
 
 
@@ -261,7 +279,7 @@ def run_sample(pdf_path: str, ref, err_threshold: float) -> Tuple[int, int, list
     return n_ok, n_expected, missing
 
 
-def main():
+def main() -> int:
     total_ok = 0
     total_exp = 0
     misses_summary = []
@@ -278,7 +296,20 @@ def main():
         print(f"\nMissing symbols:")
         for pdf, ms in misses_summary:
             print(f"  {pdf}: {ms}")
+    return 0 if total_ok == total_exp else 1
+
+
+def test_v2_reference_values():
+    """Fail-capable entry point.
+
+    This file used to only print. A run where every value regressed still
+    exited 0 and reported "TOTAL 3 / 65" to a log nobody reads, so the
+    references here could not defend anything -- the same vacuous-assertion
+    shape that let `field == 0.62` pass unconditionally elsewhere in this
+    suite. Both pytest and the shell now see a real verdict.
+    """
+    assert main() == 0, "v2 reference values regressed (see output above)"
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

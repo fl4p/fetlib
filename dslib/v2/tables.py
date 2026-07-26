@@ -541,6 +541,62 @@ def _unit_from_column(row: TextRow,
     return None
 
 
+# How far apart (in row heights) the two halves of one logical row may sit.
+_SIBLING_MAX_ROW_GAP = 1.5
+
+
+def _unit_from_symbol_sibling(scan: List[dict], idx: int,
+                              cols: Dict[str, Tuple[float, float]],
+                              symbol: str) -> Optional[str]:
+    """Find the unit on an adjacent row that names the SAME symbol.
+
+    One logical table row is sometimes typeset on two baselines, with the
+    symbol, conditions and unit on one and the parameter wording and the
+    numbers on the other. ao/AOB66515L splits them by 1.6 pt::
+
+        y368.7  Qrr                                 IF=20A, di/dt=500A/ms   uC
+        y367.1  Body Diode Reverse Recovery Charge                        1.18
+
+    Both rows resolve to Qrr -- the lower one via its wording -- but the lower
+    one carries the numbers, so it is taken as its own value row and the unit
+    on the line above is never consulted. The result is a bare 1.18 that
+    ``Field`` reads as nC where the sheet says microcoulombs: 1000x low, on a
+    symbol printed in BOTH scales across this corpus.
+
+    Charge cannot be rescued the way resistance is, by refusing implausibly
+    small values: the DB's own Qrr population runs to a 1% point of 1.2 nC and
+    a minimum of 0.18 nC, so a lost-microcoulomb 1.18 sits *inside* the real
+    distribution and no floor separates the two. Reading the unit that is
+    printed on the sheet is the only honest fix.
+
+    The pairing evidence required is deliberately narrow: an immediate
+    neighbour, naming the same symbol, holding no numbers of its own (so it is
+    the other half of this row and not the next parameter). If both neighbours
+    offer a unit and they disagree, this returns None -- an ambiguous unit is
+    the failure being prevented, not an acceptable guess.
+    """
+    row = scan[idx]["row"]
+    h = max(row.bbox.height, 1.0)
+    found: List[str] = []
+    for j in (idx - 1, idx + 1):
+        if not (0 <= j < len(scan)):
+            continue
+        sib = scan[j]
+        if sib["has_num"] or not sib["sym"]:
+            continue
+        if sib["sym"].symbol != symbol:
+            continue
+        if abs(row.bbox.cy - sib["row"].bbox.cy) > _SIBLING_MAX_ROW_GAP * h:
+            continue
+        got = _unit_from_column(sib["row"], cols, symbol)
+        if got is not None:
+            found.append(got)
+    # Agreement between both neighbours is not ambiguity, only disagreement is.
+    if len(set(found)) != 1:
+        return None
+    return found[0]
+
+
 def _cond_from_column(row: TextRow,
                       cols: Dict[str, Tuple[float, float]]) -> Optional[str]:
     """Read the text of the condition column for a row, if defined."""
@@ -882,6 +938,15 @@ def parse_rows_for_page(mfr: str,
                     # resistance unit is not a gap: Field then treats 0.00685
                     # as already-canonical mOhm instead of 6.85.
                     unit = _unit_from_column(item["row"], header.cols, symbol)
+                if unit is None:
+                    # The other half of a two-baseline row: same symbol, no
+                    # numbers of its own, carrying the unit this row lacks.
+                    # Index 0 is falsy, so this must test for None explicitly.
+                    u_idx = (i if value_row is item["row"]
+                             else _scan_index(scan, value_row))
+                    if u_idx is not None:
+                        unit = _unit_from_symbol_sibling(
+                            scan, u_idx, header.cols, symbol)
                 # Continuation is looked up from the VALUE row's own position:
                 # on a split row the wrapped condition line follows the row the
                 # condition was printed against, not the label above it.
