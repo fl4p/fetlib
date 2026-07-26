@@ -258,7 +258,21 @@ def _parse_cond_text(text: str, parse_cond_str) -> dict:
         # 1-token reading when it names something a consumer queries resolves
         # both without a per-vendor rule.
         words = m.group(1).strip().split()
-        for n in (1, 2, len(words)):
+        # ...EXCEPT when the preceding token is a lone capital letter, which is
+        # a split subscript rather than a separate word. "I F=32 A" is a
+        # forward CURRENT, but 'F' on its own canonicalises to frequency — a
+        # name a consumer really does query — so the shortest-first rule
+        # accepted it and emitted {'f': 32.0}: wrong key, wrong dimension, and
+        # confidently selectable, which is worse than no condition at all.
+        # The heuristic was preferring the reading that SUCCEEDS over the
+        # reading that is RIGHT. Two capitals in a row ("I F", "V G", "T J")
+        # are one symbol, so try joining them first; prose prefixes
+        # ("Voltage VGS=0V") are unaffected because "Voltage" is not one letter.
+        order = (1, 2, len(words))
+        if (len(words) >= 2 and len(words[-2]) == 1
+                and words[-2].isalpha() and words[-2].isupper()):
+            order = (2, 1, len(words))
+        for n in order:
             if not n or n > len(words):
                 continue
             got = _canonical_cond(
