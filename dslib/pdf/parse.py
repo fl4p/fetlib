@@ -357,6 +357,7 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
                     need_symbols=None,
                     no_ocr=False, force_ocr=False,
+                    tabular_harvest=False,
                     ) -> DatasheetFields:
     if force_ocr:
         assert not no_ocr
@@ -420,52 +421,84 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                          date_from_meta=meta.ctime or meta.mtime,
                          )
 
-    from dslib.pdf.sheet import read_sheet
-    fields = read_sheet(pdf_path).all_fields()
-    method = 'r600_ocrmypdf'
-    if not fields:
-        f2 = pdf_path + '.' + method + '.pdf' if method != 'nop' else pdf_path
-        pdf2pdf(pdf_path, f2, method)
-        fields = read_sheet(f2).all_fields()
-
-    ds.add_multiple(fields, ['read_sheet'])
-
-    # Vpl
-    if not math.isfinite(ds.get_max_or_min_or_typ('Vpl')):
-        ds.add_multiple(read_charts(pdf_path), ['read_charts'])
-
-    if need_symbols:
-        subsctract_needed_symbols(need_symbols, ds.keys())
-    else:
-        need_symbols = None
-
     if tabular_pre_methods is None:
         # assert not tabular_pre_methods
         tabular_pre_methods = ('nop', 'gs',
                                'r600_ocrmypdf',  # IPB027N10N3
                                )  # 'cups',
 
-    try:
-        # if verbose:
-        # print(pdf_path, 'tabular read ...  need=', need_symbols)
-        tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods, need_symbols=need_symbols)
-        if not tabular_ds:
-            warnings.warn('tabula_read(%r) failed' % pdf_path)
-            # raise NoTabularData(pdf_path)
-        if tabular_ds:
-            ds.add_multiple(tabular_ds.all_fields())
-    except NoTabularData:
-        pass
-    except (LookupError, AttributeError, TimeoutError):
-        raise
-    except Exception as e:
-        print(pdf_path, 'tabula error', type(e).__name__, e)
-        ds.errors.append('tabula error {!r}'.format(e))
-        # raise
-
+    # Field priority is INSERTION ORDER: Field.fill keeps the first non-NaN per
+    # stat and later stages only fill the gaps (see dslib/field.py:add/fill).
+    # The method-domination study (apps/method_audit.py) found the cheap
+    # text/regex pass ~0% regression risk (1/287 keys) and ~350x cheaper than
+    # tabular, so it runs FIRST -- both to win the value and to shrink
+    # `need_symbols` so the expensive tabular stage below is skipped whenever the
+    # caller's requested symbols are already satisfied. (Previously read_sheet ran
+    # first and text last, so the redundant methods won -- the inversion this fixes.)
     txt_fields = extract_fields_from_text(pdf_text, mfr=mfr, pdf_path=pdf_path, verbose=False)
     ds.add_multiple(txt_fields.all_fields())
     # TODO do extract_fields_from_text again afet raster_ocr
+
+    # v2 (spatial): fills gaps text missed. REPLACES the hand-written read_sheet --
+    # apps/method_audit.py measured read_sheet at 0% sole-source with 97% of its
+    # values covered by v2 alone, while v2 matches tabular's precision (98%) and beats
+    # read_sheet on recall (89% vs 69%) at ~1.9s/part vs ~25-113s. Kept UNCONDITIONAL
+    # for the same reason read_sheet was: gating a gap-filler on symbol-presence was
+    # measured to silently drop ~50 (sym,stat) values over 12 parts. `need_symbols` is
+    # subtracted only AFTER this so tabular sees the full text+v2 coverage.
+    import dslib.v2
+    fields = dslib.v2.parse_datasheet(pdf_path, mfr=mfr, mpn=mpn).all_fields()
+    method = 'r600_ocrmypdf'
+    if not fields:
+        # v2 returns empty on scanned/image-only PDFs (OCR is out of its scope and it
+        # says so via ds.errors), so the OCR retry that served read_sheet still earns
+        # its keep -- it is what turns a scanned sheet from zero-yield into parsed.
+        f2 = pdf_path + '.' + method + '.pdf' if method != 'nop' else pdf_path
+        pdf2pdf(pdf_path, f2, method)
+        fields = dslib.v2.parse_datasheet(f2, mfr=mfr, mpn=mpn).all_fields()
+
+    # No `source=` on purpose: v2 already stamps ['v2', 'pg<n>', 'y<n>'] per field, and
+    # add_multiple(source=...) OVERWRITES _sources, which would throw away the page/row
+    # provenance. Downstream method-classification keys on the 'v2' segment either way.
+    ds.add_multiple(fields)
+
+    # Vpl
+    if not math.isfinite(ds.get_max_or_min_or_typ('Vpl')):
+        ds.add_multiple(read_charts(pdf_path), ['read_charts'])
+
+    if need_symbols:
+        # copy=True: don't mutate the caller's set in place (every other call site
+        # passes copy=True; main.py's set is per-job so it doesn't bite today, but the
+        # blast radius grew now that ds.keys() reflects broad text+v2 coverage).
+        need_symbols = subsctract_needed_symbols(need_symbols, ds.keys(), copy=True)
+
+    # tabular (Tabula): most expensive (~177s/part) and ~90% redundant -- last
+    # resort for whatever text+v2 still didn't cover. With text now first,
+    # the need reaching here is already shrunk, so tabular does strictly less work
+    # than before, and is SKIPPED entirely when text+v2 cover everything (i.e. when
+    # need_symbols has drained to an empty set). This drops non-needed fields that a
+    # cheap Tabula pass would have opportunistically harvested -- they are re-fetched
+    # on demand by any run with a broader need_symbols (parse is cached per need set).
+    # `tabular_harvest=True` (CLI: --tabular-harvest) restores the pre-2026-07 always-
+    # run behaviour for callers that want the fullest possible DB record.
+    if tabular_harvest or need_symbols is None or need_symbols:
+        try:
+            # if verbose:
+            # print(pdf_path, 'tabular read ...  need=', need_symbols)
+            tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods, need_symbols=need_symbols)
+            if not tabular_ds:
+                warnings.warn('tabula_read(%r) failed' % pdf_path)
+                # raise NoTabularData(pdf_path)
+            if tabular_ds:
+                ds.add_multiple(tabular_ds.all_fields())
+        except NoTabularData:
+            pass
+        except (LookupError, AttributeError, TimeoutError):
+            raise
+        except Exception as e:
+            print(pdf_path, 'tabula error', type(e).__name__, e)
+            ds.errors.append('tabula error {!r}'.format(e))
+            # raise
 
     if not ds:
         if not force_ocr:

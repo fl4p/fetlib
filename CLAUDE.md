@@ -64,17 +64,19 @@ Pre-selection by Vds/Id happens in `DcDcLoadParams.select_mosfets(parts, max_par
 
 ### 3. PDF parsing — `dslib/pdf/`
 
-Parsing is **deliberately multi-strategy with a priority order** (`README.md` "Field priority"); LLMs were tried and rejected as non-deterministic. Order of preference per field:
+Parsing is **deliberately multi-strategy with a priority order** (`README.md` "Field priority"); LLMs were tried and rejected as non-deterministic. **Priority = insertion order**: `DatasheetFields.add`/`Field.fill` keep the *first* non-NaN value per stat, so whichever stage adds a symbol first wins and later stages only fill gaps (`dslib/field.py`). The order values are added, highest priority first:
 
-1. **Manual overrides** — `dslib/manual_fields.py` (`get_fields()` returns hand-curated `{mfr: {mpn: [Field, …]}}`; `fallback_specs(mfr, mpn)` provides GaN fallbacks).
-2. **pdf2txt + regex** — `dslib/pdf/pdf2txt/` and `dslib/pdf/expr.py` (`get_field_detect_regex`, `dim_regs_csv`, `dim_regs_multiline`). The PDF text extractor reconstructs words/lines/blocks from character bounding boxes; super/subscript handling is intentional.
-3. **Tabula + regex** — `dslib/pdf/tabular.py` (`tabula_browser`, `tabula_read`) iterates table rows.
-4. **Spatial query** — `dslib/pdf/sheet/` (`read-sheet-debug` in `datasheet.py` exposes it); regex-style search combined with 2-D raytracing over character bounding boxes for awkwardly-laid-out tables.
-5. **OCR** — `ocrmypdf` for unreadable/image-only PDFs, gated by `--no-ocr`.
+1. **Manual overrides** (`'ref'`) — `dslib/manual_fields.py` (`get_fields()` returns hand-curated `{mfr: {mpn: [Field, …]}}`; `fallback_specs(mfr, mpn)` provides GaN fallbacks). Added in `compile_part_datasheet` before parse.
+2. **pdf2txt + regex** (`text`) — `dslib/pdf/pdf2txt/` and `dslib/pdf/expr.py` (`get_field_detect_regex`, `dim_regs_csv`, `dim_regs_multiline`). Cheapest (~0.5 s) and ~0% regression risk per the method-domination study, so it runs **first** inside `parse_datasheet` (as of the 2026-07 text-first reorder — it used to run last) both to win and to shrink `need_symbols`.
+3. **Spatial query** (`v2`) — `dslib/v2/` (`parse_datasheet`; fitz/PyMuPDF char geometry, baseline row clustering, no Java/Tabula). **Replaced the hand-written `read_sheet` in the 2026-07 swap**: the method-domination study measured `read_sheet` at 0% sole-source with 97% of its values covered by v2 alone, while v2 matches tabular's precision (98%) and beats read_sheet on recall (89% vs 69%) at ~1.9 s/part vs ~25-113 s. Runs unconditionally (kept so, not gated — gating it dropped ~50 range values in testing). Falls back to OCR + re-parse when it yields nothing (v2 skips scanned PDFs by design). `read_charts` backfills `Vpl` here. `dslib/pdf/sheet/read_sheet` still exists for `datasheet.py read-sheet-debug` and tests, but is no longer in the pipeline.
+4. **Tabula + regex** (`tabular`) — `dslib/pdf/tabular.py` (`tabula_browser`, `tabula_read`) iterates table rows. Most expensive (~177 s) and ~90 % redundant, so it runs **last** and is **skipped entirely / narrowed via `need_symbols`** once text+v2 cover what the caller asked for. When `need_symbols` drains to empty (text+v2 covered everything), tabular is skipped — which drops non-needed fields a cheap Tabula pass would have opportunistically harvested (pre-2026-07, Tabula *always* ran at least one pass). Those fields are re-fetched on demand by any run with a broader `need_symbols`, since parse is cached per need-set. Pass `--tabular-harvest` (→ `parse_datasheet(tabular_harvest=True)`) to restore the always-run behaviour for the fullest DB record, at the cost of a Tabula pass per otherwise-covered part.
+5. **OCR** — `ocrmypdf` for unreadable/image-only PDFs (a text-extraction *fallback*, gated by `--no-ocr`, not a priority tier).
 
-Entry point is `dslib.pdf.parse.parse_datasheet(...)`, called from `main.py:compile_part_datasheet`. Output is a `DatasheetFields` populated with `Field(symbol, min, typ, max, unit, cond=…, source=…)`. Fields carry their source tag (`'ref'`, `'read_sheet'`, `'tabular'`, …) so later merges respect priority.
+After parse, `compile_part_datasheet` appends discovery/vendor `part.specs` and GaN `fallback_specs` at lowest priority.
 
-`subsctract_needed_symbols(need, have, copy=True)` is used everywhere to skip expensive extraction stages once a symbol is satisfied. It accepts tuple-symbol aliases.
+Entry point is `dslib.pdf.parse.parse_datasheet(...)`, called from `main.py:compile_part_datasheet`. Output is a `DatasheetFields` populated with `Field(symbol, min, typ, max, unit, cond=…, source=…)`. Fields carry their source tag (`'ref'`, `'v2'`, `'tabular'`, …) so later merges respect priority.
+
+`subsctract_needed_symbols(need, have, copy=True)` is used everywhere to skip expensive extraction stages once a symbol is satisfied — it is what lets text-first skip tabular. Note it is **symbol-level, not stat-level**: a symbol counts as satisfied once *any* stat is present, so a stage may be skipped even if a needed `max`/`min` is still missing. It accepts tuple-symbol aliases.
 
 The PDF cache (`@disk_cache` from `dslib/cache.py`) is keyed by file content + args and stored under `data/cache/`. Disable globally with `--no-cache` (calls `disk_cache_disable(True)`); per-worker, this must be re-called inside the worker (see `compile_part_datasheet`).
 

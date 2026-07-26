@@ -198,11 +198,13 @@ We use 3 techniques:
 
 ### Field priority
 
-1. manual fields
-2. pdf2txt + regex (first symbol)
-3. tabula + regex (first symbol)
-4. Fallback specs (GaN)
-5.
+Priority = insertion order (first non-NaN value per stat wins; later stages fill gaps):
+
+1. manual fields (`ref`)
+2. pdf2txt + regex (`text`) — runs first, both to win and to shrink the remaining `need_symbols`
+3. spatial query (`read_sheet`, + `read_charts` for Vpl) — unconditional
+4. tabula + regex (`tabular`) — expensive, so runs last and is skipped/narrowed once text+read_sheet cover the needed symbols
+5. discovery/vendor specs, then GaN fallback specs
 
 For the power loss compution we need a single discrete value of relevant fields (e.g. `Rds_on`, `Qsw`, `Qrr`).
 Datasheet specify min./max/typ values and sometimes there are multiple rows for a single value under different

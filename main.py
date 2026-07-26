@@ -71,6 +71,10 @@ def main_yaml():
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--no-download', action='store_true')
+    parser.add_argument('--tabular-harvest', action='store_true',
+                        help='run Tabula even when text+v2 already satisfy need_symbols '
+                             '(restores pre-2026-07 opportunistic harvesting of non-needed '
+                             'fields into the DB; slower -- adds a Tabula pass per covered part)')
 
     cargs = parser.parse_args(sys.argv[1:])
 
@@ -120,6 +124,10 @@ def main():
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--no-download', action='store_true')
+    parser.add_argument('--tabular-harvest', action='store_true',
+                        help='run Tabula even when text+v2 already satisfy need_symbols '
+                             '(restores pre-2026-07 opportunistic harvesting of non-needed '
+                             'fields into the DB; slower -- adds a Tabula pass per covered part)')
 
     parser.add_argument('--no-pre-select',
                         action='store_true')  # also read datasheets of parts that are out of spec, takes much longer
@@ -216,7 +224,7 @@ def run(args: RunArgs, cargs, name):
 
     parts = asyncio.run(discover_mosfets(no_obsolete=not args.includeObsolete))
     print('Discovered', len(parts), 'parts from manufacturers:', ', '.join(sorted(set(p.mfr for p in parts))))
-    print('all parts:', ','.join(sorted(set(p.mpn for p in parts))))
+    # print('all parts:', ','.join(sorted(set(p.mpn for p in parts))))
 
 
     if args.substrates:
@@ -269,7 +277,7 @@ def run(args: RunArgs, cargs, name):
                                 max_parallel=IDP_ID_RATIO if args.dcdc.controlFet.stagedSwitching else args.dcdc.controlFet.maxParallel)
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
-    print(set(p.mpn for p in parts))
+    print(', '.join(sorted(set(p.mpn for p in parts))))
     print('Vds_max:   ',
           sorted(set(int(p.specs.Vds_max) for p in parts if p.specs.Vds_max and not math.isnan(p.specs.Vds_max))))
     print('Substrates:', (set(p.specs.__dict__.get('substrate') for p in parts)))
@@ -304,7 +312,8 @@ def run(args: RunArgs, cargs, name):
                                    )
 
 
-def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False):
+def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False,
+                           tabular_harvest=False):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -351,7 +360,8 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
         ds.errors.append('excluded')
     elif os.path.isfile(ds_path):
         try:
-            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols, no_ocr=no_ocr)
+            dsp = parse_datasheet(ds_path, mfr=mfr, mpn=mpn, need_symbols=need_symbols, no_ocr=no_ocr,
+                                  tabular_harvest=tabular_harvest)
             ds.timestamp = dsp.timestamp
             ds.date_from_meta = dsp.date_from_meta
             ds.date_from_text = dsp.date_from_text
@@ -528,7 +538,8 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
     else:
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
-        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr, args.no_download)
+        jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr,
+                                 args.no_download, args.get('tabular_harvest', False))
                 for p in
                 parts_shuffled}
         results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)
