@@ -31,39 +31,60 @@ from dslib.v2.tables import (ExtractedRow, _num_with_unit, find_headers,
                              parse_rows_for_page)
 
 _V2_DIR = os.path.dirname(os.path.abspath(__file__))
+_DSLIB_DIR = os.path.dirname(_V2_DIR)
 _V2_SOURCES = ('__init__.py', 'chars.py', 'tables.py')
-_code_sig_memo = {}
+
+# Code OUTSIDE dslib/v2 that helps derive a parsed field. Each is reached from
+# parse_datasheet and each can change the numbers it returns, so each belongs
+# in the key exactly as much as chars.py does:
+#   pdf/expr.py        symbol regexes, any_unit, DIMENSIONS — which cells count
+#                      as values, and which unit is accepted for a symbol
+#   pdf/parse.py       detect_fields — which symbol a row is attributed to
+#   pdf/sheet/__init__ parse_cond_str — the conditions a Field carries
+#   field.py           get_value_with_unit and Field's unit canonicalisation —
+#                      the stored magnitude; Ohm vs mOhm is decided there
+_V2_DEP_SOURCES = (
+    os.path.join(_DSLIB_DIR, 'pdf', 'expr.py'),
+    os.path.join(_DSLIB_DIR, 'pdf', 'parse.py'),
+    os.path.join(_DSLIB_DIR, 'pdf', 'sheet', '__init__.py'),
+    os.path.join(_DSLIB_DIR, 'field.py'),
+)
 
 
 def v2_code_salt():
     """Cache salt covering the code that *derives* the result.
 
     ``hash_func_code=True`` only hashes ``parse_datasheet``'s own source, so
-    without this an edit to ``chars.py`` or ``tables.py`` would keep serving
-    the old — plausible, silently wrong — cached value forever. The symbol
-    regex table is folded in for the same reason.
+    without this an edit anywhere else would keep serving the old — plausible,
+    silently wrong — cached value forever.
 
-    ``__init__.py`` is in the list too, and leaving it out was a real hole
-    rather than a theoretical one. Everything ``parse_datasheet`` delegates to
-    in this module — ``_make_field``, the unit rules, the condition
-    canonicalisation — is invisible to ``hash_func_code``, which sees only the
-    entry point's own body. Editing the condition handling and re-running
-    served the previous answer unchanged, and it looked exactly like a fix
-    that had not worked.
+    The scope is deliberately the whole derivation and not just this package,
+    because a stale-but-plausible number is the worst thing this cache can
+    produce and it has already happened twice. ``__init__.py`` was missing from
+    the list, so everything ``parse_datasheet`` delegates to here —
+    ``_make_field``, the unit rules, the condition canonicalisation — was
+    invisible to the key; editing the condition handling and re-running served
+    the previous answer and looked exactly like a fix that had not worked. The
+    external four are the same hole one level out: another agent editing
+    ``pdf/parse.py`` changes which symbol a row becomes, and v2 would have gone
+    on serving the old attribution.
+
+    An unreadable dependency RAISES rather than being skipped. Dropping a file
+    that cannot be read would silently narrow the key and reintroduce this bug,
+    so it has to be louder than a cache miss, not quieter.
 
     Callable so decoration doesn't force ``expr``'s lazy regex tables
     (~1.7 s of regex.compile) at import time.
     """
-    key = tuple(os.path.getmtime(os.path.join(_V2_DIR, n)) for n in _V2_SOURCES)
-    sig = _code_sig_memo.get(key)
-    if sig is None:
-        h = hashlib.sha256()
-        for n in _V2_SOURCES:
-            with open(os.path.join(_V2_DIR, n), 'rb') as f:
-                h.update(f.read())
-        sig = h.hexdigest()[:16]
-        _code_sig_memo.clear()
-        _code_sig_memo[key] = sig
+    # Private, but same project. Memoized by (path, mtime, size), so once warm
+    # this is a stat per file per call rather than a re-hash.
+    from dslib.cache import _file_content_sig
+    h = hashlib.sha256()
+    for n in _V2_SOURCES:
+        h.update(_file_content_sig(os.path.join(_V2_DIR, n)).encode())
+    for p in _V2_DEP_SOURCES:
+        h.update(_file_content_sig(p).encode())
+    sig = h.hexdigest()[:16]
     from dslib.pdf.expr import get_field_detect_regex
     from dslib.v2.chars import DEFAULT_BACKEND
     # the backend is chosen by env var, not by an argument, so it would
@@ -199,12 +220,13 @@ def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
 _COND_ITEM_RE = re.compile(
     r"([^,;=]{1,24})[=≈]\s*([+-]?\d[\d.]*\s*[a-zA-Zµμ°Ω%]{0,3})")
 
-# pdfminer and fitz emit GREEK SMALL LETTER MU (U+03BC) for the micro prefix,
-# while dslib.pdf.sheet.parse_cond_str only tests MICRO SIGN (U+00B5) — so
-# "ID = 250 μA" scales to 250 instead of 2.5e-4, a factor of a million, and it
-# lands inside every downstream sanity band. Normalised here rather than in
-# the shared parser, which the legacy extractors also depend on.
-_MICRO_NORMALISE = str.maketrans({"μ": "µ"})
+# Both micro codepoints appear in the wild — MICRO SIGN (U+00B5) and GREEK
+# SMALL LETTER MU (U+03BC) — and the char class above accepts either so the
+# unit is captured. SCALING them is parse_cond_str's job and it now handles
+# both; v2 deliberately does NOT normalise first. A local workaround here
+# would keep working if that shared fix were ever reverted, which would hide
+# the regression from v2 while legacy extractors silently went back to reading
+# "250 μA" as 250.
 
 
 def _parse_cond_text(text: str, parse_cond_str) -> dict:
@@ -220,7 +242,7 @@ def _parse_cond_text(text: str, parse_cond_str) -> dict:
     win the selection outright.
     """
     out = {}
-    for m in _COND_ITEM_RE.finditer(text.translate(_MICRO_NORMALISE)):
+    for m in _COND_ITEM_RE.finditer(text):
         val = m.group(2).strip()
         # The symbol is the tail of whatever precedes the "=", and how much of
         # that tail is narrowed down by trying the shortest reading first.

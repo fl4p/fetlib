@@ -138,6 +138,10 @@ def compare(v2_ds, ref_ds, rtol: float, symbols: Optional[set] = None,
     """Bucket every (symbol, stat) pair of a v2 result against a reference.
 
     Returns (counts, details) where details lists the non-agreeing pairs.
+
+    NOTE what this does NOT see: it reads ``fields_filled``, the single merged
+    Field per symbol, so it is blind to whether the OTHER candidates for that
+    symbol can be reached at all. See ``selection_audit``.
     """
     counts = defaultdict(int)
     details = []
@@ -175,6 +179,59 @@ def compare(v2_ds, ref_ds, rtol: float, symbols: Optional[set] = None,
                 counts['v2_only'] += 1
                 details.append(dict(symbol=sym, stat=stat, ref=None, v2=gv,
                                     kind='v2_only'))
+    return counts, details
+
+
+def selection_audit(v2_ds, symbols=None):
+    """Can a consumer address each candidate BY ITS OWN CONDITION?
+
+    ``compare`` reads ``fields_filled`` — one merged Field per symbol — so it
+    cannot see conditions at all. A change that makes the VGS=10V and the
+    VGS=4.5V rows distinguishable moves nothing there, and a whole slice of
+    condition work scored an exactly-zero delta on every bucket while
+    demonstrably fixing a 2.2x wrong hot Rds_on. Zero delta meant NOT MEASURED.
+
+    This measures the property the consumers actually rely on:
+    ``dslib/field.py:_get_by_cond`` picks among candidates by scoring their
+    cond dicts, so for every symbol with more than one candidate, asking for
+    candidate C's own condition must return C. If it returns a sibling, that
+    candidate is unreachable no matter how correct its value is — which is
+    what identical conds on two rows does.
+
+    Reference-free by construction: it needs no DB and no truth set, so it
+    cannot reward reproducing their errors.
+
+    Only symbols with >= 2 candidates count — with one candidate the selector
+    has no choice to get wrong, and counting those would inflate the rate with
+    trivial passes. A candidate carrying no cond is counted as ``no_cond``, its
+    own bucket, never as a pass: it is precisely the unaddressable case.
+    """
+    counts = defaultdict(int)
+    details = []
+    for sym, lst in (v2_ds.fields_lists or {}).items():
+        if symbols and sym not in symbols:
+            continue
+        if not lst or len(lst) < 2:
+            continue
+        for f in lst:
+            cond = f.cond if isinstance(f.cond, dict) else None
+            cond = {k: v for k, v in (cond or {}).items()
+                    if isinstance(k, str) and isinstance(v, (int, float))}
+            if not cond:
+                counts['no_cond'] += 1
+                details.append(dict(symbol=sym, kind='no_cond',
+                                    value=f.typ_or_max_or_min))
+                continue
+            got = v2_ds._get_by_cond(sym, cond)
+            if got is f:
+                counts['selectable'] += 1
+            else:
+                counts['unselectable'] += 1
+                details.append(dict(
+                    symbol=sym, kind='unselectable', cond=cond,
+                    want=f.typ_or_max_or_min,
+                    got=(got.typ_or_max_or_min if got is not None else None),
+                    got_cond=(got.cond if got is not None else None)))
     return counts, details
 
 
@@ -269,6 +326,11 @@ def run(args) -> dict:
                 parts_out.append(rec)
                 continue
 
+            c, d = selection_audit(ds, symbols)
+            if c:
+                rec['sel'] = dict(c)
+                rec['sel_details'] = d[:args.max_details]
+
             ref = db.get((mfr, mpn))
             if ref is not None:
                 c, d = compare(ds, ref, args.rtol, symbols, pdf_sourced_only=True)
@@ -322,6 +384,20 @@ def _fmt_acc(a: Optional[float]) -> str:
     return 'n/a' if a is None else '%5.1f%%' % (100 * a)
 
 
+def _sel_rate(c: Dict[str, int]) -> Optional[float]:
+    """Share of multi-candidate rows reachable by their own condition.
+
+    ``no_cond`` is in the denominator on purpose — a candidate with no
+    condition is unaddressable, which is the failure, not an abstention.
+    Returns None when no symbol had competing candidates at all, so "nothing to
+    disambiguate" cannot read as a perfect score.
+    """
+    n = c.get('selectable', 0) + c.get('unselectable', 0) + c.get('no_cond', 0)
+    if n == 0:
+        return None
+    return c.get('selectable', 0) / n
+
+
 def report(res: dict, verbose: bool = False) -> None:
     parts = res['parts']
     uneval = [p for p in parts if 'unevaluated' in p]
@@ -332,6 +408,15 @@ def report(res: dict, verbose: bool = False) -> None:
     if res['seconds_per_part']:
         print('speed  : %.2f s/part total %.1f s'
               % (res['seconds_per_part'], res['seconds_total']))
+
+    sel = _sum(parts, 'sel')
+    if sel:
+        print('-' * 78)
+        print('select  selectable=%d unselectable=%d no_cond=%d  rate=%s'
+              % (sel.get('selectable', 0), sel.get('unselectable', 0),
+                 sel.get('no_cond', 0), _fmt_acc(_sel_rate(sel))))
+        print('        (multi-candidate rows reachable by their own cond;'
+              ' reference-free)')
 
     for tier in ('truth', 'db'):
         tot = _sum(parts, tier)
@@ -405,6 +490,21 @@ def compare_runs(a_path: str, b_path: str) -> None:
 
     print('speed  : %.2f -> %.2f s/part  (%.2fx)'
           % (spp(a), spp(b), spp(a) / spp(b) if spp(b) else float('nan')))
+
+    sa, sb = _sum(a['parts'], 'sel'), _sum(b['parts'], 'sel')
+    if sa or sb:
+        print('-' * 78)
+        for k in ('selectable', 'unselectable', 'no_cond'):
+            va, vb = sa.get(k, 0), sb.get(k, 0)
+            flag = ''
+            if k == 'selectable' and vb < va:
+                flag = '  <-- REGRESSION'
+            if k in ('unselectable', 'no_cond') and vb > va:
+                flag = '  <-- REGRESSION'
+            print('%-6s %-12s %5d -> %5d  (%+d)%s'
+                  % ('select', k, va, vb, vb - va, flag))
+        print('%-6s %-12s %s -> %s'
+              % ('select', 'rate', _fmt_acc(_sel_rate(sa)), _fmt_acc(_sel_rate(sb))))
 
     for tier in ('truth', 'db'):
         ta, tb = _sum(a['parts'], tier), _sum(b['parts'], tier)

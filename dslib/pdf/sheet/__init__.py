@@ -314,7 +314,12 @@ def parse_cond_str(cond):
         if u:
             if u[0] == 'm':
                 s = 1e-3
-            elif u[0] in {'µ', 'u'}:
+            elif u[0] in {'µ', 'μ', 'u'}:
+                # BOTH micro codepoints: MICRO SIGN U+00B5 and GREEK SMALL
+                # LETTER MU U+03BC. Only the first was listed, and PDFs
+                # overwhelmingly emit the second — so "ID = 250 μA" was read as
+                # 250 A, out by 1e6, and it lands inside every downstream
+                # sanity band rather than tripping one.
                 s = 1e-6
             elif u[0] == 'n':
                 s = 1e-9
