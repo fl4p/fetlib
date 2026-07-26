@@ -615,6 +615,50 @@ def _cond_from_column(row: TextRow,
     return _join_value_words(cand).strip()
 
 
+# A bare voltage parenthesised in the symbol cell, as in "Qg(4.5V)".
+_LABEL_VOLTAGE_RE = re.compile(r'\(\s*(\d+(?:\.\d+)?)\s*V\s*\)', re.I)
+
+# Symbols where that voltage is the GATE DRIVE. Charge only, deliberately.
+# For Qg the parenthesised voltage is the VGS the charge was measured at --
+# that is the whole point of printing two of them. Extending this to, say,
+# resistance would need its own evidence: "RDS(on)" already parenthesises a
+# word, and while "(on)" cannot match a number, some other vendor's
+# "R(4.5V)" might mean something else entirely.
+_LABEL_VOLTAGE_SYMBOLS = frozenset({
+    "Qg", "Qgs", "Qgd", "Qsw", "Qoss", "Qg_th", "Qgs2",
+})
+
+
+def _cond_from_symbol_label(row: TextRow,
+                            cols: Dict[str, Tuple[float, float]],
+                            symbol: str) -> Optional[str]:
+    """Recover a condition printed inside the SYMBOL, not the Conditions cell.
+
+    ao/AOT284L states the gate drive in the parameter's own name::
+
+        Qg (10V)  Total Gate Charge   71   100 nC
+        Qg(4.5V)  Total Gate Charge  33.5   48 nC
+
+    both under ONE merged "VDS=40V, VGS=10V, ID=20A" conditions cell. No
+    amount of cell-boundary work reaches this: the cell is genuinely shared,
+    and the thing that separates the rows was never in it. Without the label
+    the two rows are indistinguishable, so ``_get_by_cond`` asking for VGS=10
+    can return the 4.5 V charge -- and Qg times gate-drive voltage is a loss
+    term the tool ranks on, so that is a wrong number rather than a lost one.
+
+    Measured over 100 random sheets: this pattern occurs 6 times and is `Qg`
+    every time, always as a 10 V / 4.5 V pair. It is narrow on purpose.
+    """
+    if symbol not in _LABEL_VOLTAGE_SYMBOLS or "sym" not in cols:
+        return None
+    x1, x2 = cols["sym"]
+    cell = ' '.join(w.text for w in row.words if x1 <= w.bbox.cx <= x2)
+    m = _LABEL_VOLTAGE_RE.search(cell)
+    if not m:
+        return None
+    return "VGS = %s V" % m.group(1)
+
+
 # ---------- bandying it all together ----------
 
 
@@ -1061,6 +1105,18 @@ def parse_rows_for_page(mfr: str,
                     if not cond:
                         cond = _cond_with_continuation(scan, v_idx, header.cols)
                         cond_src = "wrap" if cond else None
+                # A condition printed in the symbol's own name is MORE specific
+                # than anything the shared Conditions cell says. It goes FIRST
+                # because _parse_cond_text keeps the first statement of a key,
+                # matching the first-wins priority used throughout dslib — so
+                # "Qg(4.5V)" under a merged "VGS=10V" cell reads as 4.5 V.
+                label = _cond_from_symbol_label(value_row, header.cols, symbol)
+                if label is None and value_row is not item["row"]:
+                    label = _cond_from_symbol_label(item["row"], header.cols,
+                                                    symbol)
+                if label:
+                    cond = ("%s; %s" % (label, cond)) if cond else label
+                    cond_src = (cond_src + "+label") if cond_src else "label"
                 out.append(ExtractedRow(symbol=symbol,
                                         row=value_row,
                                         values=values,
