@@ -439,6 +439,28 @@ def gate_drive_vgs(ds: DatasheetFields, gd: GateDrive) -> float:
     return float(gd.Von)
 
 
+def get_reference_fet_specs(ds: DatasheetFields):
+    """Specs at the DATASHEET REFERENCE gate voltage, for generic parts-DB and utility use.
+
+    Exists because `get_fet_specs` requires a GateDrive, and the generic builders
+    (apps/process_parts.py, apps/refresh_part_specs.py) have no design to speak for. Making
+    them invent a GateDrive would be worse than naming what they actually want: the vendor's
+    characterisation point, not any particular converter's.
+
+    DO NOT rank on this. The distinction is not cosmetic — specs selected at a design's real
+    Vgs are design-specific, and `parts_db` is keyed on (mfr, mpn) with no Vgs recorded, so
+    persisting design specs under that key lets a 5 V run silently overwrite the reference
+    Rds_on/Qg every later consumer reads. Reference specs are the only kind safe to store
+    there. main.run still persists design specs at :325 — that is the open half of this
+    split, and it is why the boundary is named rather than implicit.
+    """
+    try:
+        return ds.get_mosfet_specs()        # Vgs=None -> dslib.field._DATASHEET_REF_VGS
+    except Exception as e:
+        ds.errors.append('specs error: ' + str(e))
+        return None
+
+
 def get_fet_specs(ds: DatasheetFields, gd: GateDrive):
     """`gd` is REQUIRED on purpose.
 

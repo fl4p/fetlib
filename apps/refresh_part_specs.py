@@ -238,9 +238,11 @@ def _ds_to_specs(ds: DatasheetFields, prev_part: Part) -> Optional[Part]:
     the existing ``prev_part.discovered`` if the parsed DS doesn't carry a
     ``part`` attribute (older pickles).
     """
-    from main import get_fet_specs
+    from main import get_reference_fet_specs
 
-    fet_specs = get_fet_specs(ds)
+    # Reference specs, not design specs — see main.get_reference_fet_specs. This refreshes
+    # the shared parts DB, so a design's gate voltage must not leak into it.
+    fet_specs = get_reference_fet_specs(ds)
     if fet_specs is None:
         return None
 

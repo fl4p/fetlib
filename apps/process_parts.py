@@ -6,7 +6,7 @@ from discover_parts import discover_mosfets
 from dslib.field import DatasheetFields
 from dslib.pdf.tabular import tabula_is_running
 from dslib.store import Part, parts_db
-from main import compile_part_datasheet, get_fet_specs
+from main import compile_part_datasheet, get_reference_fet_specs
 
 need_symbols = {
     'tRise', 'tFall',  # HS
@@ -28,7 +28,10 @@ def _process_one_part(part: Part, no_cache=False, no_ocr=False, no_download=Fals
             dates = list(*filter(bool, [ds.date_from_text, ds.date_from_meta]))
             if dates:
                 part.discovered.release_date = min(*dates)
-        part.specs = get_fet_specs(ds)
+        # Reference specs, not design specs: this is a generic parts-DB builder with no
+        # converter to speak for, and what lands in parts_db must not depend on the last
+        # config that happened to run. See main.get_reference_fet_specs.
+        part.specs = get_reference_fet_specs(ds)
         return part, None
     except Exception as e:
         err = (f'  error compiling {part.mfr} {part.mpn}: '
