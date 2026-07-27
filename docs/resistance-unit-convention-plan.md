@@ -272,7 +272,7 @@ separating the two failure modes:
 (a) ∧ (b) give the matrix. A further test asserts the copied tree reproduces the real
 signature, so a broken copy cannot make (a) vacuous.
 
-Calibrated in `test/unit/test_field_repr_salt.py` (11 tests). The closure test is
+Calibrated in `test/unit/test_field_repr_salt.py` (15 tests). The closure test is
 parametrised over **every** declared dependency and asserts the salt moves for each, since
 a dependency that does not reach the key is a silent hole. It also asserts an unreadable
 dependency **raises** rather than narrowing the key, and that prose is *not* free.
@@ -291,7 +291,19 @@ firing: 0 `Rth` fields among the 61046 R-fields in the shipped DB (`Rds_on` 2447
 
 **Cost incurred now:** v2's cache is keyed on `field.py` content, so this session's edits
 already invalidated it for the whole corpus (~1.9 s/part x 6040 ≈ 3.2 h of re-parsing on
-the next full run). The other four only rebuild when the representation actually changes.
+the next full run). The other four now behave the same way — under the content-hash policy
+they rebuild on **any** edit to a declared dependency, comments included. An earlier version
+of this line said they rebuild "only when the representation actually changes", which
+described the reverted function-granular salt and understated the accepted cost.
+
+**Residual limitation (not the former blocker).** `_FIELD_REPR_SIG` is computed while
+`field.py`'s module body executes, which is *after* the loader has already compiled the
+`Field` code and after the dependency modules may already be imported. An edit landing in
+that window binds loaded-old semantics to a new-disk signature. The window is milliseconds
+at process startup rather than the whole lifetime of a run, so this is a limitation to know
+about rather than the per-call inversion it replaced; closing it properly means hashing each
+loaded artifact's source as the loader saw it, or requiring source quiescence at startup.
+Worth revisiting only if agents are editing during pipeline launches.
 
 ### Phase 3 — only now, repair the data
 

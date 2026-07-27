@@ -199,6 +199,13 @@ def field_repr_salt(root=None):
       - This says nothing about whether an already-pickled Field is canonical. It stops
         MIXING generations by rebuilding on change; repairing existing DB records is
         Phase 3 in docs/resistance-unit-convention-plan.md.
+      - The import snapshot is computed while THIS module body executes, i.e. after the
+        loader compiled the Field code above and after the dependency modules may already
+        be imported. An edit landing inside that window binds loaded-old semantics to a
+        new-disk signature. That is milliseconds at startup rather than the whole run, so
+        it is a narrow residual and not the per-call inversion it replaced. Closing it
+        properly means hashing each loaded artifact's source as the loader saw it (e.g. via
+        each module's __loader__.get_source) or requiring source quiescence at startup.
 
     `root` exists ONLY so the calibration tests can perturb COPIES under tmp_path instead of
     rewriting live sources -- the previous tests truncated and rewrote production files, and
