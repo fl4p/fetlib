@@ -212,8 +212,23 @@ def test_writer_canonicalises_only_the_three_electrical_symbols():
 
 
 def test_the_1000x_this_salt_exists_to_prevent():
-    """Pins the defect the salt gates, so if fill() is ever made unit-aware this records
-    what the old behaviour was."""
+    """The original reproduction, now asserting that the guard CLOSES it.
+
+    This used to pin the defect itself -- merged max=6.0 under unit ':', read back as
+    6000 mΩ for a 6 mΩ part -- with a docstring noting it would need rewriting if fill()
+    ever became unit-aware. It has. So the setup is kept verbatim, because it is the exact
+    cross-generation merge the salt exists to prevent, and only the expectations move: the
+    incoming candidate is now REJECTED rather than merged.
+
+    Why rejection and not conversion. The base unit here is the corrupt ':' spelling, which
+    is ohm-scale, not canonical mΩ. Re-expressing the incoming 6 mΩ as 0.006 ':' would be
+    arithmetically correct and would still be wrong, because anything reading .max directly
+    instead of through get_resistance_milliohm sees a magnitude 1000x low. Rejecting leaves
+    the candidate in fields_lists, where the reader resolves scale from its OWN unit.
+
+    NaN is the honest outcome: the merged Field genuinely has no trustworthy max. A number
+    here would be the failure, whichever direction it pointed.
+    """
     stale = Field('Rds_on', math.nan, 0.005, math.nan, None)
     stale.unit = ':'                       # a pre-canonicalisation cache generation
 
@@ -225,7 +240,10 @@ def test_the_1000x_this_salt_exists_to_prevent():
     ds.add(fresh)
     merged = ds.fields_filled['Rds_on']
 
-    # fill() copies stats between candidates without converting or comparing units, so the
-    # merged Field carries one raw stat and one canonical stat under a single unit.
-    assert merged.typ == 0.005 and merged.max == 6.0 and merged.unit == ':'
-    assert ds.get_resistance_milliohm('Rds_on', stat='max') == 6000.0
+    assert merged.typ == 0.005, 'the pre-existing stat must survive untouched'
+    assert math.isnan(merged.max), 'a stat from another scale was merged in'
+    assert merged.unit == ':', 'base unit must not be silently rewritten'
+    assert getattr(merged, '_rejected_fills', 0) == 1, 'the rejection did not happen'
+
+    # the 1000x itself: this returned 6000.0 for a 6 mΩ part before the guard
+    assert math.isnan(ds.get_resistance_milliohm('Rds_on', stat='max'))

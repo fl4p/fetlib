@@ -105,6 +105,111 @@ def ohm_unit_to_milli_mul(unit):
     return None
 
 
+def unit_dimensions(unit) -> frozenset:
+    """Which physical dimensions `unit` could belong to, as DIMENSIONS keys.
+
+    Classifies against expr.py's DIMENSIONS -- the SAME unit_regex the parsers use -- rather
+    than a second table here. A parallel table is what produced the writer/reader split this
+    module spent a day removing, so there is exactly one place a unit's dimension is decided.
+
+    Returns an EMPTY set for an unknown or empty unit, and a set of size > 1 for a genuinely
+    ambiguous one ('W' is in both electrical resistance, via OCR confusion with omega, and
+    nothing else here -- but '°C' is temperature while '°C/W' is thermal resistance, and the
+    R and r regexes overlap on real strings). Callers must treat both cases as "cannot
+    decide" and must not infer compatibility from them.
+    """
+    u = (unit or '').strip()
+    if not u:
+        return frozenset()
+
+    from dslib.pdf.expr import DIMENSIONS
+    dims = set()
+    for name, dim in DIMENSIONS.items():
+        rx = getattr(dim, 'unit_regex', None)
+        if not rx:
+            continue
+        try:
+            if re.fullmatch(rx, u):
+                dims.add(name)
+        except re.error:
+            continue
+
+    # _OHM_BODY is deliberately WIDER than expr's R unit_regex (':', 'o', 'OQ', debris
+    # prefixes, bare 'm'), so ask the resistance helper too or those read as unknown.
+    if ohm_unit_to_milli_mul(u) is not None:
+        dims.add('R')
+    return frozenset(dims)
+
+
+def units_provably_incompatible(a, b) -> bool:
+    """True only when a and b are KNOWN to name different dimensions.
+
+    Deliberately one-directional: an unknown or ambiguous unit yields False (compatible),
+    never True. This is a merge guard, and refusing to merge on "I could not tell" would
+    discard the unitless values that are the NORM for several symbols -- Rds_on_10v is 100%
+    unitless in the shipped DB by construction. So absence of evidence does not cause a
+    rejection here.
+
+    That is a weaker guarantee than this module's usual rule, and it is only acceptable
+    because it is not the last line of defence: get_resistance_milliohm independently
+    refuses a cross-dimension unit at READ time, and returns NaN rather than a scaled
+    number. This guard exists to stop the incoherent Field from being BUILT; that one stops
+    a bad value from being believed.
+    """
+    da, db = unit_dimensions(a), unit_dimensions(b)
+    if len(da) != 1 or len(db) != 1:
+        return False
+    return da.isdisjoint(db)
+
+
+def expected_dimension(symbol):
+    """The physical dimension implied by a normalized Field symbol.
+
+    This is intentionally about the symbol, not a candidate's unit. Candidate-to-candidate
+    comparison alone is symmetric and therefore lets a bad first candidate establish the
+    dimension: a pF row captured as Rg would then reject every later, genuine resistance
+    row. The parser's normalized symbol vocabulary is small and stable, so make that
+    asymmetry explicit here.
+    """
+    if symbol in _WRITER_CANONICAL_SYMBOLS:
+        return 'R'
+    if symbol.startswith('Rth'):
+        return 'r'
+    if symbol.startswith('C'):
+        return 'C'
+    if symbol.startswith('Q'):
+        return 'Q'
+    if symbol.startswith('V'):
+        return 'V'
+    if symbol.startswith('I') or symbol.startswith('Id'):
+        return 'I'
+    if symbol.startswith('t'):
+        return 't'
+    if symbol == 'gfs':
+        return 'g'
+    return None
+
+
+def unit_quality_for_symbol(symbol, unit) -> int:
+    """How strongly `unit` supports belonging to `symbol`'s dimension.
+
+      2: explicit unit in the expected dimension
+      1: unitless (common and usable, but weaker evidence)
+      0: explicit unit whose dimension is unknown
+     -1: explicit unit in a different, known dimension
+    """
+    expected = expected_dimension(symbol)
+    u = (unit or '').strip()
+    if not expected:
+        return 1 if not u else 0
+    if not u:
+        return 1
+    dims = unit_dimensions(u)
+    if expected in dims:
+        return 2
+    return -1 if dims else 0
+
+
 # Files whose content decides how a Field STORES a value. Not just this module: the
 # conversion reaches out of it, and every edge is a place the old function-granular salt
 # was blind.
@@ -427,35 +532,106 @@ class Field():
         raise ValueError()
 
     def fill(self, f: 'Field', update_min_max=False):
+        """Merge the stats of candidate `f` into self, filling only what self lacks.
+
+        TRANSACTIONAL and unit-aware. It decides every stat first and mutates afterwards,
+        because the previous shape could not be guarded correctly: a post-hoc check runs
+        after the mutation, so the only thing left to sacrifice is a stat that may well be
+        the GOOD one. Measured on ao/AOB66515L, where text's correct max=1180 arrives first
+        and v2's wrong typ=1.18 merges second, a "discard the impossible max" guard threw
+        away the only sound value and kept the wrong one -- worse than the incoherent field
+        it was meant to prevent. Rejecting the INCOMING stat before mutating cannot do that.
+
+        The unit check is why this exists. A Field carries ONE unit, but this method used to
+        copy stats in from candidates quoted in another, and the reader then applied the base
+        unit to all of them. Measured on the shipped DB: vishay/SUM60N10-17 had Rds_on.min
+        taken from an AMPERE cell (100 A) beside a genuine 13-16.5 mΩ typ/max, and
+        infineon/FF4000UXTR33T2M1BPSA1 had Rg.min from a MICROSECOND cell. Those stats are
+        not resistances at all, and get_resistance_milliohm -- which keys on the FIELD's
+        unit, not the stat's -- would happily scale them.
+        """
         if update_min_max:
             raise NotImplemented()
             # TODO min, max updates?
 
-        # if f has more values, use all of them
-        # todo this is questionable
-        # is_sup = len(f) > len(self) and (not self._sources or 'ref' in self._sources)
-        is_sup = False
-
         nz = self.symbol in self.not_zero_symbols
         lower = 0 if nz else -float('inf')
 
-        for s in Field.StatKeys:
-            if is_sup or (math.isnan(getattr(self, s)) and not math.isnan(getattr(f, s))
-                          and getattr(f, s) >= lower) or (nz and getattr(self, s) == 0):
-                setattr(self, s, getattr(f, s))
-                self._sources[s] = f._sources[s]
-            if not math.isnan(getattr(self, s)):
-                lower = getattr(self, s)
+        # Reject the whole candidate when its unit contradicts either the symbol or the
+        # dimension already established. The symbol check is essential: comparison only
+        # against self lets a bad first candidate protect itself from every later good one.
+        # DatasheetFields.add() also applies the symbol check before choosing the base.
+        if unit_quality_for_symbol(f.symbol, f.unit) < 0 \
+                or units_provably_incompatible(self.unit, f.unit):
+            self._rejected_fills = getattr(self, '_rejected_fills', 0) + 1
+            return
 
-        # NOT re-validated here on purpose. A post-hoc check at this point cannot be
-        # correct: fill() has already mutated self, so the only thing left to sacrifice is
-        # a stat that may well be the GOOD one. Measured on ao/AOB66515L, where text's
-        # correct max=1180 arrives first and v2's wrong typ=1.18 merges second: a
-        # "discard the impossible max" guard threw away the only sound value and kept the
-        # wrong one -- worse than the incoherent field it was meant to prevent. The fix is
-        # transactional: validate the INCOMING candidate's unit/source against the already
-        # selected stats and reject the candidate BEFORE mutating. Tracked as step 2 of
-        # docs/resistance-unit-convention-plan.md; deliberately absent rather than wrong.
+        # Same dimension, different scale: convert -- but ONLY into a canonical mΩ base.
+        #
+        # Converting into whatever unit the base happens to carry is how this went wrong the
+        # first time. Measured on infineon/IRF6644TRPBF, whose Rg base unit is the corrupt
+        # ':' spelling: re-expressing an incoming 1600 mΩ as 1.6 "Ω" is arithmetically right
+        # and the reader multiplies it back, but the STORED magnitude then reads 1000x low to
+        # anything touching .max directly instead of going through get_resistance_milliohm.
+        # That is the exact class of silent 1000x this module exists to remove, reintroduced
+        # by the fix for it. So a scale mismatch is only reconciled when the base is already
+        # canonical; otherwise the candidate is rejected and stays in fields_lists for the
+        # reader, which resolves scale from each candidate's own unit anyway.
+        # GATED ON THE SYMBOL, for the reason ohm_unit_to_milli_mul's own docstring gives and
+        # which I then ignored one function later. _OHM_BODY contains 'W', 'O', 'Q' and ':'
+        # as OCR renderings of omega, so the helper resolves those strings for ANY symbol.
+        # Ungated, this rescaled 215 Vds stats by 1000x -- a mis-OCR'd 'W' on a VOLTAGE row
+        # resolving as ohms. The gate belongs at the call site, not in the helper.
+        mul = 1.0
+        base_mul = 1.0
+        promote_base_to_milliohm = False
+        if self.symbol in _WRITER_CANONICAL_SYMBOLS:
+            u_self, u_f = (self.unit or '').strip(), (f.unit or '').strip()
+            m_self = (ohm_unit_to_milli_mul(self.unit) if u_self
+                      else _RESISTANCE_UNITLESS_TO_MILLI.get(self.symbol))
+            m_f = (ohm_unit_to_milli_mul(f.unit) if u_f
+                   else _RESISTANCE_UNITLESS_TO_MILLI.get(f.symbol))
+
+            if m_self is not None and m_f is not None:
+                if not u_self and u_f:
+                    # An explicit resistance candidate is enough evidence to remove the
+                    # symbol-dependent unitless representation. Convert BOTH sides into the
+                    # writer's canonical mΩ before merging. This matters for Rg, whose
+                    # unitless default is Ω: 0.1 (unitless) + 3600 mΩ must become
+                    # 100/3600 mΩ, not 0.1/3600 "Ω".
+                    base_mul = m_self
+                    mul = m_f
+                    promote_base_to_milliohm = True
+                elif m_self != m_f:
+                    if m_self != _OHM_PREFIX_TO_MILLI['m']:
+                        self._rejected_fills = getattr(self, '_rejected_fills', 0) + 1
+                        return
+                    mul = m_f / m_self
+            elif u_self and u_f and self.unit != f.unit:
+                # At least one explicit unit has unknown scale. Combining their stats under
+                # either spelling would invent a shared representation.
+                self._rejected_fills = getattr(self, '_rejected_fills', 0) + 1
+                return
+
+        # Decide everything, THEN mutate.
+        pending = {}
+        for s in Field.StatKeys:
+            v_self, v_f = getattr(self, s) * base_mul, getattr(f, s) * mul
+            if (math.isnan(v_self) and not math.isnan(v_f) and v_f >= lower) \
+                    or (nz and v_self == 0):
+                pending[s] = v_f
+                v_self = v_f
+            if not math.isnan(v_self):
+                lower = v_self
+
+        if promote_base_to_milliohm:
+            for s in Field.StatKeys:
+                setattr(self, s, getattr(self, s) * base_mul)
+            self.unit = 'mΩ'
+
+        for s, v in pending.items():
+            setattr(self, s, v)
+            self._sources[s] = f._sources[s]
         # TODO dont fill (n,8,9) with (8,9,n)
 
     def __getitem__(self, item):
@@ -572,6 +748,33 @@ class DatasheetFields():
     def ds_path(self):
         return self.part.get_ds_path()
 
+    def all_errors(self) -> List[str]:
+        """Parse errors AND physical-consistency violations -- what every output path
+        should print.
+
+        `self.errors` alone is NOT that: it holds only what parsing appended, so a caller
+        joining it silently omits every spec violation. That is exactly how the validator
+        shipped dead the first time -- get_row() merged the violations but main.py builds
+        its result rows independently (four sites), so the flags never reached the CSV or
+        the ranking. Use this everywhere errors are surfaced.
+        """
+        return list(self.errors) + self.spec_violations()
+
+    def spec_violations(self) -> List[str]:
+        """Physical-consistency violations (dslib/validate.py), as messages.
+
+        These REPORT rather than assert, unlike the bounds in MosfetSpecs.__init__ whose
+        AssertionError makes main.py delete the part and purge its parse cache. An empty
+        list means no check FAILED -- not that the part was verified, since most records
+        lack the symbols most checks need.
+        """
+        from dslib.validate import violations
+        try:
+            return violations(self)
+        except Exception as e:
+            # A validator that falls over must not report clean.
+            return ['spec check error: %s' % e]
+
     def get_row(self):
         ds = self
         part = ds.part
@@ -613,10 +816,19 @@ class DatasheetFields():
             Qrr_typ=ds.get_typ('Qrr'),
             Qrr_max=ds.get_max('Qrr'),
 
-            tRise_ns=round(fet_specs.tRise * 1e9, 1),
-            tFall_ns=round(fet_specs.tFall * 1e9, 1),
+            # fet_specs is None whenever get_mosfet_specs() raised above -- which is exactly
+            # the case this row exists to REPORT. Dereferencing it unconditionally made
+            # get_row() raise for every part with a spec problem, so a part could not carry
+            # its own error to the CSV: the errors column was unreachable precisely when it
+            # had something to say. Qsw on the line above already guarded; these did not.
+            tRise_ns=fet_specs and round(fet_specs.tRise * 1e9, 1),
+            tFall_ns=fet_specs and round(fet_specs.tFall * 1e9, 1),
 
-            errors=', '.join(self.errors),
+            # Physical-consistency violations ride in the SAME column as parse errors, but
+            # are computed fresh rather than appended to self.errors -- get_row() is called
+            # more than once per part, and appending would duplicate them. See
+            # dslib/validate.py for why these report instead of asserting.
+            errors=', '.join(ds.all_errors()),
             # dates=', '.join(map(lambda d: d.strftime('%Y-%m'), sorted({min(self.dates), max(self.dates)}))),
             date=self.date_from_text.strftime('%Y-%m') if self.date_from_text else '',
             dateC=self.date_from_meta.strftime('%Y-%m') if self.date_from_meta else '',
@@ -624,11 +836,33 @@ class DatasheetFields():
 
     def add(self, f: Field):
         assert not math.isnan(f.typ_or_max_or_min)
+        self.fields_lists.setdefault(f.symbol, []).append(f)
+
+        candidate_quality = unit_quality_for_symbol(f.symbol, f.unit)
+        if candidate_quality < 0:
+            # Retain it for audit/condition-specific inspection, but never let a unit from
+            # a known different dimension establish the aggregate Field.
+            base = self.fields_filled.get(f.symbol)
+            if base is not None:
+                base._rejected_fills = getattr(base, '_rejected_fills', 0) + 1
+            return
+
         if f.symbol not in self.fields_filled:
             self.fields_filled[f.symbol] = copy(f)
-            self.fields_lists[f.symbol] = []
-        self.fields_lists[f.symbol].append(f)
-        self.fields_filled[f.symbol].fill(f)
+            return
+
+        base = self.fields_filled[f.symbol]
+        base_quality = unit_quality_for_symbol(base.symbol, base.unit)
+        if base_quality == 0 and candidate_quality > 0:
+            # An unknown explicit unit is weaker evidence than either a unitless value or a
+            # unit in the expected dimension. Do not let it lock out the first usable base.
+            self.fields_filled[f.symbol] = copy(f)
+            return
+        if candidate_quality == 0 and base_quality > 0:
+            base._rejected_fills = getattr(base, '_rejected_fills', 0) + 1
+            return
+
+        base.fill(f)
 
     def add_multiple(self, fields: Iterable[Field], source=None):
         for f in fields:
@@ -832,6 +1066,16 @@ class DatasheetFields():
             return math.nan
         v = f.max_or_typ if stat == 'max_or_typ' else getattr(f, stat)
         if v is None or math.isnan(v):
+            return math.nan
+
+        # No MOSFET has a non-positive on-resistance or gate resistance, at any scale, so
+        # this needs no calibration and cannot cost a real part. Rejected BEFORE unit and
+        # default scaling, because scaling a miscapture only launders it: IXTK170P10P /
+        # IXTR170P10P / IXTX170P10P store Rg=-14.2 and this function was returning
+        # -14200 mOhm for them, which then flows into the loss model unchallenged.
+        if v <= 0:
+            warnings.warn('%s %s is non-positive (%r); refusing it'
+                          % (getattr(getattr(self, 'part', None), 'mpn', '?'), sym, v))
             return math.nan
 
         milli_mul = ohm_unit_to_milli_mul(f.unit)
