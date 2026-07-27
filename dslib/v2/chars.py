@@ -630,11 +630,11 @@ def _pages_pdfminer(pdf_path: str, max_pages: int,
     is up to 3x faster and yields byte-identical glyphs.
 
     ``page_numbers`` (0-based) restricts the parse to those pages. This is the
-    lever the auto backend uses: measured at 134.7 ms per page against fitz's
-    9.7 ms, pdfminer is 14x the cost, and re-reading a whole document because
-    one page lost a glyph spends most of that on pages fitz already read
-    correctly. When given, ``maxpages`` is not also applied — the caller has
-    already chosen exact indices.
+    lever the auto backend uses: pdfminer costs ~119 ms per page against fitz's
+    ~7 ms, roughly 16x, so re-reading a whole document because one page lost a
+    glyph spends most of that on pages fitz already read correctly. When given,
+    ``maxpages`` is not also applied — the caller has already chosen exact
+    indices.
     """
     from pdfminer.high_level import extract_pages
 
@@ -823,9 +823,21 @@ def extract_pages_with_rows(pdf_path: str,
 
         # Readable, but some pages carry glyphs fitz could not name. Only THOSE
         # pages need the slow backend. Re-reading the whole document costs
-        # 134.7 ms per page against fitz's 9.7 ms and spends most of it on pages
+        # ~119 ms per page against fitz's ~7 ms and spends most of it on pages
         # fitz already read correctly — measured, roughly half the pages of a
         # typical fallback document are clean.
+        #
+        # A/B on a pinned 25-part sample, both arms back to back on an
+        # uncontended machine (contention factor 1.0x), CPU time:
+        #
+        #   whole-document fallback   439 ms/part   pdfminer 57 pages, 6.77 s
+        #   page-selective            342 ms/part   pdfminer 31 pages, 4.39 s
+        #
+        # i.e. -22.1%. The commit that introduced this claimed -8.9%; that
+        # figure came from a machine stalling on the mem-cache lock fixed in
+        # 20d4e185, over a sample drawn by seeded shuffle from a corpus that
+        # discovery was rewriting mid-run. Both are fixed here: the sample is
+        # pinned to a file list and the stall is gone.
         #
         # The result is a document whose pages come from different backends.
         # That is safe because every consumer that mixes a page's baselines with
