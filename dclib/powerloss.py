@@ -40,28 +40,40 @@ from maglib.wire import d2awg, MaterialResistivity, acr_factor_micrometals, skin
 Qrr_temp_rise_default = 1.2
 
 
-def qrr_rankable_at_operating_point(qrr_didt, qrr_src) -> bool:
+def qrr_rankable_at_operating_point(op_requested, qrr_src) -> bool:
     """May a part with this `Qrr_src` sit in a ranking built AT the operating point?
 
     Lives here, beside the code that produces `Qrr_src`, so the vocabulary and its
     meaning-for-ranking cannot drift apart in two files.
 
-    False only for the explicit `datasheet-flat-nofit` state, and only when an operating
-    point was actually requested. The distinction matters in both directions:
+    ALLOWLIST, not a denylist: when an operating point was requested, a row is rankable
+    only if it carries an `op-` state, i.e. one the model actually evaluated there
+    (`op-1pt`, `op-1pt-parsed`, `op-2pt`, `op-zero`). Anything else -- today's
+    `datasheet-flat*`, and any state a future edit to dcdc_buck_ls introduces -- is
+    excluded. A new low-confidence tier must not become rankable just by not matching one
+    hard-coded bad string; unrecognised has to mean unverified, not fine.
+    `op-zero` (GaN) stays: zero charge is an evaluated result, not a missing one.
 
-      * flag off -> `datasheet-flat` is the ANSWER, not a failure. Filtering then would
-        empty the CSV, which is why this is gated on `qrr_didt` rather than on the string
-        alone.
-      * `op-zero` (GaN) is a real evaluated result -- zero charge -- and stays.
+    `op_requested` is the CONFIG FLAG, deliberately not "did we end up with a di/dt".
+    Keying on the di/dt being None conflated two different states -- flag off, and flag
+    on but ls_commutation_didt() could not form an operating point because the HS gate
+    charges were missing. The second then fell through to the flat charge labelled
+    `datasheet-flat`, indistinguishable in the CSV from a legitimate flag-off row, and
+    the filter waved it through. Measured at the fugu3 point: 75 parts hit that path and
+    9 of them reached the ranking, ranked on the un-rescaled vendor charge -- a narrower
+    instance of exactly the bias this filter exists to remove.
 
-    A nofit row is not merely uncertain, it is biased: it keeps the vendor's gentle
+    A non-`op-` row is not merely uncertain, it is biased: it keeps the vendor's gentle
     test-point charge while every fitted row pays the real commutation charge (p50 ~6x
     larger at the fugu3 point). Ranked together, missing data reads as a good part --
-    measured: 8 of the top 10 LS parts were nofit rows before this filter existed.
+    measured: 8 of the top 10 LS parts were such rows before this filter existed.
     """
-    if qrr_didt is None:
+    if not op_requested:
+        # No operating point asked for -> `datasheet-flat` is the ANSWER, not a failure.
+        # Filtering here would empty the CSV of every part.
         return True
-    return qrr_src != 'datasheet-flat-nofit'
+    return bool(qrr_src) and qrr_src.startswith('op-')
+
 
 Pcl_ParallelMistmatchFactor = 0.9  # HS: one switch takes most of the dynamic load, the rest stay cooler
 
@@ -722,7 +734,7 @@ def _hs_gate_phases(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
         warnings.warn(f'{hs.part.mpn} vgs_th is NaN')
     else:
         assert vpl > vgs_th, (hs.part.mpn, vpl, vgs_th)
-    assert von > vpl
+    assert von > vpl, (hs.part, von, vpl)
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
     return dotdict(von=von, vpl=vpl, vgs_th=vgs_th, v_ir=v_ir,
                    rg_total=rg_total, rg_total_dis=rg_total_dis)

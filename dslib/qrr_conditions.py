@@ -61,12 +61,16 @@ commutation charge, so missing data read as a GOOD part -- 8 of the top 10 LS pa
 that design point were exactly those. generate_LS_power_loss_csv now excludes them
 (dclib.powerloss.qrr_rankable_at_operating_point) and writes them to a sibling
 `-LS-unranked-` CSV with the refusal reason, so they are dropped from the ranking but
-not from the output. Measured after: 2858 ranked, 1045 excluded (26.8%), and the ranked
-set contains no `datasheet-flat-nofit` row at all.
+not from the output. The filter is an ALLOWLIST -- a row is rankable only if it carries
+an `op-` state the model actually evaluated -- so a future Qrr_src state defaults to
+excluded rather than silently rankable. Measured after: 2858 ranked, 1121 excluded
+(28.2%), and every ranked row is op-1pt-parsed / op-2pt / op-1pt / op-zero.
 
-Of those 1045 exclusions, 1031 are "no reverse-recovery test conditions" -- i.e. no
-IF/di-dt could be read off the Qrr row. THAT is the curation target now: an entry here
-(or a fixed parse) puts a part back into the ranking, and nothing else does.
+Of the 1121 exclusions, ~1031 are "no reverse-recovery test conditions" -- no IF/di-dt
+readable off the Qrr row -- and 75 are parts where the HS gate charges (Qgs2/Qg_th/Vpl)
+are missing, so no commutation di/dt could be formed at all. The first group is THIS
+table's curation target: an entry here (or a fixed parse) puts a part back into the
+ranking, and nothing else does. The second needs gate-charge parsing, not conditions.
 
 Curating an entry here is still worth it for any part that matters: it overrides the
 parsed point. See docs/qrr-parsed-conditions-spotcheck.md for the sample to verify.

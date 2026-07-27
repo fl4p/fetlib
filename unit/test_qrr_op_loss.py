@@ -25,7 +25,7 @@ sys.path.insert(0, ".")
 from dclib.powerloss import (dcdc_buck_ls, ls_commutation_didt,
                              mosfet_hs_current_rise_time, mosfet_hs_sw_timings_hs2)
 from dslib.field import DatasheetFields, Field
-from dslib.mosfet import GateDrive, MosfetSpecs, attach_qrr_registries
+from dslib.mosfet import GateDrive, MosfetSpecs, attach_qrr_registries, qrr_part_key
 from dslib.spec_models import DcDcLoadParams
 
 # IPP022N12NM6 (120 V OptiMOS 6). Its datasheet quotes Qrr at TWO di/dt points, so it
@@ -101,6 +101,50 @@ def test_booked_charge_excludes_what_p_coss_already_books():
     assert d1['method'] == '1pt'
     assert d1['q0'] == 0.0 and d1['decontaminated'] is False
     assert d1['qrr_diffusion'] == d1['Qrr']
+
+
+def test_qrr_op_delegates_the_calibration_and_does_not_re_derive_it():
+    """Qrr_op must DELEGATE to qrr_model.best_lm_fit, not re-implement it.
+
+    It once re-derived all three of that function's decisions — the 2pt-vs-1pt
+    preference, the q0 decontamination, and the Qrr(Tj) exponent — which is exactly the
+    divergence best_lm_fit was written to close: the dcdc-tools deck emitter calibrates
+    off the same call, so a second copy here can silently fit a DIFFERENT diode than the
+    deck it is supposed to agree with, and nothing downstream would look wrong.
+
+    Pinned behaviourally rather than by scanning the source: whatever Qrr_op returns must
+    equal best_lm_fit + evaluate_lm_fit on the same inputs, on every branch. Evaluated at
+    Tj != the fit Tj on purpose, so a separately-resolved n_tau would show up as a
+    different charge rather than only as a different stamp."""
+    from dslib import qrr_model as qm
+
+    two_pt = _specs()                                   # curated rows -> 2pt
+    one_pt = _specs(registries=False)                   # conditions only -> 1pt
+    one_pt.qrr_cond = dict(IF=DS_IF, didt=DS_DIDT, Tj=25.0, VR=60.0)
+    # An AO die is REQUIRED here, not decoration: every infineon part resolves to the
+    # conservative bound, which is also what a re-derivation would land on by default —
+    # so an infineon-only check cannot see the exponent diverge at all.
+    ao = _specs()
+    ao.part = SimpleNamespace(mpn='AONS66811', mfr='ao')
+
+    for label, mf, qoss in (('2pt', two_pt, None),
+                            ('1pt', one_pt, None),
+                            ('1pt+qoss', one_pt, 267e-9),
+                            ('2pt-measured-n_tau', ao, None)):
+        got = mf.Qrr_op(IF=33.3, didt=5.7e9, Tj=100.0, detail=True, qoss_vr=qoss)
+        fit = qm.best_lm_fit(mf.Qrr, mf.trr, getattr(mf, 'qrr_cond', None),
+                             qrr_points=getattr(mf, 'qrr_points', None),
+                             qoss_vr=qoss, part=qrr_part_key(mf))
+        want = qm.evaluate_lm_fit(fit, 33.3, 5.7e9, Tj=100.0)
+        for k in ('Qrr', 'qrr_diffusion', 'q0', 'decontaminated', 'method',
+                  'tau', 'n_tau', 'n_tau_state'):
+            assert got[k] == want[k], (label, k, got[k], want[k])
+
+    # the fit cache must not collapse a decontaminated request onto a raw one
+    raw = one_pt.Qrr_op(IF=33.3, didt=5.7e9, detail=True)
+    dec = one_pt.Qrr_op(IF=33.3, didt=5.7e9, detail=True, qoss_vr=267e-9)
+    assert raw['q0'] == 0.0 and dec['q0'] > 0.0
+    assert dec['qrr_diffusion'] < raw['qrr_diffusion']
 
 
 def test_qrr_factor_derates_only_the_reverse_recovery():
@@ -193,17 +237,55 @@ def test_nofit_rows_are_excluded_from_an_operating_point_ranking():
         return dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=didt).get_cond('P_rr')['Qrr_src']
 
     # with an operating point requested: the unevaluable part goes, the others stay
-    assert rankable(5.7e9, src(fitted, 5.7e9)) is True
-    assert rankable(5.7e9, src(nofit, 5.7e9)) is False
-    assert rankable(5.7e9, src(gan, 5.7e9)) is True, 'GaN zero charge IS an evaluated result'
+    assert rankable(True, src(fitted, 5.7e9)) is True
+    assert rankable(True, src(nofit, 5.7e9)) is False
+    assert rankable(True, src(gan, 5.7e9)) is True, 'GaN zero charge IS an evaluated result'
 
     # with the flag OFF nothing may be filtered — 'datasheet-flat' is the answer, not a
     # failure, and filtering on the string alone would empty the CSV entirely
     for mf in (fitted, nofit, gan):
-        assert rankable(None, src(mf, None)) is True
+        assert rankable(False, src(mf, None)) is True
 
     # the dropped part carries a machine-readable reason for the unranked sheet
     assert dcdc_buck_ls(DC, nofit, gd=GD, qrr_didt=5.7e9).get_cond('P_rr')['qrr_nofit']
+
+
+def test_flag_on_but_no_didt_is_excluded_not_ranked_as_flat():
+    """The integration case a unit test of the predicate alone cannot reach.
+
+    ls_commutation_didt() returns None for TWO different reasons — flag off, and flag on
+    but the HS gate charges needed for the current-rise time are missing. dcdc_buck_ls
+    labels the second `datasheet-flat`, identical to the first. Keying the filter on the
+    di/dt therefore ranked those parts on the un-rescaled vendor charge: measured, 75
+    parts took that path and 9 reached the ranking. Reconstructed here in main.py's exact
+    call order so the two Nones cannot be conflated again."""
+    from dclib.powerloss import qrr_rankable_at_operating_point as rankable
+
+    blind = _specs(Qgs=math.nan, Qg_th=math.nan, Qgd=math.nan, Vpl=None)
+    qrr_op = True                                        # the CONFIG flag is on
+    didt = ls_commutation_didt(DC, blind, GD)
+    assert didt is None, 'precondition: this part yields no operating point'
+
+    ls = dcdc_buck_ls(DC, blind, gd=GD, qrr_didt=didt)
+    assert ls.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat'   # indistinguishable label
+    assert rankable(qrr_op, ls.get_cond('P_rr')['Qrr_src']) is False, \
+        'a part with no operating point must not be ranked as if it had one'
+    # ... and the same row IS rankable when nobody asked for an operating point
+    assert rankable(False, ls.get_cond('P_rr')['Qrr_src']) is True
+
+
+def test_unrecognised_qrr_src_is_excluded_not_waved_through():
+    """Allowlist, not denylist. A future state added to dcdc_buck_ls — a new
+    low-confidence tier, a renamed fallback — must default to NOT rankable. Keyed on the
+    exact bad string, any new sibling state would silently rank and the bias returns
+    wearing a different name."""
+    from dclib.powerloss import qrr_rankable_at_operating_point as rankable
+
+    for unknown in ('op-1pt-uncalibrated-future', 'op-zero'):
+        assert rankable(True, unknown) is True, 'op-* states are the evaluated ones'
+    for unknown in ('datasheet-flat', 'datasheet-flat-nofit', 'datasheet-flat-nodidt',
+                    'some-new-tier', '', None):
+        assert rankable(True, unknown) is False, unknown
 
 
 def test_uncurated_part_falls_back_visibly_not_silently():

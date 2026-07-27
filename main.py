@@ -15,7 +15,7 @@ import dslib.manual_fields
 from dclib.powerloss import (dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt,
                              qrr_rankable_at_operating_point)
 from discover_parts import discover_mosfets
-from dslib import write_csv, dotdict, round_to_n
+from dslib import write_csv, dotdict, round_to_n, isnum
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, Substrate
 from dslib.fetch import fetch_datasheet
@@ -752,8 +752,9 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         # Self-pairing: this CSV ranks LS candidates with
         # no named HS partner, so the commutation di/dt is the one the part's own turn-on
         # would impose. A design that knows its actual HS should pass that part's di/dt.
+        qrr_op = bool(args.syncFet.qrrOperatingPoint)
         qrr_didt = (ls_commutation_didt(dcdc, fet_specs, gd, isGaN=ds.part.specs.isGaN)
-                    if args.syncFet.qrrOperatingPoint else None)
+                    if qrr_op else None)
         loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, isGaN=ds.part.specs.isGaN,
                                  qrr_didt=qrr_didt,
                                  # syncFet.reverseRecoveryFactor was parsed from every
@@ -771,22 +772,38 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         # parts at the fugu3 point were exactly these, i.e. missing data read as a GOOD
         # part, which is the opposite of what a ranking should do with it.
         #
-        # Gated on qrr_didt so it cannot fire when the flag is off: with no operating
-        # point requested, `datasheet-flat` is the answer, not a failure. Only the
-        # explicit -nofit state is dropped; op-zero (GaN, genuinely zero charge) stays.
+        # Keyed on the CONFIG FLAG, not on `qrr_didt is not None`. ls_commutation_didt
+        # also returns None when the flag IS on but the HS gate charges are missing, and
+        # dcdc_buck_ls then labels the row `datasheet-flat` — identical to a flag-off row.
+        # Using the di/dt as the proxy let 75 such parts through unlabelled, 9 of them
+        # into the ranking, on the un-rescaled vendor charge.
         qrr_src = loss_spec.get_cond('P_rr')['Qrr_src']
-        if not qrr_rankable_at_operating_point(qrr_didt, qrr_src):
+        if not qrr_rankable_at_operating_point(qrr_op, qrr_src):
             # Dropped from the RANKING, not from the output: they go to a sibling CSV with
             # the reason, so "not ranked" never has to be inferred from a part's absence.
+            reason = loss_spec.get_cond('P_rr').get('qrr_nofit')
+            if not reason:
+                # No LM failure to quote — this is the no-operating-point case, whose
+                # cause lives upstream of dcdc_buck_ls and would otherwise read as an
+                # unexplained exclusion.
+                reason = ('no commutation di/dt: the HS gate charges (Qgs2/Qg_th/Vpl) '
+                          'needed for the current-rise time are missing'
+                          if qrr_didt is None else 'not evaluated at the operating '
+                          'point (Qrr_src=%s)' % qrr_src)
+            qrr_ds = fet_specs.Qrr
+            trr_ds = fet_specs.trr
             unranked_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
                 housing=ds.part.package,
                 Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Id=fet_specs.Id,
-                Qrr=(fet_specs.Qrr * 1e9) if fet_specs.Qrr is not None else None,
-                trr=(fet_specs.trr * 1e9) if fet_specs.trr else None,
-                didt_rr=round_to_n(qrr_didt / 1e6, 3),
-                reason=loss_spec.get_cond('P_rr').get('qrr_nofit', 'no reason recorded'),
+                # NaN, not None, is how MosfetSpecs stores "absent" for Qrr — testing
+                # `is not None` never fires and would put a NaN in the cell either way.
+                Qrr=(qrr_ds * 1e9) if isnum(qrr_ds) else None,
+                trr=(trr_ds * 1e9) if isnum(trr_ds) else None,
+                didt_rr=None if qrr_didt is None else round_to_n(qrr_didt / 1e6, 3),
+                Qrr_src=qrr_src,
+                reason=reason,
                 errors=', '.join(ds.all_errors()),
             ))
             continue
