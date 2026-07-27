@@ -47,13 +47,27 @@ _OHM_PREFIX_TO_MILLI = {'m': 1.0, '': 1e3, 'k': 1e6, 'M': 1e9}
 # l) falls through to NaN exactly as before.
 _OHM_NOISE_PREFIX = '|(){}[]IijJl'
 
-# Scale assumed when a resistance Field carries NO unit at all. Encodes the pre-existing
-# conventions so this refactor changes no value:
+# Scale assumed when a resistance Field carries NO unit at all.
 #   Rds_on      canonical milliohm
-#   Rds_on_10v  ohm-scale (100% unitless in the shipped DB; ratio to Rds_on has median
-#               exactly 1.0 after x1000)
 #   Rg          ohm-scale (matches the old field_mul rule: a non-'m' unit meant ohms)
-_RESISTANCE_UNITLESS_TO_MILLI = {'Rds_on': 1.0, 'Rds_on_10v': 1e3, 'Rg': 1e3}
+#
+# Rds_on_10v is DELIBERATELY ABSENT, and its removal is the point of this table's current
+# shape. It used to map to 1e3, which made the guess load-bearing for every single value
+# of that symbol: all 10908 Rds_on_10v fields in the shipped DB were unitless, so the
+# default WAS the scale, applied 10908 times on no evidence at all.
+#
+# It could be dropped because the symbol turned out to have exactly one producer.
+# Provenance over the whole DB is 13 vendor scrapers (infineon_products, lcsc, digikey,
+# st.com, toshiba_products, onsemi.com, vishay.com, hymexa, aosmd, nexperia, taiwansemi,
+# epc-co, ti_products) and ZERO parse sources -- no v2, text, tabular or ref. Every one
+# arrives through MosfetBasicSpecs.fields(), whose attribute is already forced to ohms by
+# ensure_ohm(), so that constructor can simply state the unit. A stated unit beats a
+# defaulted one no matter how well calibrated the default is.
+#
+# Consequence, intended: a unitless Rds_on_10v is now REFUSED (NaN, with a warning) rather
+# than silently scaled. If a new source ever emits one, that has to surface as missing
+# data, not as a number that happens to be right for the vendors we checked.
+_RESISTANCE_UNITLESS_TO_MILLI = {'Rds_on': 1.0, 'Rg': 1e3}
 
 # Symbols whose unit Field.__init__ canonicalises to mΩ. An EXPLICIT set, not the
 # `symbol[0] == 'R'` prefix it replaced: thermal resistance also starts with 'R'
@@ -66,7 +80,20 @@ _RESISTANCE_UNITLESS_TO_MILLI = {'Rds_on': 1.0, 'Rds_on_10v': 1e3, 'Rg': 1e3}
 # Rg 25663, Rds_on_10v 10908) and detect_fields exposes no Rth symbol -- i.e. this was
 # LATENT, not firing, so scoping it changes no current value. Keep it exact anyway: the
 # cost of being wrong here is a 1000x on the quantity the tool ranks on.
-_WRITER_CANONICAL_SYMBOLS = frozenset(_RESISTANCE_UNITLESS_TO_MILLI)
+#
+# Spelled out rather than derived from _RESISTANCE_UNITLESS_TO_MILLI's keys, which is how
+# it used to be written. Those two sets answer different questions -- "is this symbol an
+# electrical resistance?" and "what does a MISSING unit mean for it?" -- and they stopped
+# having the same answer the moment Rds_on_10v got a real unit from its producer. Left
+# derived, dropping Rds_on_10v from the defaults table would silently have dropped it out
+# of the writer's canonicalisation and out of expected_dimension() as well, so the unit
+# that was just made explicit would no longer have been converted.
+_WRITER_CANONICAL_SYMBOLS = frozenset({'Rds_on', 'Rds_on_10v', 'Rg'})
+
+# The gate voltage datasheets conventionally characterise Si parts at, used ONLY when a
+# caller has no configured gate drive to offer (datasheet.py, tests). Never a stand-in for a
+# design's real Von — see get_mosfet_specs.
+_DATASHEET_REF_VGS = 10.0
 
 
 def ohm_unit_to_milli_mul(unit):
@@ -95,11 +122,14 @@ def ohm_unit_to_milli_mul(unit):
     #
     # This used to justify itself with "the sole caller is get_resistance_milliohm". That
     # became false the moment Field.__init__ started calling this too, and a one-caller
-    # argument does not survive a second caller. It holds on the narrower ground that BOTH
-    # callers are gated on a resistance symbol: the reader by _RESISTANCE_UNITLESS_TO_MILLI
-    # and the writer by _WRITER_CANONICAL_SYMBOLS, which are the same three symbols. If a
-    # third, ungated caller ever appears, this recovery has to be revisited -- so keep the
-    # gate at the call sites, not a promise about how many there are.
+    # argument does not survive a second caller. It holds on the narrower ground that every
+    # caller is gated on an electrical-resistance symbol -- _WRITER_CANONICAL_SYMBOLS in the
+    # writer, and in the reader the fact that this is only consulted for a symbol that
+    # reached get_resistance_milliohm. Those gates are no longer the SAME set as
+    # _RESISTANCE_UNITLESS_TO_MILLI's keys (Rds_on_10v is a resistance symbol but has no
+    # unitless default any more), so do not read one off the other. If a third, ungated
+    # caller ever appears, this recovery has to be revisited -- keep the gate at the call
+    # sites, not a promise about how many there are.
     if u == 'm':
         return _OHM_PREFIX_TO_MILLI['m']
     return None
@@ -227,6 +257,15 @@ _FIELD_REPR_SOURCES = (
     ('conditions.py',),
     ('pdf', 'expr.py'),
     ('pdf', 'pdf2txt', '__init__.py'),
+    # MosfetBasicSpecs.fields() -- the sole producer of Rds_on_10v, and it decides that
+    # Field's UNIT. Omitting it cost a real regression: the migration that put every
+    # Rds_on_10v on the canonical mΩ representation was silently reverted for 1404 records
+    # when read_parts_datasheets served a cache entry written before the change and main.py
+    # wrote its pre-change Fields straight back to the DB. A file that names the unit a
+    # Field is stored under IS part of the Field's representation, whatever package it
+    # lives in -- note ('__init__.py',) here is dslib/__init__.py, a DIFFERENT file that
+    # happens to share a basename, which is part of why this gap was easy to miss.
+    ('discovery', '__init__.py'),
 )
 
 
@@ -615,6 +654,19 @@ class Field():
                 # either spelling would invent a shared representation.
                 self._rejected_fills = getattr(self, '_rejected_fills', 0) + 1
                 return
+            elif bool(u_self) != bool(u_f):
+                # One side states a unit, the other is unitless with no documented default
+                # for its symbol -- so its scale is genuinely unknown, not merely implicit.
+                #
+                # Reached once Rds_on_10v lost its unitless default, and it is the exact
+                # 1000x that field_repr_salt exists to prevent, arriving by a different
+                # road: a DB record written before the producer stated 'Ω' holds an
+                # ohm-magnitude number, a freshly parsed candidate holds mΩ, and both slots
+                # would have been merged untouched under whichever unit won. Falling
+                # through to a raw merge is what the two branches above already refuse to
+                # do; this closes the remaining door.
+                self._rejected_fills = getattr(self, '_rejected_fills', 0) + 1
+                return
 
         # Decide everything, THEN mutate.
         pending = {}
@@ -863,6 +915,31 @@ class DatasheetFields():
             base._rejected_fills = getattr(base, '_rejected_fills', 0) + 1
             return
 
+        # A base whose scale CANNOT BE DETERMINED must yield to a candidate that states its
+        # unit. Quality alone does not express this: a unitless base scores 1 and an explicit
+        # in-dimension candidate scores 2, but nothing above promotes on that difference, so
+        # the base stayed and `fill` then rejected the good candidate as unmergeable -- the
+        # aggregate kept the value it could not read and the readable one sat unused in
+        # fields_lists. Purely order-dependent: legacy-first gave NaN, fresh-first gave the
+        # right number.
+        #
+        # Narrow on purpose. It fires only when the base is unitless AND its symbol has no
+        # documented unitless scale, which today means Rds_on_10v alone; Rds_on and Rg keep
+        # their defaults and still gap-fill as before. "Unitless" is not by itself a defect
+        # -- for those two it is a documented representation.
+        if (candidate_quality == 2 and base_quality == 1
+                and base.symbol in _WRITER_CANONICAL_SYMBOLS
+                and not (base.unit or '').strip()
+                and _RESISTANCE_UNITLESS_TO_MILLI.get(base.symbol) is None):
+            promoted = copy(f)
+            promoted._rejected_fills = getattr(base, '_rejected_fills', 0)
+            self.fields_filled[f.symbol] = promoted
+            # Try to keep whatever stats the old base had, now that a scale is known. fill()
+            # refuses when it cannot establish a shared representation, which is the correct
+            # outcome here rather than a guess.
+            promoted.fill(base)
+            return
+
         base.fill(f)
 
     def add_multiple(self, fields: Iterable[Field], source=None):
@@ -904,7 +981,27 @@ class DatasheetFields():
             l = l.replace(' None', '  ⎵  ')
             print(l)
 
-    def get_mosfet_specs(self, Vgs=10):
+    def get_mosfet_specs(self, Vgs=None):
+        """Specs for the loss model, with condition selection at gate voltage `Vgs`.
+
+        `Vgs` picks the datasheet row for the two strongly gate-dependent quantities:
+        `Rds_on` (via the Rds selector) and `Qg`. It is NOT cosmetic — a part driven at 6 V
+        has a materially higher Rds_on and lower Qg than the same part at 10 V.
+
+        `Vgs=None` keeps the conventional 10 V reference for callers that have no gate drive
+        to offer: datasheet.py, the print in main.py, and the tests. The PIPELINE must pass
+        the configured value, which is why `main.get_fet_specs` takes the GateDrive as a
+        REQUIRED argument rather than defaulting: it used to call this with no argument at
+        all, so every design was read at 10 V no matter what the YAML said, and GaN parts —
+        whose `Von_GaN` is typically 5-6 V — were read at a gate voltage they are never
+        driven at. A default that silently stands in for a configured value is the failure
+        this signature is shaped to prevent, so the strictness lives at the pipeline
+        boundary and the permissiveness stays here where the caller genuinely has nothing
+        better to offer.
+        """
+        if Vgs is None:
+            Vgs = _DATASHEET_REF_VGS
+
         mf_fields = [
             'Qrr', 'trr', 'Vsd',  # body diode
             'Qgd', 'Qgs', 'Qgs2', 'Qg_th',  # gate charges
@@ -1087,7 +1184,17 @@ class DatasheetFields():
             return math.nan
 
         default_mul = _RESISTANCE_UNITLESS_TO_MILLI.get(sym)
-        return math.nan if default_mul is None else v * default_mul
+        if default_mul is None:
+            # A resistance symbol with neither a unit nor a documented default. Since
+            # Rds_on_10v's default was removed this is reachable in normal operation, so
+            # it must be audible: a silent NaN here reads downstream as "the datasheet
+            # does not state this", which is a different and wrong claim from "we have a
+            # number but no idea what scale it is on".
+            warnings.warn('%s %s has no unit and no documented unitless scale; '
+                          'refusing to guess (value %r)'
+                          % (getattr(getattr(self, 'part', None), 'mpn', '?'), sym, v))
+            return math.nan
+        return v * default_mul
 
     def select_rds_on_milliohm(self, stat='max_or_typ', cond=None) -> float:
         """On-resistance in mΩ, resolving Rds_on_10v / Rds_on PRECEDENCE in one place.

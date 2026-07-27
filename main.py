@@ -18,7 +18,7 @@ from dslib import write_csv, dotdict
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, Substrate
 from dslib.fetch import fetch_datasheet
-from dslib.field import Field, DatasheetFields
+from dslib.field import Field, DatasheetFields, field_repr_salt
 from dslib.mosfet import GateDrive
 from dslib.pdf.fonts import fontforge_bin
 from dslib.pdf.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
@@ -104,6 +104,7 @@ def main_yaml():
                    ],
                    q=cargs.q,
                 )
+
     run(args, cargs, os.path.basename(cargs.config_file).split('.yaml')[0])
 
 
@@ -289,7 +290,8 @@ def run(args: RunArgs, cargs, name):
         # do all the magic: download datasheets, read them and compute power loss:
         dss = read_parts_datasheets(parts, dotdict(cargs.__dict__))
 
-        dslib.store.parts_db.add([Part(discovered=ds.part, specs=mf) for ds in dss if (mf := get_fet_specs(ds)) ])
+        dslib.store.parts_db.add([Part(discovered=ds.part, specs=mf) for ds in dss
+                                  if (mf := get_fet_specs(ds, args.dcdc.gateDrive))])
         dslib.store.datasheets_db.add(dss)
 
         if not args.vdsRange:
@@ -393,13 +395,34 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
     return ds
 
 
-def get_fet_specs(ds: DatasheetFields):
+def gate_drive_vgs(ds: DatasheetFields, gd: GateDrive) -> float:
+    """The gate voltage this design actually drives `ds` at.
+
+    GaN parts use `Von_GaN` when the config supplies one — they are driven at 5-6 V, not the
+    10 V a silicon part sees, and Rds_on/Qg differ materially at that point. Falls back to
+    `Von` when `Von_GaN` is NaN (i.e. not configured), because inventing a GaN-specific
+    voltage would be worse than using the one the user did state.
+    """
+    if getattr(ds.part.specs, 'isGaN', False) and not math.isnan(gd.Von_GaN):
+        return float(gd.Von_GaN)
+    return float(gd.Von)
+
+
+def get_fet_specs(ds: DatasheetFields, gd: GateDrive):
+    """`gd` is REQUIRED on purpose.
+
+    This used to call ds.get_mosfet_specs() with no arguments, taking that method's 10 V
+    default — so Rds_on and Qg were selected at 10 V for every design regardless of the
+    configured gateDrive.voltage, and GaN parts were read at a gate voltage they are never
+    driven at. Making the gate drive a required parameter means a future call site cannot
+    reintroduce that silently; it has to fail loudly instead.
+    """
     part = ds.part
     mfr = part.mfr
     mpn = part.mpn
     # parse specification for DC-DC loss model
     try:
-        fet_specs = ds.get_mosfet_specs()
+        fet_specs = ds.get_mosfet_specs(Vgs=gate_drive_vgs(ds, gd))
         ds.get_row()
         return fet_specs
     except Exception as e:
@@ -426,7 +449,13 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     else:
         part = ds.part
 
-    fet_specs = get_fet_specs(ds)
+    # Built BEFORE get_fet_specs, which needs it to select Rds_on/Qg at the right gate
+    # voltage. Von is still 10 on this legacy argparse path because it exposes no gate-voltage
+    # option — but it now travels explicitly instead of arriving as get_mosfet_specs' hidden
+    # default, so the hardcoding is visible at the call site where it can be fixed.
+    gd = GateDrive(float(args.rg_total), Von=10, Voff=0, fallback_V_pl=float(args.vpl_fallback))
+
+    fet_specs = get_fet_specs(ds, gd)
 
     if fet_specs is None:
         # raise
@@ -437,7 +466,6 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
 
     # compute power loss
     if 1:
-        gd = GateDrive(float(args.rg_total), Von=10, Voff=0, fallback_V_pl=float(args.vpl_fallback))
         loss_spec = dcdc_buck_hs(dcdc, fet_specs,
                                  gd=gd,
                                  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
@@ -483,7 +511,17 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
     return Part(specs=fet_specs, discovered=part), row
 
 
-@disk_cache(ttl='999d', salt=('13', excludes))
+# field_repr_salt is composed in because the cached value is a list of DatasheetFields, i.e.
+# PICKLED Field objects. `hash_func_code` defaults to False and the salt was ('13', excludes),
+# so NOTHING in this key covered the code that decides what a Field stores -- and this
+# function's result is written straight back to the DB with overwrite=True (main.py:326).
+#
+# That is not hypothetical. After Rds_on_10v gained an explicit unit, a cache entry written
+# before the change was served here and re-persisted its pre-change Fields, silently undoing
+# the migration for 1404 records: 4212 fields went back to unitless, where the reader now
+# refuses them. A stale cache is recoverable; a stale cache that WRITES ITSELF INTO THE
+# DATABASE is not, so the key has to move whenever Field representation moves.
+@disk_cache(ttl='999d', salt=('13', excludes, field_repr_salt()))
 def read_parts_datasheets(parts: List[DiscoveredPart], args):
     need_symbols = {
         'tRise', 'tFall',  # HS
@@ -636,7 +674,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     parts = []
 
     for ds in dss:
-        fet_specs = get_fet_specs(ds)
+        fet_specs = get_fet_specs(ds, args.gateDrive)
         if fet_specs is None:
             continue
 
@@ -821,7 +859,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     result_rows = []
 
     for ds in dss:
-        fet_specs = get_fet_specs(ds)
+        fet_specs = get_fet_specs(ds, args.gateDrive)
         if fet_specs is None:
             continue
 
