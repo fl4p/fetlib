@@ -12,7 +12,7 @@ import pymupdf
 import timeout_decorator
 
 from dslib.cache import disk_cache
-from dslib.field import Field, DatasheetFields
+from dslib.field import Field, DatasheetFields, field_repr_salt
 from dslib.pdf import expr
 from dslib.pdf.expr import get_field_detect_regex, date_regexs, months_short
 from dslib.pdf.pdf2txt import strip_no_print_latin, ocr_post_subs, whitespaces_to_space, \
@@ -148,7 +148,7 @@ def regex_ver_salt():
     return 'v51', expr.dim_regs_csv, expr.dim_regs_multiline, get_field_detect_regex('any')
 
 
-@disk_cache(ttl='999d', salt=(regex_ver_salt, 'v01'), hash_func_code=True)
+@disk_cache(ttl='999d', salt=(regex_ver_salt, field_repr_salt, 'v01'), hash_func_code=True)
 def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False) -> DatasheetFields:
     assert mfr
     mpn = pdf_path.split('/')[-1].split('.')[0] if pdf_path else None
@@ -351,7 +351,8 @@ def ocr_pdf(pdf_path, method='r600_ocrmypdf'):
     return out_path
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, 'v04'), ignore_missing_inp_paths=True,
+@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, field_repr_salt, 'v04'),
+            ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                     tabular_pre_methods=None,
@@ -980,7 +981,7 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
     return fields
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=regex_ver_salt)
+@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, field_repr_salt))
 def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=False) -> DatasheetFields:
     """
 

@@ -55,6 +55,19 @@ _OHM_NOISE_PREFIX = '|(){}[]IijJl'
 #   Rg          ohm-scale (matches the old field_mul rule: a non-'m' unit meant ohms)
 _RESISTANCE_UNITLESS_TO_MILLI = {'Rds_on': 1.0, 'Rds_on_10v': 1e3, 'Rg': 1e3}
 
+# Symbols whose unit Field.__init__ canonicalises to mΩ. An EXPLICIT set, not the
+# `symbol[0] == 'R'` prefix it replaced: thermal resistance also starts with 'R'
+# (RthJC/RthJA, and expr.py:577 has RthJC inside the electrical-resistance head_regex),
+# and it is quoted in °C/W or K/W. The prefix test only looked safe because 'K'/'C' are
+# not in the mkM prefix table, so 'K/W' happened not to match -- but a bare 'W' or 'mW'
+# capture on a thermal row WOULD have become milliohms. Widening _OHM_BODY to ':'/'o'/
+# 'OQ' plus noise stripping widened that latent hazard, so the gate is now exact.
+# Measured: 0 Rth fields among the 61046 R-fields in the shipped DB (Rds_on 24475,
+# Rg 25663, Rds_on_10v 10908) and detect_fields exposes no Rth symbol -- i.e. this was
+# LATENT, not firing, so scoping it changes no current value. Keep it exact anyway: the
+# cost of being wrong here is a 1000x on the quantity the tool ranks on.
+_WRITER_CANONICAL_SYMBOLS = frozenset(_RESISTANCE_UNITLESS_TO_MILLI)
+
 
 def ohm_unit_to_milli_mul(unit):
     """Multiplier converting a value in `unit` to milliohm, or None if `unit` is not a
@@ -78,10 +91,64 @@ def ohm_unit_to_milli_mul(unit):
 
     # Bare 'm': the omega did not extract at all. Only 'm' is recovered, never a bare 'k'
     # or 'M' -- those are ambiguous with a stray letter, whereas an 'm' on a resistance
-    # symbol (the sole caller is get_resistance_milliohm) can only be milliohm.
+    # symbol can only be milliohm.
+    #
+    # This used to justify itself with "the sole caller is get_resistance_milliohm". That
+    # became false the moment Field.__init__ started calling this too, and a one-caller
+    # argument does not survive a second caller. It holds on the narrower ground that BOTH
+    # callers are gated on a resistance symbol: the reader by _RESISTANCE_UNITLESS_TO_MILLI
+    # and the writer by _WRITER_CANONICAL_SYMBOLS, which are the same three symbols. If a
+    # third, ungated caller ever appears, this recovery has to be revisited -- so keep the
+    # gate at the call sites, not a promise about how many there are.
     if u == 'm':
         return _OHM_PREFIX_TO_MILLI['m']
     return None
+
+
+def field_repr_salt():
+    """Cache salt covering how a Field STORES a value: the magnitude and the unit string.
+
+    Why every Field-producing cache needs this. A pickled Field bypasses __init__, so a
+    cache generation written before the writer canonicalised its unit keeps (raw value,
+    raw unit). Nothing re-runs the conversion on unpickle. DatasheetFields.fill() then
+    copies stats between candidates WITHOUT converting or comparing units, so one stale
+    stat and one fresh stat can end up in a single Field under a single unit -- and the
+    reader applies that unit to both. Reproduced exactly:
+
+        stale Field(Rds_on, typ=.005, unit=':')   [unpickled, pre-change generation]
+      + fresh Field(Rds_on, max=.006, unit=':')   [scaled by the new writer -> max=6, 'mΩ']
+      = merged typ=.005, max=6.0, unit=':'
+        get_resistance_milliohm(stat='max') -> 6000 mΩ for a 6 mΩ part.
+
+    A silent 1000x on the quantity this tool ranks on, from a cache HIT. Before this salt
+    only dslib.v2's v2_code_salt covered field.py; read_sheet (fixed 'v11',
+    hash_func_code=False), tabular, extract_fields_from_text and the outer parse_datasheet
+    all hashed code that could not see a Field-representation change.
+
+    Deliberately NOT a content hash of this whole file, unlike v2_code_salt. That would
+    rebuild every parse cache in the corpus on a comment edit, and tabular costs ~177 s a
+    part over 6040 parts. Instead this follows pdf/ascii.py's idiom and pins the exact
+    surface that decides the stored representation:
+
+      - the TABLES, by value. Bytecode alone is not enough: _OHM_BODY et al. are globals,
+        so editing one changes no LOAD_GLOBAL and co_code would not move.
+      - the CODE that applies them, as co_code. Bytecode and not source, so rewording a
+        comment (or this docstring) does not invalidate anything, while a real change to
+        the conversion does.
+
+    Sorted so set/dict iteration order cannot make the key unstable between runs.
+    """
+    return (
+        'v01',
+        tuple(sorted(_OHM_BODY)),
+        tuple(sorted(_OHM_PREFIX_TO_MILLI.items())),
+        _OHM_NOISE_PREFIX,
+        tuple(sorted(_RESISTANCE_UNITLESS_TO_MILLI.items())),
+        tuple(sorted(_WRITER_CANONICAL_SYMBOLS)),
+        ohm_unit_to_milli_mul.__code__.co_code,
+        get_value_with_unit.__code__.co_code,
+        Field.__init__.__code__.co_code,
+    )
 
 
 class Field():
@@ -124,7 +191,7 @@ class Field():
             mul = 1e6
             unit = 'pF'
 
-        if symbol[0] == 'R':
+        if symbol in _WRITER_CANONICAL_SYMBOLS:
             # ONE definition, actually shared now. This used to hardcode {'mW'} and
             # {'W','Ω'}, so every other spelling the reader understands ('mΩ', 'kΩ', 'O',
             # 'Q', ':', '|mQ', ...) fell through unscaled and unrenamed, and the reader had
@@ -637,8 +704,18 @@ class DatasheetFields():
         Scale resolution, in order, and NEVER from magnitude:
           1. Field carries a recognised resistance unit -> use it
           2. Field carries no unit at all -> the symbol's documented storage default
-          3. Field carries a unit from a DIFFERENT dimension ('ns','pF','V','nC',':')
+          3. Field carries a unit from a DIFFERENT dimension ('ns','pF','V','nC')
              -> NaN
+
+        NB ':' is NOT in that list: it is an omega rendering here (see _OHM_BODY) and is
+        ACCEPTED by step 1. This docstring used to list it as cross-dimension while the
+        helper converted it, which is the more dangerous direction of disagreement for a
+        reader to trust. ':' is not intrinsically omega -- it is a generic broken-font /
+        empty-cell filler, and the shipped DB has 693 ':' fields of which 127 are non-R
+        (tDon 44, tRise 42, Qoss 38). It is only safe because BOTH callers are gated on the
+        three electrical resistance symbols; all 282 ':' Rg values are plausible
+        (0.39-14 Ω) and the Rds_on ones check out against the PDFs. Do not generalise ':'
+        beyond that gate.
 
         (3) is the point. A cross-dimension unit means the cell was mis-captured, so the
         number is not a resistance -- e.g. Rg=168 taken from a unit='ns' switching-time

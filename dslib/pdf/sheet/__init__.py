@@ -14,7 +14,7 @@ from typing import List, Optional, Tuple, Dict, Literal
 from pdfminer.psexceptions import PSException
 
 from dslib.cache import disk_cache, mem_cache
-from dslib.field import Field, DatasheetFields, parse_field_value, get_value_with_unit
+from dslib.field import Field, DatasheetFields, parse_field_value, get_value_with_unit, field_repr_salt
 from dslib.pdf.ascii import pdf_to_ascii, Row, Phrase
 from dslib.pdf.expr import get_cond_regex, any_unit, DIMENSIONS, Dimension
 from dslib.pdf.parse import detect_fields, DetectedSymbol
@@ -116,7 +116,7 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v11'))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v11', field_repr_salt))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
         return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,

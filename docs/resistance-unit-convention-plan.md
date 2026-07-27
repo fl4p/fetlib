@@ -151,6 +151,58 @@ body — and pickled `Field` objects bypass `__init__` entirely on unpickle.
   regex-constrained (`':'`, `'|Q'`, `'JO'` are real observed units). Missing an
   *m-prefixed* spelling is harmless; missing a *bare* one is 1000x.
 
+#### Phase 2 — DONE 2026-07-27
+
+Two peer reviewers independently flagged the missing salt as blocking, and the defect was
+reproduced end-to-end rather than argued:
+
+```
+  stale Field(Rds_on, typ=.005, unit=':')    unpickled, pre-canonicalisation generation
++ fresh Field(Rds_on, max=.006, unit=':')    new writer scales it to max=6, 'mΩ'
+= merged typ=.005, max=6.0, unit=':'         fill() copies stats, never converts units
+  get_resistance_milliohm(stat='max') -> 6000 mΩ for a 6 mΩ part
+```
+
+A 1000x from a cache **hit**. `fill()` merging stats that sit 1000x apart is the same root
+cause as the `AOB66515L` defect already pinned in `test/tests.py`.
+
+Implemented as `dslib.field.field_repr_salt()`, wired into the four producers that lacked
+coverage: `extract_fields_from_text`, the aggregate `parse_datasheet`, `tabula_read`
+(`dslib/pdf/parse.py`) and `read_sheet` (`dslib/pdf/sheet/__init__.py`). `dslib.v2` was
+already covered by `v2_code_salt`. `tabula_browser` deliberately is **not** — it returns
+`List[pd.DataFrame]` and has no Field representation to go stale.
+
+**Not** a content hash of `field.py`, unlike `v2_code_salt`, because the measured cost of
+that is a full-corpus rebuild on a comment edit (tabular ~177 s/part x 6040 parts). It
+follows `pdf/ascii.py`'s idiom instead and pins the exact surface that decides the stored
+representation: the unit tables **by value** (bytecode alone would miss them — `_OHM_BODY`
+is a global, so editing it moves no `LOAD_GLOBAL`) plus `co_code` of
+`ohm_unit_to_milli_mul`, `get_value_with_unit` and `Field.__init__` (bytecode, not source,
+so prose edits are free).
+
+Closure was **measured, not assumed** — a salt that is defined but absent from a given key
+is dead. Perturbing a unit table and diffing each producer's own `.cache_key`: all four
+moved, and all restored to baseline. The first run reported v2 as *not* moving; that was a
+probe limitation, not a dead salt — `v2_code_salt` hashes `field.py` on disk, which an
+in-memory monkeypatch cannot move. Re-tested by mutating the file itself: v2's key moves
+and restores. **A zero difference meant "not measured", not "no change".**
+
+Calibrated in both directions in `test/unit/test_field_repr_salt.py` (7 tests): the salt
+moves for a table edit, a writer-scope change and a stored-default change, and does *not*
+move for comments/docstrings. A salt that fires on every edit is as useless as one that
+never fires, because the pressure to stop bumping it is how these guards die.
+
+Also landed here: `Field.__init__`'s canonicalisation gate changed from `symbol[0] == 'R'`
+to the explicit `_WRITER_CANONICAL_SYMBOLS`. `Rth*` also starts with `R` and is quoted in
+°C/W or K/W; the prefix test only looked safe because `K`/`C` are not `mkM` prefixes, so a
+bare `W` or `mW` capture on a thermal row would have become milliohms. Measured latent, not
+firing: 0 `Rth` fields among the 61046 R-fields in the shipped DB (`Rds_on` 24475, `Rg`
+25663, `Rds_on_10v` 10908), and `detect_fields` exposes no `Rth` symbol.
+
+**Cost incurred now:** v2's cache is keyed on `field.py` content, so this session's edits
+already invalidated it for the whole corpus (~1.9 s/part x 6040 ≈ 3.2 h of re-parsing on
+the next full run). The other four only rebuild when the representation actually changes.
+
 ### Phase 3 — only now, repair the data
 
 With one reader and explicit producer units, re-derive which entries are actually wrong:
@@ -193,9 +245,35 @@ With one reader and explicit producer units, re-derive which entries are actuall
 - `dslib/pdf/expr.py:577` — `RthJC` leads the *electrical* resistance `head_regex` while
   that dimension accepts a bare `W`. Latent: currently unreachable via v2's path because
   v2's symbol→dimension map contains no thermal symbols, and no `Rth*` symbol exists in
-  the fields table. Fix if an `Rth` symbol is ever added.
+  the fields table. **The writer side of this is now closed** (2026-07-27): the
+  canonicalisation gate is the explicit `_WRITER_CANONICAL_SYMBOLS`, not `symbol[0] == 'R'`,
+  so an `Rth*` Field is no longer rescaled to mΩ even if the regex does capture one. The
+  regex overlap itself is still there — fix it if an `Rth` symbol is ever added to the
+  fields table.
 
 ## Step 1 result — the provenance trust matrix (measured 2026-07-26)
+
+> **STATUS: MEASURED, NOT IMPLEMENTED.** Nothing in this section ships. `field.py`'s
+> `get_resistance_milliohm` reads `fields_filled` and applies the symbol default to *any*
+> empty unit **without inspecting the stat's source**, so the `tabular` refusal below does
+> not happen: `diotec/DIT120N08`-shaped input (`Rg` typ=64, unitless, source
+> `tabula_cli_guess`/`iter_table`) returns 64000 mΩ rather than NaN. A reviewer confirmed
+> this against HEAD. Read the policy below as a design, not as behaviour.
+>
+> Superseded in three ways by the review that followed, so do not implement it as written:
+> - **Explicit producer allowlist**, not "everything except `tabular`" and not a
+>   `vendor:*` wildcard. Trust must be enumerated, because an unrecognised source string
+>   falling through to trusted is the same absence-of-evidence-means-fine shape this plan
+>   exists to remove.
+> - **Siblings may be selected but never lend their unit.** A candidate's unit applies
+>   only to the stats that candidate produced.
+> - **`fill()` must become transactional and condition-aware**, and be tested
+>   permutation-invariantly. It is currently neither: both arrival orders of the
+>   `AOB66515L` case yield `typ=1.18` with `max=1180`, and only the *unit* differs by
+>   order. A merge whose result depends on arrival order cannot be validated by a test
+>   that fixes one order.
+>
+> Affordability of the strict policy was measured: **119 values lost vs 1373 rescued.**
 
 Cross-tabulated every resistance Field in the shipped DB by (symbol, unit class, source
 of the winning stat) and counted how many fall OUTSIDE a physics-justified band after

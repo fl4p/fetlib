@@ -659,10 +659,21 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
         # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
-        # Ω->mΩ conversion for the Rds_on_10v branch. It was anti-monotone: 299 parts with
-        # Rds_on_10v >= 100 mΩ never met the <0.1 test, stayed 1000x low, produced ~0 P_on
-        # and sorted to the TOP of the ranking. Precedence also now matches dslib/field.py
-        # (Rds_on_10v first), which previously disagreed with this file.
+        # Ω->mΩ conversion for the Rds_on_10v branch. It was anti-monotone: parts with
+        # Rds_on_10v >= 100 mΩ never met the <0.1 test and stayed 1000x low.
+        #
+        # SCOPE, corrected: this local feeds ONLY the CSV's Rds_max column below. It does
+        # NOT affect the ranking. fet_specs and loss_spec are both computed further up, from
+        # get_mosfet_specs(), and P_tot -- the sort key -- comes from those. So the ranking
+        # fix lives in get_mosfet_specs, not here; an earlier version of this comment
+        # claimed the guess produced ~0 P_on and sorted parts to the top, which overstated
+        # these two assignments. Measured: 1475/6040 records move in Rds_max, mostly the
+        # intentional Rds_on_10v-first precedence (commonly 0.6-0.8x, because a vendor
+        # max-at-10V differs from a parsed table max at 4.5/6/8V), plus 10 corrupt
+        # cross-dimension records that correctly become NaN.
+        #
+        # Precedence also now matches dslib/field.py (Rds_on_10v first), which previously
+        # disagreed with this file.
         rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
         if math.isnan(rds_on_max):
             rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
@@ -821,10 +832,21 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
         # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
-        # Ω->mΩ conversion for the Rds_on_10v branch. It was anti-monotone: 299 parts with
-        # Rds_on_10v >= 100 mΩ never met the <0.1 test, stayed 1000x low, produced ~0 P_on
-        # and sorted to the TOP of the ranking. Precedence also now matches dslib/field.py
-        # (Rds_on_10v first), which previously disagreed with this file.
+        # Ω->mΩ conversion for the Rds_on_10v branch. It was anti-monotone: parts with
+        # Rds_on_10v >= 100 mΩ never met the <0.1 test and stayed 1000x low.
+        #
+        # SCOPE, corrected: this local feeds ONLY the CSV's Rds_max column below. It does
+        # NOT affect the ranking. fet_specs and loss_spec are both computed further up, from
+        # get_mosfet_specs(), and P_tot -- the sort key -- comes from those. So the ranking
+        # fix lives in get_mosfet_specs, not here; an earlier version of this comment
+        # claimed the guess produced ~0 P_on and sorted parts to the top, which overstated
+        # these two assignments. Measured: 1475/6040 records move in Rds_max, mostly the
+        # intentional Rds_on_10v-first precedence (commonly 0.6-0.8x, because a vendor
+        # max-at-10V differs from a parsed table max at 4.5/6/8V), plus 10 corrupt
+        # cross-dimension records that correctly become NaN.
+        #
+        # Precedence also now matches dslib/field.py (Rds_on_10v first), which previously
+        # disagreed with this file.
         rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
         if math.isnan(rds_on_max):
             rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
