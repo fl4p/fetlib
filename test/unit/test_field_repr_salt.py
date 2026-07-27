@@ -7,10 +7,10 @@ Field(Rds_on, typ=.005, unit=':') merged with a fresh Field(Rds_on, max=.006, un
 under unit=':', and get_resistance_milliohm(stat='max') then returns 6000 mΩ for a 6 mΩ
 part. A 1000x error served from a cache HIT.
 
-HISTORY, because it is the point of this file. The first version of the salt fingerprinted
-the unit tables by value plus `co_code` of the three converting functions, to keep comment
-edits from rebuilding the corpus. It had three holes, and the tests here passed anyway
-because they only exercised what it could see:
+HISTORY, because it is the point of this file. The first salt fingerprinted the unit tables
+by value plus `co_code` of the three converting functions, to keep comment edits from
+rebuilding the corpus. It had three holes, and the tests passed anyway because they only
+exercised what it could already see:
 
   1. `co_code` omits `co_consts`      -- swap 'mΩ' for 'Ω', bytecode identical
   2. `co_code` omits nested bodies    -- Field.__init__'s nested _unit_value was invisible
@@ -18,44 +18,39 @@ because they only exercised what it could see:
      are reached from them and were unsalted; doubling parse_field_value's result moved
      stored values 1000x with the salt unchanged
 
-So the tests now pin the property that actually holds -- the salt is a function of the
-CONTENT of the files listed in _FIELD_REPR_SOURCES -- and one of them asserts the cost
-(prose is NOT free) so nobody "optimises" it back into a mute button without reading why.
+TWO CONCERNS, TESTED SEPARATELY. Proving "every dependency moves every producer" by
+perturbing files and reading producer keys conflated them, and the honest version is a
+decomposition:
 
-KNOWN LIMITATION of `_perturb`: it rewrites production source files in place, restoring in
-`finally` with a byte-for-byte check. That survives assertion failures but NOT a SIGKILL
-mid-test, and it needs a writable checkout. It would also race under pytest-xdist, since
-several tests here touch field.py -- there is no xdist config today, so this is a caveat
-rather than a defect. A hermetic version would copy the declared dependencies under
-tmp_path and have field_repr_salt resolve them from an injectable base directory; that is a
-change to the salt's signature, deliberately not bundled with a cache-correctness fix.
+  (a) does each declared DEPENDENCY reach the signature?   -> perturb copies under tmp_path
+  (b) does the SIGNATURE reach each producer's cache key?  -> monkeypatch _FIELD_REPR_SIG
+
+(a) and (b) together give the matrix, and both are hermetic. The earlier version rewrote
+five live production source files in place; a concurrent edit between its snapshot and its
+restore would have been destroyed silently, which is not hypothetical in a worktree two
+agents are editing. Nothing here writes to the repo any more.
 """
 import math
 import os
+import shutil
 
 import pytest
 
 import dslib.field as F
-from dslib.field import Field, DatasheetFields, field_repr_salt, _FIELD_REPR_SOURCES
+from dslib.field import (Field, DatasheetFields, field_repr_salt, _FIELD_REPR_SOURCES,
+                         _FIELD_REPR_SIG, _compute_field_repr_sig)
 
 _DSLIB_DIR = os.path.dirname(os.path.abspath(F.__file__))
-_DEP_PATHS = [os.path.join(_DSLIB_DIR, *rel) for rel in _FIELD_REPR_SOURCES]
+_IDS = [os.sep.join(r) for r in _FIELD_REPR_SOURCES]
 
 
-def _perturb(path, suffix=b'\n# field_repr_salt calibration scratch\n'):
-    """Append to `path`, yield, then restore byte-exactly. The restore is in `finally` and
-    verified, because a test that corrupts a source file is worse than no test."""
-    with open(path, 'rb') as f:
-        original = f.read()
-    try:
-        with open(path, 'wb') as f:
-            f.write(original + suffix)
-        yield
-    finally:
-        with open(path, 'wb') as f:
-            f.write(original)
-        with open(path, 'rb') as f:
-            assert f.read() == original, 'FAILED TO RESTORE %s' % path
+def _dep_tree(tmp_path):
+    """Copy the declared dependencies into tmp_path, preserving relative layout."""
+    for rel in _FIELD_REPR_SOURCES:
+        dst = tmp_path.joinpath(*rel)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(os.path.join(_DSLIB_DIR, *rel), dst)
+    return str(tmp_path)
 
 
 def test_salt_is_stable_across_calls():
@@ -63,53 +58,37 @@ def test_salt_is_stable_across_calls():
 
 
 def test_salt_is_a_plain_string():
-    # Goes into a cache key, so it must be trivially serialisable and order-free.
     assert isinstance(field_repr_salt(), str)
     assert field_repr_salt().startswith('field-repr:')
 
 
-@pytest.mark.parametrize('path', _DEP_PATHS, ids=[os.sep.join(r) for r in _FIELD_REPR_SOURCES])
-def test_salt_moves_for_every_dependency(path):
-    """The closure test. A dependency that does not move the salt is a silent hole: the
-    conversion changes and every producer keeps serving pre-change Fields."""
-    assert os.path.exists(path), 'declared dependency does not exist: %s' % path
-    before = field_repr_salt()
-    gen = _perturb(path)
-    next(gen)
-    try:
-        after = field_repr_salt()
-    finally:
-        next(gen, None)
-    assert after != before, '%s does not reach the salt' % path
-    assert field_repr_salt() == before, 'salt did not return to baseline'
+def test_copied_tree_reproduces_the_real_signature(tmp_path):
+    """Guards the guard: if the copy did not reproduce the real signature, every
+    perturbation test below would be measuring something other than production."""
+    assert field_repr_salt(root=_dep_tree(tmp_path)) == _FIELD_REPR_SIG
 
 
-@pytest.mark.parametrize('rel', _FIELD_REPR_SOURCES, ids=[os.sep.join(r) for r in _FIELD_REPR_SOURCES])
-def test_every_dependency_moves_every_producer(rel, tmp_path):
-    """The dependency x producer MATRIX, and the reason it is a matrix.
+@pytest.mark.parametrize('rel', _FIELD_REPR_SOURCES, ids=_IDS)
+def test_every_dependency_reaches_the_signature(rel, tmp_path):
+    """(a). A dependency that does not reach the signature is a silent hole: the conversion
+    changes and every producer keeps serving pre-change Fields."""
+    root = _dep_tree(tmp_path)
+    before = field_repr_salt(root=root)
+    target = tmp_path.joinpath(*rel)
+    target.write_bytes(target.read_bytes() + b'\n# perturbed\n')
+    assert field_repr_salt(root=root) != before, '%s does not reach the salt' % os.sep.join(rel)
 
-    An earlier probe perturbed only field.py, saw all five producers move, and concluded
-    the closure was shut. field.py happens to be in BOTH field_repr_salt's list and v2's
-    _V2_DEP_SOURCES, so that was one row generalised without warrant. The other rows were
-    not shut: dslib/__init__.py, conditions.py and pdf/pdf2txt/__init__.py are absent from
-    _V2_DEP_SOURCES, so a pdf2txt-only normalize_text edit moved four producers and left v2
-    serving pre-change Fields. Three real holes.
 
-    One row of a matrix is not the matrix. Keep this parametrised over every dependency and
-    asserting every producer, or the next added dependency reopens the same gap silently.
-    """
+def test_signature_reaches_every_producer(monkeypatch):
+    """(b). A salt that is defined but absent from a given key is DEAD. This is what caught
+    the v2 hole: dslib.v2's decorator carried only v2_code_salt, whose _V2_DEP_SOURCES omits
+    dslib/__init__.py, conditions.py and pdf/pdf2txt -- so a normalize_text edit moved four
+    producers and left v2 serving pre-change Fields."""
     from dslib.pdf.parse import extract_fields_from_text, parse_datasheet, tabula_read
     from dslib.pdf.sheet import read_sheet
     import dslib.v2
 
-    # A dummy file, NOT an LFS fixture. cache_key only needs `file_dependencies` to exist
-    # so it can hash the path's content; it never parses the PDF. Pointing this at a real
-    # datasheet would make the calibration fail wherever LFS is not fetched — and a guard
-    # that only runs in one environment is a guard that stops running.
-    pdf = str(tmp_path / 'dummy.pdf')
-    with open(pdf, 'wb') as f:
-        f.write(b'%PDF-1.4 not a real pdf\n')
-
+    pdf = str(tmp_pdf())
     producers = [
         ('extract_fields_from_text', extract_fields_from_text, ('some text', 'infineon')),
         ('parse_datasheet', parse_datasheet, (pdf,)),
@@ -121,79 +100,103 @@ def test_every_dependency_moves_every_producer(rel, tmp_path):
     def keys():
         return {name: fn.cache_key(*args) for name, fn, args in producers}
 
-    path = os.path.join(_DSLIB_DIR, *rel)
     before = keys()
-    gen = _perturb(path)
-    next(gen)
-    try:
-        after = keys()
-    finally:
-        next(gen, None)
+    monkeypatch.setattr(F, '_FIELD_REPR_SIG', 'field-repr:PERTURBED')
+    after = keys()
 
     stale = [n for n in before if before[n] == after[n]]
-    assert not stale, '%s does not reach: %s' % (os.sep.join(rel), ', '.join(stale))
-    assert keys() == before, 'keys did not return to baseline'
+    assert not stale, 'the representation salt does not reach: %s' % ', '.join(stale)
 
 
-def test_prose_is_deliberately_not_free():
-    """Records the accepted COST, so the tradeoff is not silently reversed.
-
-    A comment edit DOES rebuild these caches. The precision optimisation that avoided this
-    was abandoned because it could not see co_consts, nested bodies, or anything outside
-    the three functions it named -- three holes, the last of which is unbounded. If you are
-    here to make prose free again, you must first make the key cover the whole derivation,
-    not a proxy for it."""
-    before = field_repr_salt()
-    gen = _perturb(_DEP_PATHS[0], b'\n# a pure comment, nothing semantic\n')
-    next(gen)
-    try:
-        after = field_repr_salt()
-    finally:
-        next(gen, None)
-    assert after != before, 'salt ignored a content change; it is a proxy again'
+_TMP_PDF = []
 
 
-def test_unidecode_version_component_is_live_not_inert():
-    """unidecode maps Ω -> 'O' and 'O' is in _OHM_BODY, so its version decides what counts
-    as an ohm unit.
-
-    Calibrated, not just described. The first version read `unidecode.__version__` with a
-    getattr default -- and this package does NOT define that attribute, so it recorded the
-    string 'unknown' on every run. The component looked present and did nothing, which is
-    the same anti-monotone shape as the bug the salt exists for."""
-    import unidecode
-    from importlib.metadata import version
-
-    # If this ever starts passing via __version__, the getattr form would have been fine --
-    # but it is absent, which is exactly why the metadata form is required.
-    assert not hasattr(unidecode, '__version__'), \
-        'unidecode now exposes __version__; the comment in field_repr_salt is stale'
-    assert version('Unidecode')
-
-    # And the version must actually REACH the salt.
-    import importlib.metadata as md
-    before = field_repr_salt()
-    saved = md.version
-    try:
-        md.version = lambda name: '9.9.9-probe' if name == 'Unidecode' else saved(name)
-        after = field_repr_salt()
-    finally:
-        md.version = saved
-    assert after != before, 'the unidecode version does not reach the salt (inert component)'
-    assert field_repr_salt() == before, 'salt did not return to baseline'
+def tmp_pdf():
+    """A dummy file for `file_dependencies`. cache_key hashes the path's content but never
+    parses it, so this must NOT be an LFS datasheet -- a calibration that only runs where
+    LFS is fetched is one that stops running."""
+    if not _TMP_PDF:
+        import tempfile
+        d = tempfile.mkdtemp()
+        p = os.path.join(d, 'dummy.pdf')
+        with open(p, 'wb') as f:
+            f.write(b'%PDF-1.4 not a real pdf\n')
+        _TMP_PDF.append(p)
+    return _TMP_PDF[0]
 
 
-def test_unreadable_dependency_raises_rather_than_narrowing_the_key():
+def test_the_salt_is_bound_to_the_imported_generation(tmp_path):
+    """The inverse failure, and the more dangerous one. Reading disk per call would let a
+    long-lived process that loaded the OLD Field code notice a new on-disk edit, compute the
+    NEW salt, and write OLD-representation Fields under the new-generation key -- so the next
+    process reads them as new. Staleness is recoverable; a new key filled with old values is
+    not. Two agents edit this repo concurrently, so this is a live scenario.
+
+    field_repr_salt() must therefore be a SNAPSHOT taken at import, immune to later edits,
+    while _compute_field_repr_sig() still sees them (which is what proves the edit landed and
+    keeps this test from being vacuous)."""
+    root = _dep_tree(tmp_path)
+    fresh_before = _compute_field_repr_sig(root)
+    target = tmp_path.joinpath(*_FIELD_REPR_SOURCES[0])
+    target.write_bytes(target.read_bytes() + b'\n# a peer agent edits mid-run\n')
+
+    assert field_repr_salt() == _FIELD_REPR_SIG, 'salt is not pinned to the imported code'
+    assert _compute_field_repr_sig(root) != fresh_before, 'perturbation did not land'
+
+
+def test_prose_is_deliberately_not_free(tmp_path):
+    """Records the accepted COST so the tradeoff is not silently reversed.
+
+    A comment edit DOES rebuild these caches. The precision optimisation that avoided it was
+    abandoned because it could not see co_consts, nested bodies, or anything outside the
+    three functions it named -- three holes, the last unbounded. To make prose free again you
+    must first make the key cover the whole derivation, not a proxy for it."""
+    root = _dep_tree(tmp_path)
+    before = field_repr_salt(root=root)
+    target = tmp_path.joinpath(*_FIELD_REPR_SOURCES[0])
+    target.write_bytes(target.read_bytes() + b'\n# a pure comment, nothing semantic\n')
+    assert field_repr_salt(root=root) != before, 'salt ignored a content change'
+
+
+def test_unreadable_dependency_raises_rather_than_narrowing_the_key(tmp_path):
     """Absence of evidence must not encode absence of the problem. Skipping a file that
     cannot be read would quietly shrink the key."""
+    root = _dep_tree(tmp_path)
     original = F._FIELD_REPR_SOURCES
     try:
         F._FIELD_REPR_SOURCES = original + (('does_not_exist_xyz.py',),)
         with pytest.raises(Exception):
-            field_repr_salt()
+            field_repr_salt(root=root)
     finally:
         F._FIELD_REPR_SOURCES = original
     assert isinstance(field_repr_salt(), str), 'salt broken after restore'
+
+
+def test_unidecode_version_component_is_live_not_inert():
+    """unidecode maps Ω -> 'O' and 'O' is in _OHM_BODY, so its version decides what counts as
+    an ohm unit.
+
+    Calibrated, not just described. The first version read `unidecode.__version__` with a
+    getattr default -- and this package does NOT define that attribute, so it recorded the
+    string 'unknown' on every run: a component that looked present and did nothing, the same
+    anti-monotone shape as the bug the salt exists for."""
+    import unidecode
+    from importlib.metadata import version
+
+    assert not hasattr(unidecode, '__version__'), \
+        'unidecode now exposes __version__; the comment in field_repr_salt is stale'
+    assert version('Unidecode')
+
+    import importlib.metadata as md
+    before = _compute_field_repr_sig()
+    saved = md.version
+    try:
+        md.version = lambda name: '9.9.9-probe' if name == 'Unidecode' else saved(name)
+        after = _compute_field_repr_sig()
+    finally:
+        md.version = saved
+    assert after != before, 'the unidecode version does not reach the salt (inert component)'
+    assert _compute_field_repr_sig() == before, 'signature did not return to baseline'
 
 
 def test_writer_canonicalises_only_the_three_electrical_symbols():
@@ -209,8 +212,8 @@ def test_writer_canonicalises_only_the_three_electrical_symbols():
 
 
 def test_the_1000x_this_salt_exists_to_prevent():
-    """Pins the defect the salt gates, so that if fill() is ever made unit-aware this
-    records what the old behaviour was."""
+    """Pins the defect the salt gates, so if fill() is ever made unit-aware this records
+    what the old behaviour was."""
     stale = Field('Rds_on', math.nan, 0.005, math.nan, None)
     stale.unit = ':'                       # a pre-canonicalisation cache generation
 

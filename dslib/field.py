@@ -122,7 +122,7 @@ _FIELD_REPR_SOURCES = (
 )
 
 
-def field_repr_salt():
+def field_repr_salt(root=None):
     """Cache salt covering how a Field STORES a value: the magnitude and the unit string.
 
     Why every Field-producing cache needs this. A pickled Field bypasses __init__, so a
@@ -142,8 +142,21 @@ def field_repr_salt():
     hash_func_code=False), tabular, extract_fields_from_text and the outer parse_datasheet
     all hashed code that could not see a Field-representation change.
 
-    A CONTENT HASH of the source files, the same shape as v2_code_salt -- which is exactly
-    why dslib.v2 was never vulnerable to any of this.
+    A CONTENT HASH of the source files, the same shape as v2_code_salt. That shape is what
+    made v2 immune to the three co_code holes below -- but NOT to the problem as a whole:
+    v2_code_salt's file list omits dslib/__init__.py, conditions.py and pdf/pdf2txt, so v2
+    had three representation holes of its own until it started sharing this salt. "Same
+    shape" is not "was always correct", and an earlier version of this docstring overstated
+    exactly that.
+
+    SNAPSHOT AT IMPORT, not read per call. The hash is computed once when this module is
+    imported and `field_repr_salt()` returns that value, because the salt has to name the
+    code generation the PROCESS IS RUNNING, not whatever is on disk right now. Reading disk
+    per call inverts the guarantee: a long-lived process holding the old Field code would
+    compute the NEW salt after someone edits the file, then write OLD-representation Fields
+    under the new-generation key -- poisoning the cache for the next process, which reads
+    them as new. Staleness is recoverable; a new key filled with old values is not. This is
+    not hypothetical in this repo: two agents edit it concurrently.
 
     This replaces a function-granular version that hashed the unit tables by value plus
     `co_code` of the three converting functions. That was an attempt to buy precision (a
@@ -186,13 +199,25 @@ def field_repr_salt():
       - This says nothing about whether an already-pickled Field is canonical. It stops
         MIXING generations by rebuilding on change; repairing existing DB records is
         Phase 3 in docs/resistance-unit-convention-plan.md.
+
+    `root` exists ONLY so the calibration tests can perturb COPIES under tmp_path instead of
+    rewriting live sources -- the previous tests truncated and rewrote production files, and
+    a concurrent edit between their snapshot and their restore would have been destroyed
+    silently. Production callers pass nothing and get the import snapshot.
     """
+    if root is None:
+        return _FIELD_REPR_SIG
+    return _compute_field_repr_sig(root)
+
+
+def _compute_field_repr_sig(root=None):
+    """Hash the representation sources under `root` (default: this package directory)."""
     # Private, but same project. Memoized by (path, mtime, size), so once warm this is a
-    # stat per file per call rather than a re-hash.
+    # stat per file rather than a re-hash.
     from dslib.cache import _file_content_sig
     import hashlib
     import os
-    d = os.path.dirname(os.path.abspath(__file__))
+    d = root or os.path.dirname(os.path.abspath(__file__))
     h = hashlib.sha256()
     for rel in _FIELD_REPR_SOURCES:
         h.update(_file_content_sig(os.path.join(d, *rel)).encode())
@@ -210,6 +235,13 @@ def field_repr_salt():
     h.update(('unidecode=' + _pkg_version('Unidecode')).encode())
 
     return 'field-repr:' + h.hexdigest()[:16]
+
+
+# Bound to the generation this process IMPORTED, computed once, here. Deliberately eager:
+# resolving it per call would let a process that loaded the old Field code compute the NEW
+# salt after an on-disk edit and write old-representation Fields under the new key. Cheap
+# enough to do at import -- five memoized content hashes and one metadata lookup.
+_FIELD_REPR_SIG = _compute_field_repr_sig()
 
 
 class Field():

@@ -238,6 +238,40 @@ which genuinely are in `_V2_DEP_SOURCES`.
 **One row of a matrix is not the matrix.** That is the transferable lesson here, and it is
 the same error as calibrating a guard only on the cases it already handles.
 
+##### Then a fifth: the salt must name the LOADED generation, not the disk
+
+Re-review of `3acf2d1a` found the inverse failure, which is worse than staleness. The salt
+read current on-disk content on *every* cache-key call, while the process holds the code it
+imported. So a long-lived process running the **old** `Field` code would, after another
+agent edits `field.py`, compute the **new** salt and write **old**-representation Fields
+under the new-generation key. The next process reads them as new. Stale values are
+recoverable; a fresh key pre-filled with old values is not, and two agents edit this repo
+concurrently, so it is a live scenario rather than a thought experiment.
+
+Fixed by computing the hash **once at import** (`_FIELD_REPR_SIG`) and having
+`field_repr_salt()` return that snapshot. Calibrated in both directions: after an on-disk
+edit the snapshot is unchanged (the fix) while `_compute_field_repr_sig()` does change
+(proving the edit landed, so the assertion is not vacuous).
+
+##### Test safety: the calibration itself was dangerous
+
+The tests perturbed the five **live production source files** in place, restoring in
+`finally`. In a worktree that had already suffered four concurrent clobbers that day, a peer
+edit landing between snapshot and restore would have been destroyed silently — the test
+could have caused the exact class of damage it was written to guard against.
+
+Replaced by a decomposition that needs no repo writes at all, and which is a better test for
+separating the two failure modes:
+
+- **(a) does each declared dependency reach the signature?** — copy the deps under
+  `tmp_path` and perturb the copies, via a `root=` parameter that exists only for this.
+- **(b) does the signature reach each producer's cache key?** — monkeypatch
+  `_FIELD_REPR_SIG`. This is the half that catches a producer missing the salt, i.e. the v2
+  hole.
+
+(a) ∧ (b) give the matrix. A further test asserts the copied tree reproduces the real
+signature, so a broken copy cannot make (a) vacuous.
+
 Calibrated in `test/unit/test_field_repr_salt.py` (11 tests). The closure test is
 parametrised over **every** declared dependency and asserts the salt moves for each, since
 a dependency that does not reach the key is a silent hole. It also asserts an unreadable
