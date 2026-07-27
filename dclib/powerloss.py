@@ -602,16 +602,38 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
     # acf, sd = ac_resistance_factor(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f)
     # rac = (acf - 1) * coil.Rdc
 
+    # winding_bore() instead of core.shape.ID/OD: a core defined with only
+    # l_e/A_e/Vol has shape=None, and this line then raised
+    # "AttributeError: 'NoneType' object has no attribute 'ID'" from inside the
+    # loss calculation -- naming neither the core nor the missing quantity.
+    # Most of maglib.cores hit it, so this whole function was unreachable for
+    # them. The accessor returns the datasheet bore or refuses by name.
+    core_id, core_od = coil.core.winding_bore()
     F_se, F_pe = acr_factor_micrometals(MaterialResistivity.CopperAnnealed.value, coil.wire_diameter, dc.f,
                                         coil.wire_strands, coil.turns,
-                                        id=coil.core.shape.ID, od=coil.core.shape.OD,
+                                        id=core_id, od=core_od,
                                         )
-    rac = (1 + F_se + F_pe) * coil.Rdc
+    # Rac is the TOTAL ac resistance and is what gets reported; the loss below
+    # charges only the EXCESS, because P_dcr already paid for the ripple's dc
+    # component. I_ms is Io^2 + Iripple^2/12 and Il_ac_rms2 is (Iripple/2)^2/3
+    # -- the same quantity -- so charging Il_ac_rms2 against the total counted
+    # Iac^2*Rdc twice:
+    #
+    #   was:     Io^2*Rdc + Iac^2*Rdc  +  Iac^2*(1 + Fs + Fp)*Rdc
+    #   correct: Io^2*Rdc + Iac^2*Rdc  +  Iac^2*(    Fs + Fp)*Rdc
+    #                                  == Io^2*Rdc + Iac^2*Rac
+    #
+    # The commented-out predecessor above had (acf - 1) and was right: when
+    # this moved from ac_resistance_factor (which returns a TOTAL) to
+    # acr_factor_micrometals (which returns the EXCESS, see maglib/wire.py) the
+    # -1 was flipped to +1 instead of being deleted. Measured by two
+    # independent reviewers: +1.13% on P_acr at 8 A ripple, +2.12% at 12 A.
+    Rac = (1 + F_se + F_pe) * coil.Rdc
     sd = skin_depth(MaterialResistivity.CopperAnnealed.value, dc.f)
 
     # notice that this is independent from duty cycle
     # https://www.mouser.com/pdfDocs/Coilcraft_inductorlosses.pdf
-    P_acr = dc.Il_ac_rms2 * rac
+    P_acr = dc.Il_ac_rms2 * (F_se + F_pe) * coil.Rdc
 
     # https://www.quora.com/What-is-the-formula-for-calculating-peak-value-of-flux-density-of-an-inductor
     # TODO DC bias https://www.ti.com/lit/an/snva038b/snva038b.pdf?ts=1730558298197
@@ -664,7 +686,7 @@ def dcdc_buck_coil(dc: DcDcLoadParams, coil: CoilSpecs):
         P_core=max(P_core1, P_core2),
         get_cond=lambda k: dict(
             P_dcr=dict(Rdc=coil.Rdc),
-            P_acr=dict(Rac=rac, δ=sd, Fskin=F_se, Fprox=F_pe),
+            P_acr=dict(Rac=Rac, δ=sd, Fskin=F_se, Fprox=F_pe),
             P_core=dict(
                 ΔI=dc.Iripple,
                 Bpk=max(Bpk1, Bpk2),  # peak ac flux density
