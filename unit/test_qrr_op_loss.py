@@ -22,7 +22,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, ".")
 
-from dclib.powerloss import (dcdc_buck_ls, ls_commutation_didt,
+from dclib.powerloss import (dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt, GateLoopInfeasible,
                              mosfet_hs_current_rise_time, mosfet_hs_sw_timings_hs2)
 from dslib.field import DatasheetFields, Field
 from dslib.mosfet import GateDrive, MosfetSpecs, attach_qrr_registries, qrr_part_key
@@ -360,6 +360,72 @@ def test_missing_gate_charges_yield_no_didt():
     never a default that silently stands in for a measurement."""
     mf = _specs(Qgs=math.nan, Qg_th=math.nan, Qgd=math.nan, Vpl=None)
     assert ls_commutation_didt(DC, mf, GD) is None
+
+
+def test_plateau_at_or_above_the_drive_is_refused_not_ranked():
+    """A plateau voltage that is not below the gate drive has no gate-loop solution:
+    (Von - Vpl) is the denominator of both switching-time terms. It must REFUSE with the
+    numbers, not abort the run (an AssertionError out of _hs_gate_phases killed a whole
+    6000-part run over one part) and not silently fall back to gd.fallback_V_pl, which
+    would rank the part on an invented plateau exactly where the parsed one is unusable.
+
+    The direction matters as much as the firing: the 5.0 V part must be the one refused
+    and the 2.8 V part the one evaluated. A guard that dropped both would "fire" too.
+    """
+    gd_gan = GateDrive(rg_total=6, rg_total_dis=3, Von=11, Von_GaN=5, Voff=0,
+                       fallback_V_pl=4.5)
+
+    # EPC2934C's shape: read_charts digitized the END of the Qg curve, which is the 5 V
+    # drive rail, so Vpl == Von exactly.
+    bad = _specs(Vpl=5.0, Qgs=4e-9, Qg_th=2e-9, Qgd=2e-9, Qrr=0.0, trr=math.nan)
+    try:
+        mosfet_hs_sw_timings_hs2(bad, gd_gan, isGaN=True)
+        assert False, 'a plateau at the drive rail must not yield switching times'
+    except GateLoopInfeasible as e:
+        assert '5.00' in str(e) and MPN in str(e), str(e)
+
+    # ... while a real GaN plateau below the rail still evaluates, at this same drive
+    good = _specs(Vpl=2.8, Qgs=4e-9, Qg_th=2e-9, Qgd=2e-9, Qrr=0.0, trr=math.nan)
+    tr, tf = mosfet_hs_sw_timings_hs2(good, gd_gan, isGaN=True)
+    assert tr > 0 and tf > 0, (tr, tf)
+
+    # and the LS commutation path degrades to "unknown di/dt" instead of propagating —
+    # it caught AssertionError only, so the typed exception had to be added there too
+    assert ls_commutation_didt(DC, bad, gd_gan, isGaN=True) is None
+
+
+def test_threshold_above_plateau_is_refused_not_ranked():
+    """Qg_th >= Qgs makes the derived vgs_th land at or above the plateau — a charge
+    parse error, not a device. Same treatment: refuse this part, keep the run.
+
+    Set AFTER construction on purpose: MosfetSpecs.__init__ rejects Qg_th >= Qgs, but the
+    records in dslib.store are pickles and unpickling bypasses __init__, so a stored spec
+    can carry the pair this refusal exists for. Passing it to the ctor would only test the
+    ctor's assert."""
+    mf = _specs()
+    mf.Qg_th = mf.Qgs   # vgs_th == Vpl
+    try:
+        mosfet_hs_sw_timings_hs2(mf, GD)
+        assert False, 'vgs_th >= Vpl must not yield switching times'
+    except GateLoopInfeasible as e:
+        assert 'threshold' in str(e), str(e)
+    assert ls_commutation_didt(DC, mf, GD) is None
+
+
+def test_corrupt_qsw_is_refused_not_aborted():
+    """The last bare assert on this path. A 1000x Qsw unit slip must refuse the PART,
+    like every other parsed quantity here — an AssertionError escapes main.py's except
+    and aborts the whole run, which is the exact failure GateLoopInfeasible exists to
+    stop. Set post-construction because store records are pickles: unpickling bypasses
+    MosfetSpecs.__init__, so its own range check never runs on them."""
+    mf = _specs()
+    mf._Qsw = 2000e-9   # 2 uC — a nC value read as uC
+
+    try:
+        dcdc_buck_hs(DC, mf, gd=GD)
+        assert False, 'a 2 uC switching charge must not produce a loss number'
+    except GateLoopInfeasible as e:
+        assert 'Qsw' in str(e), str(e)
 
 
 def test_pipeline_built_specs_carry_the_registries():

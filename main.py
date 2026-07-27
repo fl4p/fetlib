@@ -13,7 +13,7 @@ import pandas as pd
 
 import dslib.manual_fields
 from dclib.powerloss import (dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt,
-                             qrr_rankable_at_operating_point)
+                             qrr_rankable_at_operating_point, GateLoopInfeasible)
 from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict, round_to_n, isnum
 from dslib.cache import disk_cache
@@ -544,6 +544,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     print('generating power loss estimates for ', len(dss), 'parts')
 
     result_rows = []  # csv
+    unranked_rows = []
 
     print(set(ds.part.mpn for ds in dss))
     print('computing power loss for %s parts...' % len(dss))
@@ -562,10 +563,29 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                                 IDP_ID_RATIO if args.controlFet.stagedSwitching else args.controlFet.maxParallel):
             continue
 
-        loss_spec = dcdc_buck_hs(dcdc, fet_specs,
-                                 gd=gd,  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
-                                 isGaN=ds.part.specs.isGaN
-                                 )
+        try:
+            loss_spec = dcdc_buck_hs(dcdc, fet_specs,
+                                     gd=gd,  # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
+                                     isGaN=ds.part.specs.isGaN
+                                     )
+        except GateLoopInfeasible as e:
+            # No gate-loop solution at this drive -> no switching-loss number exists for
+            # this part. Drop it from the ranking rather than aborting the run over one
+            # datasheet (it used to raise AssertionError straight out of main), and rather
+            # than falling back to gd.fallback_V_pl, which would rank the part on an
+            # invented plateau voltage precisely where we know the parsed one is unusable.
+            unranked_rows.append(dict(
+                mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
+                housing=ds.part.package,
+                Vds_max=ds.get_max_or_min_or_typ('Vds', False),
+                Id=fet_specs.Id,
+                Vpl=fet_specs.V_pl,
+                Vgs=gate_drive_vgs(ds, gd),
+                reason=e.msg,
+                errors=', '.join(ds.all_errors()),
+            ))
+            ds.errors.append('gate loop: ' + e.msg)
+            continue
 
         parts_loss.append((ds, fet_specs, loss_spec))
 
@@ -713,6 +733,20 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('\n>>>', out_fn)
+
+        # Same contract as the LS path: a ranking shorter than its input list is a result,
+        # not a detail, so the excluded parts get a sibling CSV with the reason and a
+        # console summary. "Not ranked" must never have to be inferred from an absence.
+        if unranked_rows:
+            un_fn = out_fn.replace('-HS-inp', '-HS-unranked-inp')
+            write_csv(pd.DataFrame(unranked_rows), un_fn, sort_by=['mpn'])
+            print('>>> %d parts EXCLUDED from the HS ranking: no gate-loop solution at the '
+                  'configured gate drive:' % len(unranked_rows))
+            for r in unranked_rows[:10]:
+                print('      %-28s %s' % (r['mpn'], r['reason']))
+            if len(unranked_rows) > 10:
+                print('      ... and %d more, see the CSV' % (len(unranked_rows) - 10))
+            print('>>>', un_fn)
     else:
         print('skip csv write because only few parts')
 

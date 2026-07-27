@@ -75,6 +75,26 @@ def qrr_rankable_at_operating_point(op_requested, qrr_src) -> bool:
     return bool(qrr_src) and qrr_src.startswith('op-')
 
 
+class GateLoopInfeasible(ValueError):
+    """The gate-loop voltages do not describe a switchable device at this gate drive.
+
+    Raised instead of asserting because these are DATA conditions, not code invariants:
+    the plateau voltage is read off a digitized gate-charge chart and the threshold is
+    derived from parsed charges, so either can arrive impossible. An assert here aborts a
+    6000-part run over one bad datasheet, and its only alternative -- substituting
+    `fallback_V_pl` -- would invent a working part out of a reading we know is broken.
+
+    So the part is refused, WITH the numbers that refused it, and the caller drops it from
+    the ranking. Refusing is not the same as "no loss": a part that cannot be evaluated
+    must never end up ranked as a cheap one.
+    """
+
+    def __init__(self, part, msg):
+        self.part = part
+        self.msg = msg
+        super().__init__('%s: %s' % (getattr(part, 'mpn', part), msg))
+
+
 Pcl_ParallelMistmatchFactor = 0.9  # HS: one switch takes most of the dynamic load, the rest stay cooler
 
 
@@ -743,23 +763,50 @@ def _hs_gate_phases(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
     read on its own (mosfet_hs_current_rise_time) without a second, drifting copy of
     the plateau/threshold derivation.
     """
-    assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9, (hs.part, hs.Qsw)
+    # Qsw is a PARSED charge, so it refuses like one. It was the last bare assert on this
+    # path, and MosfetSpecs.__init__ does not stand in for it: store records are pickles
+    # and unpickling bypasses __init__, so a 1000x unit slip (the recurring failure mode
+    # in this DB) arrives on an object no constructor ever checked. Leaving it as an
+    # assert kept exactly the 6000-part abort this function was changed to stop.
+    if not (math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9):
+        raise GateLoopInfeasible(hs.part, 'Qsw=%.3g C is outside 0..1 uC -- a charge '
+                                          'parse error, not a switching charge' % hs.Qsw)
     rg_total = np.nanmax([hs.Rg, gd.rg_total])
     rg_total_dis = np.nanmax([hs.Rg, gd.rg_total_dis])
 
     von = gd.Von_GaN if isGaN else gd.Von
+    # von comes from the YAML, not from a datasheet: a bad gate drive is a config error
+    # that must stop the run, not a part to skip. These two stay asserts on purpose.
     assert von > 0, (von, isGaN)
     if isGaN:
-        assert math.isnan(hs.Qsw) or hs.Qsw < 10e-9, hs.Qsw
         assert von < 6
+        if not (math.isnan(hs.Qsw) or hs.Qsw < 10e-9):
+            raise GateLoopInfeasible(hs.part, 'Qsw=%.3g C exceeds 10 nC for a GaN part'
+                                     % hs.Qsw)
 
     vpl = (gd.fallback_V_pl / 2 if isGaN else gd.fallback_V_pl) if math.isnan(hs.V_pl) else hs.V_pl
     vgs_th = vpl * (hs.Qg_th / hs.Qgs)
     if math.isnan(vgs_th):
         warnings.warn(f'{hs.part.mpn} vgs_th is NaN')
-    else:
-        assert vpl > vgs_th, (hs.part.mpn, vpl, vgs_th)
-    assert von > vpl, (hs.part, von, vpl)
+    elif vpl <= vgs_th:
+        raise GateLoopInfeasible(hs.part, 'plateau %.2f V is not above threshold %.2f V '
+                                          '(Qg_th=%.3g >= Qgs=%.3g -- a charge parse error)'
+                                 % (vpl, vgs_th, hs.Qg_th, hs.Qgs))
+
+    # Every denominator below is (von - vpl) or (v_ir - Voff), and v_ir sits between vgs_th
+    # and vpl. A plateau at or above the drive rail makes the first zero or negative, i.e.
+    # the gate never leaves the plateau and the device never fully enhances. Two ways to
+    # get here, and they need the same answer:
+    #   * the reading is garbage. `read_charts` digitizes the Qg curve and its failure mode
+    #     is returning the END of the curve, which IS the drive rail -- 9 parts in the DB
+    #     carry a Vpl >= the Vgs their own Qg row was measured at (62.7 V on one).
+    #   * the reading is right and this design simply cannot drive this part.
+    # We cannot tell which from here (MosfetSpecs carries no provenance for V_pl), and both
+    # mean the same thing for the caller: there is no switching-loss number to report.
+    if not (von > vpl):
+        raise GateLoopInfeasible(hs.part, 'plateau %.2f V is not below the %.2f V gate '
+                                          'drive%s -- no gate-loop solution'
+                                 % (vpl, von, ' (GaN)' if isGaN else ''))
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
     return dotdict(von=von, vpl=vpl, vgs_th=vgs_th, v_ir=v_ir,
                    rg_total=rg_total, rg_total_dis=rg_total_dis)
@@ -803,7 +850,10 @@ def ls_commutation_didt(dc: DcDcLoadParams, hs: MosfetSpecs, gd: GateDrive, isGa
     """
     try:
         t_ir = mosfet_hs_current_rise_time(hs, gd, isGaN)
-    except AssertionError:
+    except (AssertionError, GateLoopInfeasible):
+        # GateLoopInfeasible is listed because _hs_gate_phases used to signal both of its
+        # data refusals with `assert`. Dropping AssertionError here when they became a
+        # typed exception would have turned a `return None` into an aborted run.
         return None
     if t_ir is None or not math.isfinite(t_ir) or t_ir <= 0:
         return None
