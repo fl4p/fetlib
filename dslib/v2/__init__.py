@@ -239,9 +239,31 @@ def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
 # "VDS=5V total" still stops at 5V ("tal" is not a number). Scaling and the
 # choice of endpoint stay parse_cond_str's job -- it already reads every
 # spaced range as its upper bound.
+# The value clause stops at the FIRST number, so a row's own measurements
+# ("VGS=10V 7.8 9.5") cannot be swallowed — see _parse_cond_text. The single
+# exception is a swept range, "VGS = 0 to 10 V", where the endpoint is the
+# operating point and the lower bound is 0: no gate charge is measured at zero
+# drive, so reading the lower bound is not a near-miss but a value that is
+# false on its face, and it collapses the 4.5 V and 10 V rows onto one another.
+#
+# Two things that clause has to get right, both missed the first time:
+#
+#   * IGNORECASE. The shared parser (dslib/pdf/sheet.parse_cond_str) is
+#     case-insensitive, so without this v2 silently disagreed with it on
+#     "0 TO 10 V" and "0To10V" — returning the false lower bound while the
+#     other layer returned the endpoint.
+#   * The unit may sit on the LOWER endpoint ("0V to 10V"), so it must be
+#     allowed there — but only INSIDE the range group, i.e. only when a literal
+#     "to" plus a digit follows. Hoisting it out to a free-standing optional
+#     unit looks equivalent and is not: "VDS=5V total" then captures "5V tot",
+#     because the trailing unit class happily eats "tot" once "V" has been
+#     consumed elsewhere. Measured, not reasoned about.
 _COND_ITEM_RE = re.compile(
     r"([^,;=]{1,24})[=≈]\s*"
-    r"([+-]?\d[\d.]*\s*(?:to\s*[+-]?\d[\d.]*\s*)?[a-zA-Zµμ°Ω%]{0,3})")
+    r"([+-]?\d[\d.]*\s*"
+    r"(?:(?:[a-zA-Zµμ°Ω%]{1,3}\s*)?to\s*[+-]?\d[\d.]*\s*)?"
+    r"[a-zA-Zµμ°Ω%]{0,3})",
+    re.IGNORECASE)
 
 # Both micro codepoints appear in the wild — MICRO SIGN (U+00B5) and GREEK
 # SMALL LETTER MU (U+03BC) — and the char class above accepts either so the

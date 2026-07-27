@@ -25,6 +25,73 @@ from dslib.pdf.sheet.tables import table_segregation, DetectedRowField, Table
 from dslib.pdf.to_html import Annotation
 from dslib.pdf.tree import bbox_union, GraphicBlock, Bbox
 
+# Files whose CONTENT decides what read_sheet derives from a PDF. Relative to
+# this package directory.
+#
+# annotation.py is deliberately absent: it is reached only through
+# read_sheet_debug (debug_annotations=True), and read_sheet always passes
+# False, so it cannot change a cached result. Everything that can, is here.
+_SHEET_DERIVATION_SOURCES = (
+    ('__init__.py',),      # parse_cond_str, read_sheet_inner, the header regexes
+    ('spatial.py',),       # SpatialQuery / take -- how cells are located
+    ('tables.py',),        # table_segregation -- how rows become fields
+)
+
+
+def _compute_sheet_derivation_sig(root=None):
+    """Content hash of the files above, same shape as field_repr_salt.
+
+    ``root`` exists so a test can point this at COPIES under tmp_path and
+    perturb those, instead of rewriting the live sources in place. An in-place
+    test dirties the repo if it is interrupted, fails on a read-only checkout,
+    and races itself under pytest-xdist.
+    """
+    from dslib.cache import _file_content_sig
+    import hashlib
+    import os
+    d = root or os.path.dirname(os.path.abspath(__file__))
+    h = hashlib.sha256()
+    for rel in _SHEET_DERIVATION_SOURCES:
+        h.update(_file_content_sig(os.path.join(d, *rel)).encode())
+    return 'sheet-deriv:' + h.hexdigest()[:16]
+
+
+# Eager, for the same reason field_repr_salt is: a process holding the OLD code
+# must not compute the NEW salt after an on-disk edit and write old-derivation
+# results under the new key.
+_SHEET_DERIVATION_SIG = _compute_sheet_derivation_sig()
+
+
+def sheet_derivation_salt():
+    """Cache salt covering HOW read_sheet derives values, not how Fields store them.
+
+    read_sheet is ``@disk_cache(hash_func_code=False, salt=('v11', field_repr_salt))``,
+    so its key sees neither its own function body nor this package. field_repr_salt
+    covers field.py, dslib/__init__.py, conditions.py, pdf/expr.py and
+    pdf/pdf2txt/__init__.py -- legitimately, because those decide a Field's
+    REPRESENTATION -- but nothing covered pdf/sheet, which decides what is
+    extracted in the first place.
+
+    The gap was live: befbb355 changed parse_cond_str in this very file so that
+    "VGS=0to10V" reads its endpoint rather than its false lower bound of 0, and
+    every existing read_sheet entry stayed valid across it. A cached run kept
+    serving the 0 V condition -- and since gate-drive loss goes as Qg*Vgs*f,
+    collapsing the 4.5 V and 10 V rows onto one another is a 2x error in a
+    ranked quantity, served from a cache HIT with nothing looking wrong.
+
+    Bumping 'v11' would have fixed that ONE commit. This is content-addressed so
+    the next helper-only edit in this package cannot repeat it, which is the
+    difference between a fix and a fix that generalises.
+
+    Known limits, stated rather than implied: depth 1 from this package, so an
+    edit to pdf/ascii.py, pdf/parse.py or pdf/tree.py still does not move this
+    key (pdf/expr.py and pdf/pdf2txt DO move field_repr_salt, which is also in
+    read_sheet's salt tuple). And like every salt here, it makes future runs
+    correct -- it does not repair values already written to the DB.
+    """
+    return _SHEET_DERIVATION_SIG
+
+
 # regular expression to detect table headers
 head_re = re.compile(
     '((\s+|^\s*)('
@@ -116,7 +183,8 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
     return read_sheet_inner(pdf_file, expand, merge, debug_annotations=True, multiline_conditions=multiline_conditions)
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False, salt=('v11', field_repr_salt))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False,
+            salt=('v11', field_repr_salt, sheet_derivation_salt))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
         return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,
