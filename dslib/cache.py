@@ -516,21 +516,48 @@ class ManagedMemCache(CacheStorage):
         self._lock = RLock()
         self._start_housekeeping()
 
+    # System memory above this percentage means drop the cache and back off.
+    _MEM_PRESSURE_PCT = 92
+    # How long to stay out of the way after shedding the cache, in seconds.
+    _MEM_BACKOFF_S = 120
+
     def _housekeeping(self):
+        """Expire entries, and shed the cache under system memory pressure.
+
+        Everything slow happens OUTSIDE ``self._lock``. The first version held
+        it across psutil, ``clear()`` (which measured the cache with
+        pympler.asizeof), ``gc.collect()`` and a 120-second ``time.sleep`` — so
+        on a machine sitting above the pressure threshold every ``get`` and
+        ``set`` in the process blocked for two minutes at a time. That is a
+        stall, not a slowdown: the caller is not doing less work, it is doing
+        none. It also silently corrupts any measurement taken on such a
+        machine, which is how it was found — benchmark processes sat at 0% CPU
+        while the housekeeping thread slept holding the lock.
+
+        The lock is now held only for the two operations that actually mutate
+        the dict, each O(n) and no worse than the map itself.
+        """
         while True:
             _now = now()
             self._now = _now + datetime.timedelta(seconds=15)
+
             with self._lock:
                 for key, (value, expire_at) in list(self.cache.items()):
                     if _now > expire_at:
                         del self.cache[key]
+                n_entries = len(self.cache)
 
-                mem_usage_percent = psutil.virtual_memory().percent
-                if mem_usage_percent > 92 and len(self.cache):
-                    logger.warning('High memory usage %.1f', mem_usage_percent)
-                    self.clear()
-                    time.sleep(120)
+            # A syscall, and nothing about it needs the cache held.
+            mem_usage_percent = psutil.virtual_memory().percent
+            shed = mem_usage_percent > self._MEM_PRESSURE_PCT and n_entries
+            if shed:
+                logger.warning('High memory usage %.1f%%, shedding mem cache (%d entries)',
+                               mem_usage_percent, n_entries)
+                self.clear()
 
+            # Back off unlocked, so readers keep working while we stay small.
+            if shed:
+                time.sleep(self._MEM_BACKOFF_S)
             time.sleep(30)
 
     def set(self, key, value, ttl, ignore_overwrite=False):
@@ -560,14 +587,26 @@ class ManagedMemCache(CacheStorage):
         return v
 
     def clear(self):
+        """Drop every entry.
+
+        Does NOT call ``size_bytes()``: that walks the whole object graph with
+        pympler.asizeof purely to produce a log line, and it ran while holding
+        the lock. Entry count carries the same operational signal for free.
+
+        The old form also gated the clear itself on that measurement --
+        ``if mb > 0: self.cache.clear()`` -- so any run where asizeof returned
+        0 or raised left the cache fully populated while reporting nothing. A
+        cache-shedding path that declines to shed when it cannot measure is the
+        absence-of-evidence failure again, and this is the one place it matters
+        most: it fires only under memory pressure.
+        """
         with self._lock:
-            mb = (self.size_bytes() / 1e6) if self.cache else 0
-            if mb > 1:
-                logger.info('Clearing mem cache (size=%.1fMB)', mb)
-            if mb > 0:
-                self.cache.clear()
-                import gc
-                gc.collect()
+            n = len(self.cache)
+            self.cache.clear()
+        if n:
+            logger.info('Cleared mem cache (%d entries)', n)
+            import gc
+            gc.collect()
 
     def __delitem__(self, key):
         with self._lock:
