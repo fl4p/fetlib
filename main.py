@@ -18,7 +18,7 @@ from dslib import write_csv, dotdict, round_to_n
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, Substrate
 from dslib.fetch import fetch_datasheet
-from dslib.field import Field, DatasheetFields, field_repr_salt
+from dslib.field import Field, DatasheetFields, field_repr_salt, merge_keeping_absent_symbols
 from dslib.mosfet import GateDrive
 from dslib.pdf.fonts import fontforge_bin
 from dslib.pdf.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
@@ -323,7 +323,11 @@ def run(args: RunArgs, cargs, name):
 
         dslib.store.parts_db.add([Part(discovered=ds.part, specs=mf) for ds in dss
                                   if (mf := get_fet_specs(ds, args.dcdc.gateDrive))])
-        dslib.store.datasheets_db.add(dss)
+        # merge= is load-bearing: without it this is a whole-record replacement (add's
+        # overwrite defaults to True), so a run parsing fewer symbols than the stored
+        # record DELETES the difference. That is what cost 1348 records 65,631 fields on
+        # 2026-07-27. Fresh values still win; only the deletion is refused.
+        dslib.store.datasheets_db.add(dss, merge=merge_keeping_absent_symbols)
 
         if not args.vdsRange:
             dss = [ds for ds in dss if dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds'))]

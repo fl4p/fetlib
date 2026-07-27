@@ -1393,3 +1393,53 @@ class DatasheetFields():
             if sym not in b:
                 rmse[sym] = math.nan
             rmse[sym] = min(() / r[s] for f in fl)
+
+
+def merge_keeping_absent_symbols(stored: 'DatasheetFields',
+                                 fresh: 'DatasheetFields') -> 'DatasheetFields':
+    """Merge for a DB write: `fresh` wins, but a symbol it lacks is never DELETED.
+
+    `ObjectDatabase.add` assigns `_lib_mem[k] = record`, i.e. a whole-record REPLACEMENT,
+    and its `overwrite` parameter defaults to True -- so the least alarming-looking call
+    (`datasheets_db.add(dss)`, no flags) is the one that destroys the most. A run that
+    parses a NARROWER set of symbols than the stored record then silently deletes the
+    difference, which is not a hypothetical: on 2026-07-27 one main.py run cost 1348
+    records 65,631 fields that way (Vds 6200, Rg 5657, Rds_on 4192, ...), and it was
+    recovered only because a snapshot happened to exist.
+
+    A cache salt cannot fix that class. The 12:03 damage had two independent causes and
+    only one of them was staleness: a LEGITIMATELY narrower run -- smaller `need_symbols`,
+    or tabular skipped because text+v2 already covered the ask -- produces a correct,
+    fresh, smaller record, and whole-record replacement turns "did not look for it" into
+    "it is not there".
+
+    The rule is monotone in the property that matters: a stored record can only ever GAIN
+    symbols across a write. Fresh candidates still win outright for every symbol the new
+    parse did produce, so a re-parse that fixes a corrupt value (font-encoding repair, say)
+    still replaces it -- this only refuses the DELETION of symbols the new parse is silent
+    about, which is absence of evidence, not evidence of absence.
+
+    Deliberately at SYMBOL granularity, not field granularity: appending a second candidate
+    for a symbol `fresh` already has would pile near-duplicate re-parses into fields_lists
+    and shift the aggregate `fields_filled` through `Field.fill`, which is a merge this
+    function does not verify and should not silently perform. Same rule, and the same
+    reasoning, as apps/recover_db_from_snapshot.py.
+
+    Returns a new record; neither argument is mutated. `fresh` is left alone on purpose --
+    main.py keeps using it to build the CSV after the write, and a run's OUTPUT should
+    report what that run actually read, not values folded in from the database.
+    """
+    if stored is None:
+        return fresh
+
+    merged = copy(fresh)
+    merged.fields_filled = dict(fresh.fields_filled)
+    merged.fields_lists = {sym: list(lst) for sym, lst in fresh.fields_lists.items()}
+
+    for sym, lst in stored.fields_lists.items():
+        if sym in fresh.fields_lists:
+            continue
+        for f in lst:
+            merged.add(f)
+
+    return merged

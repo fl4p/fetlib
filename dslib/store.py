@@ -120,13 +120,27 @@ class ObjectDatabase(Generic[K, T]):
             with open(self._lib_path, 'wb') as f:
                 pickle.dump(self._lib_mem, f)
 
-    def add(self, new_arts: Union[Dict[K, T], List[T]], overwrite=True):
+    def add(self, new_arts: Union[Dict[K, T], List[T]], overwrite=True, merge=None):
+        """Store items under their keys.
+
+        NOTE the default: `overwrite=True` means a bare `add(items)` REPLACES each whole
+        record. For a record type that accumulates (DatasheetFields), that turns a narrower
+        run into a deletion -- see dslib.field.merge_keeping_absent_symbols, which exists
+        because one such write cost 65,631 fields.
+
+        `merge(stored, incoming) -> record` opts into a record-type-specific reconciliation
+        for keys that already exist. It lives at the caller because this container is
+        generic over T and has no business knowing what merging one means; passing nothing
+        keeps the historical replace-everything behaviour.
+        """
         self.load()
 
         new_arts = self._items_to_dict(new_arts)
 
         for k, part in new_arts.items():
             assert overwrite or k not in self._lib_mem
+            if merge is not None and k in self._lib_mem:
+                part = merge(self._lib_mem[k], part)
             self._lib_mem[k] = part
 
         self._write()
