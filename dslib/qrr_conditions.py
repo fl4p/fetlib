@@ -55,11 +55,18 @@ Rescale magnitude: commutation di/dt at that design point is p50 ~4000 A/us agai
 datasheet test points of 100-500, and Qrr_op/Qrr_datasheet runs p10 2.4 / p50 6.3 /
 p90 12.2, six parts falling.
 
-STILL A MIXED RANKING, and now in the more dangerous direction: the 26.7% that keep the
-flat charge are NOT penalised for their reverse recovery, and 8 of the top 10 LS parts
-at that design point are exactly those. Missing data currently reads as a good part.
-Read Qrr_src before comparing rows; op-1pt-parsed, op-1pt and datasheet-flat-nofit are
-three different kinds of number.
+NO LONGER A MIXED RANKING. Rows that cannot be fitted at the operating point kept the
+vendor's gentle test-point charge while every fitted row paid the real (p50 ~6x)
+commutation charge, so missing data read as a GOOD part -- 8 of the top 10 LS parts at
+that design point were exactly those. generate_LS_power_loss_csv now excludes them
+(dclib.powerloss.qrr_rankable_at_operating_point) and writes them to a sibling
+`-LS-unranked-` CSV with the refusal reason, so they are dropped from the ranking but
+not from the output. Measured after: 2858 ranked, 1045 excluded (26.8%), and the ranked
+set contains no `datasheet-flat-nofit` row at all.
+
+Of those 1045 exclusions, 1031 are "no reverse-recovery test conditions" -- i.e. no
+IF/di-dt could be read off the Qrr row. THAT is the curation target now: an entry here
+(or a fixed parse) puts a part back into the ranking, and nothing else does.
 
 Curating an entry here is still worth it for any part that matters: it overrides the
 parsed point. See docs/qrr-parsed-conditions-spotcheck.md for the sample to verify.

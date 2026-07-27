@@ -176,6 +176,36 @@ def test_converter_didt_raises_the_charge_and_the_loss():
         assert getattr(op, attr) == getattr(flat, attr), attr
 
 
+def test_nofit_rows_are_excluded_from_an_operating_point_ranking():
+    """The ranking filter. Asserted on the REAL Qrr_src strings the loss model emits, not
+    on hand-written literals, so a renamed state breaks this instead of silently
+    disabling the filter (the two live in different modules).
+
+    Direction matters more than firing: the fitted part must SURVIVE and the nofit part
+    must be DROPPED. A filter that removed the wrong side would also 'fire'."""
+    from dclib.powerloss import qrr_rankable_at_operating_point as rankable
+
+    fitted = _specs()
+    nofit = _specs(registries=False)
+    gan = _specs(qrr=0.0, trr=math.nan)
+
+    def src(mf, didt):
+        return dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=didt).get_cond('P_rr')['Qrr_src']
+
+    # with an operating point requested: the unevaluable part goes, the others stay
+    assert rankable(5.7e9, src(fitted, 5.7e9)) is True
+    assert rankable(5.7e9, src(nofit, 5.7e9)) is False
+    assert rankable(5.7e9, src(gan, 5.7e9)) is True, 'GaN zero charge IS an evaluated result'
+
+    # with the flag OFF nothing may be filtered — 'datasheet-flat' is the answer, not a
+    # failure, and filtering on the string alone would empty the CSV entirely
+    for mf in (fitted, nofit, gan):
+        assert rankable(None, src(mf, None)) is True
+
+    # the dropped part carries a machine-readable reason for the unranked sheet
+    assert dcdc_buck_ls(DC, nofit, gd=GD, qrr_didt=5.7e9).get_cond('P_rr')['qrr_nofit']
+
+
 def test_uncurated_part_falls_back_visibly_not_silently():
     """No conditions -> keep the flat charge (that is what the caller had), but the
     provenance must say the operating-point path did NOT run. Absence of a fit must

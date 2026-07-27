@@ -39,6 +39,30 @@ from maglib.wire import d2awg, MaterialResistivity, acr_factor_micrometals, skin
 
 Qrr_temp_rise_default = 1.2
 
+
+def qrr_rankable_at_operating_point(qrr_didt, qrr_src) -> bool:
+    """May a part with this `Qrr_src` sit in a ranking built AT the operating point?
+
+    Lives here, beside the code that produces `Qrr_src`, so the vocabulary and its
+    meaning-for-ranking cannot drift apart in two files.
+
+    False only for the explicit `datasheet-flat-nofit` state, and only when an operating
+    point was actually requested. The distinction matters in both directions:
+
+      * flag off -> `datasheet-flat` is the ANSWER, not a failure. Filtering then would
+        empty the CSV, which is why this is gated on `qrr_didt` rather than on the string
+        alone.
+      * `op-zero` (GaN) is a real evaluated result -- zero charge -- and stays.
+
+    A nofit row is not merely uncertain, it is biased: it keeps the vendor's gentle
+    test-point charge while every fitted row pays the real commutation charge (p50 ~6x
+    larger at the fugu3 point). Ranked together, missing data reads as a good part --
+    measured: 8 of the top 10 LS parts were nofit rows before this filter existed.
+    """
+    if qrr_didt is None:
+        return True
+    return qrr_src != 'datasheet-flat-nofit'
+
 Pcl_ParallelMistmatchFactor = 0.9  # HS: one switch takes most of the dynamic load, the rest stay cooler
 
 

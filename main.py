@@ -12,7 +12,8 @@ from typing import List, Dict, Literal, Tuple, Optional, Union
 import pandas as pd
 
 import dslib.manual_fields
-from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt
+from dclib.powerloss import (dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt,
+                             qrr_rankable_at_operating_point)
 from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict, round_to_n
 from dslib.cache import disk_cache
@@ -734,6 +735,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     assert dss, "No parts to generate"
 
     result_rows = []
+    unranked_rows = []
 
     for ds in dss:
         fet_specs = get_fet_specs(ds, args.gateDrive)
@@ -760,6 +762,34 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                                  # existing result — but a config that sets 0.5 now gets
                                  # the half it asked for instead of being ignored.
                                  qrr_factor=args.syncFet.reverseRecoveryFactor)
+
+        # When the ranking is supposed to be AT the operating point, a part whose charge
+        # could not be evaluated there has no place in it. Ranked alongside the others it
+        # keeps the vendor's gentle test-point Qrr while every fitted part pays the real
+        # (p50 ~6x) commutation charge, so it is not merely uncertain — it is
+        # systematically flattered. Measured before this exclusion: 8 of the top 10 LS
+        # parts at the fugu3 point were exactly these, i.e. missing data read as a GOOD
+        # part, which is the opposite of what a ranking should do with it.
+        #
+        # Gated on qrr_didt so it cannot fire when the flag is off: with no operating
+        # point requested, `datasheet-flat` is the answer, not a failure. Only the
+        # explicit -nofit state is dropped; op-zero (GaN, genuinely zero charge) stays.
+        qrr_src = loss_spec.get_cond('P_rr')['Qrr_src']
+        if not qrr_rankable_at_operating_point(qrr_didt, qrr_src):
+            # Dropped from the RANKING, not from the output: they go to a sibling CSV with
+            # the reason, so "not ranked" never has to be inferred from a part's absence.
+            unranked_rows.append(dict(
+                mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
+                housing=ds.part.package,
+                Vds_max=ds.get_max_or_min_or_typ('Vds', False),
+                Id=fet_specs.Id,
+                Qrr=(fet_specs.Qrr * 1e9) if fet_specs.Qrr is not None else None,
+                trr=(fet_specs.trr * 1e9) if fet_specs.trr else None,
+                didt_rr=round_to_n(qrr_didt / 1e6, 3),
+                reason=loss_spec.get_cond('P_rr').get('qrr_nofit', 'no reason recorded'),
+                errors=', '.join(ds.all_errors()),
+            ))
+            continue
 
         # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
         # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
@@ -826,6 +856,21 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         out_fn += '.csv'
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('\n>>>', out_fn)
+
+        # A shorter ranking than the input list is a result, not a detail. Report the
+        # count and WHY at the same volume as the CSV path itself, so nobody reads a
+        # 2800-row ranking of a 3900-part corpus as covering the corpus.
+        if unranked_rows:
+            un_fn = out_fn.replace('-LS-inp', '-LS-unranked-inp')
+            write_csv(pd.DataFrame(unranked_rows), un_fn, sort_by=['mpn'])
+            print('>>> %d parts EXCLUDED from the ranking: no reverse-recovery fit at the '
+                  'operating point (syncFet.qrrOperatingPoint is on). Top reasons:'
+                  % len(unranked_rows))
+            from collections import Counter
+            reasons = Counter(r['reason'].split(' --')[0][:64] for r in unranked_rows)
+            for why, n in reasons.most_common(5):
+                print('      %5d  %s' % (n, why))
+            print('>>>', un_fn)
     else:
         print('skip csv write because only few parts')
 
