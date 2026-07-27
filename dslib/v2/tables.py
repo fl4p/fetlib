@@ -53,6 +53,118 @@ head_stop = (
 # ---------- header detection ----------
 
 
+# How much of a row's text the matched header tokens must span before the row is allowed to
+# be a header AT ALL. Only consulted for rows that also look like condition-bearing data
+# (see _header_match_is_incidental) -- a bare "Max" cell is 100% coverage and unaffected.
+#
+# 0.75, not 0.5. st/STP40NF10 carries the same defect on a SHORTER row, "VDS = Max rating
+# 1 uA": the match " Max rating" is 11 of 21 chars = 0.52, so a 0.5 threshold missed it by
+# a hair and left Rds_on at 10000 mOhm against a true 28. The threshold is safe to raise
+# only because _has_ordered_numeric_cluster now carries the protection it used to carry --
+# a genuine "Min. Typ. Max." header survives at ANY coverage. Re-measured end-to-end after
+# the change: 0 symbols lost across the sample (see the A/B in the commit message).
+_MIN_HEADER_COVERAGE = 0.75
+
+
+def _header_match_is_incidental(row: TextRow, m: re.Match) -> bool:
+    """True when head_re matched ordinary PROSE rather than a table header cell.
+
+    ``head_re`` is IGNORECASE and matches its groups anywhere in a row, so any sentence
+    containing "max"/"rating"/"value" reads as a header. st/STP50NF25 page 4 carries the
+    IDSS row
+
+        current (VGS = 0) VDS = Max rating @125 C 10 uA
+
+    where "Max" matched (?P<max>) and "rating" matched (?P<values>). That produced columns
+    max=(316,338), values=typ=(338,364) -- and because those columns then govern every row
+    BENEATH the fake header, RDS(on) was read out of its CONDITION cell as "10 V" -> 10000
+    mOhm against a true 0.069 Ohm = 69 mOhm. The "10" was consumed twice: once correctly as
+    cond={'Vgs': 10.0}, once as the value.
+
+    Two signals, both required, because either alone is far too broad. Measured over 120
+    datasheets: 51% of accepted header candidates have coverage < 0.5 and 10% contain '=',
+    so rejecting on either ALONE would touch a large share of the corpus. Requiring both
+    narrows it to rows that carry a condition expression AND are mostly non-header text --
+    which is what a data row looks like and what a header row does not:
+
+      * an '=' outside the matched span. Real header cells are bare labels ("Min.", "Typ.",
+        "Max."); an '=' means the row states a condition, i.e. it is data or a section
+        title like "MAXIMUM RATINGS (TJ = 25C)".
+      * the matched tokens span less than _MIN_HEADER_COVERAGE of the row. A genuine header
+        is almost entirely header tokens ("Symbol Parameter Test conditions Min. Typ. Max.
+        Unit" is ~100%); the IDSS row above is 0.23.
+
+    Deliberately does NOT reject on '=' alone, which would kill legitimate headers that
+    qualify their columns ("Max @ Tj=25C"), nor on coverage alone, which would kill the
+    single-token header fragments ("Max") that two-row headers are merged from.
+
+    THE OVERRIDE below is not optional tidying -- without it this guard is a net loss.
+    Measured: rejecting on ('=' outside AND low coverage) alone destroyed 12 real symbols
+    on littelfuse/IXFP180N10T2 (Ciss 10500 pF, Qg 185 nC, tDoff 34 ns, ...), because IXYS
+    sheets head their tables
+
+        (TJ = 25C Unless Otherwise Specified) Min. Typ. Max.
+
+    which carries a condition AND is mostly non-header text, yet is a perfectly good header.
+    What separates it from the ST prose row is the SHAPE of what matched: three numeric
+    header labels in left-to-right order. A row that contains a well-formed min/typ/max
+    cluster is a header no matter what else shares the line.
+    """
+    txt = row.text or ''
+    if not txt:
+        return False
+
+    outside = txt[:m.start()] + txt[m.end():]
+    if '=' not in outside:
+        return False
+
+    if _has_ordered_numeric_cluster(row, m):
+        return False
+
+    span = m.end() - m.start()
+    return span < _MIN_HEADER_COVERAGE * len(txt.strip())
+
+
+def _has_ordered_numeric_cluster(row: TextRow, m: re.Match) -> bool:
+    """True when the match looks like a real run of value COLUMNS rather than prose.
+
+    This is the positive evidence that a row is a table header, and it is what lets the
+    coverage rule above be strict without deleting real tables. Two conditions:
+
+      * at least two distinct value-column groups, left to right on the PAGE (word x, not
+        regex order -- the whole failure this module keeps hitting is text that reads
+        header-like but is not laid out like one);
+      * the RIGHTMOST of them is `unit` or `max`, which is how every real datasheet table
+        ends. This is the part that excludes the ST rows: "VDS = Max rating 1 uA" does
+        match two groups (max="Max", values="rating"), but they end on `values`, and no
+        table has a Rating column to the right of its Max column -- it is an adjective and
+        a noun in a sentence.
+
+    Recognising `values`/`unit` and not just the min/typ/max triple is not generosity: TI
+    heads its tables "TA = 25C TYPICAL VALUE UNIT", which has exactly one member of that
+    triple. Requiring two of min/typ/max rejected it and cost CSD85301Q2 and CSD19535KTTT
+    their Id and Idp.
+    """
+    rank = {'min': 0, 'typ': 1, 'values': 2, 'max': 3, 'unit': 4}
+    found = []
+    for g in rank:
+        if not m.groupdict().get(g):
+            continue
+        w = row.word_at_offset(m.start(g))
+        if w is not None:
+            found.append((w.bbox.cx, g))
+
+    if len(found) < 2:
+        return False
+
+    found.sort()
+    if found[-1][1] not in ('unit', 'max'):
+        return False
+
+    ranks = [rank[g] for _cx, g in found]
+    return all(a < b for a, b in zip(ranks, ranks[1:]))
+
+
 def _row_is_header(row: TextRow, m: re.Match,
                    min_font_height: float = 2.5) -> bool:
     """Mirror the heuristics of ``dslib.pdf.sheet._header_filter``.
@@ -63,6 +175,9 @@ def _row_is_header(row: TextRow, m: re.Match,
     asterisks/footnotes rather than to enforce a typographic minimum.
     """
     if any(sw in row.text for sw in head_stop):
+        return False
+
+    if _header_match_is_incidental(row, m):
         return False
 
     h_max = 0.0
