@@ -4,8 +4,7 @@ Refresh stored MosfetSpecs for parts with missing fields.
 Iterates ``dslib.store.parts_db``, finds every ``Part`` whose ``MosfetSpecs``
 is missing one of the fields the web backend renders (see ``WEB_FIELDS``),
 re-runs ``compile_part_datasheet`` on its ``DiscoveredPart``, recomputes a
-``MosfetSpecs`` via ``DatasheetFields.get_mosfet_specs()`` (the same path
-used by ``compute_part_powerloss``), wraps it back into a ``Part`` and
+``MosfetSpecs`` via ``main.get_reference_fet_specs``, wraps it back into a ``Part`` and
 writes the result back to ``parts_db``.
 
 A field counts as *present* only when its evaluated value (often a
@@ -234,7 +233,7 @@ def _try_fill_vpl_from_chart(part: Part,
 def _ds_to_specs(ds: DatasheetFields, prev_part: Part) -> Optional[Part]:
     """Compute MosfetSpecs from a parsed DatasheetFields and wrap as Part.
 
-    Mirrors ``compute_part_powerloss`` without the loss math. Falls back to
+    Mirrors the pipeline's spec build without the loss math. Falls back to
     the existing ``prev_part.discovered`` if the parsed DS doesn't carry a
     ``part`` attribute (older pickles).
     """

@@ -117,7 +117,7 @@ ripple_factor   peak-to-peak coil current divided by mean coil current (assuming
 tDead           gate driver dead-time (happens 2 times per period)
 ```
 
-6. Run `python3 main.py` and it will download all datasheets (if not already found), extract values and compose a CSV
+6. Run `python3 main.py --config-file apps/proj/buck.yaml` and it will download all datasheets (if not already found), extract values and compose a CSV
    file with loss estimations for the given DC-DC converter.
 
    The process will finish with an output like this:

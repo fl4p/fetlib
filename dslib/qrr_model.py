@@ -345,7 +345,7 @@ def _pick_2pt_rows(points):
     return p_lo, p_hi
 
 
-def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None):
+def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None, n_tau=None):
     """Two-point sibling of qrr_op(): calibrate (tau, TM, q0) from the part's
     own two-di/dt datasheet rows (dslib/qrr_points.py), predict at the
     operating point. Headline Qrr is the MEASURED-EQUIVALENT charge
@@ -361,9 +361,10 @@ def qrr_op_2pt(points, IF, didt, Tj=25.0, _fit_cache=None):
         fit = fit_lm_2pt(p_lo, p_hi, tj_fit=tj_fit)
         if _fit_cache is not None:
             _fit_cache[key] = fit
-    tau = tau_at_tj(fit["tau0"], Tj, tj_fit)
+    tau = tau_at_tj(fit["tau0"], Tj, tj_fit, n_tau=n_tau)
     p = predict(tau, fit["TM"], IF, didt)
     return dict(Qrr=p["Qrr"] + fit["q0"], qrr_diffusion=p["Qrr"], q0=fit["q0"],
+                decontaminated=True,   # q0 solved from the part's own two rows
                 trr=p["trr"], irrm=p["irrm"], td=p["td"],
                 tau=tau, TM=fit["TM"], tj_extrapolated=(Tj != tj_fit),
                 method="2pt", fit=fit)
@@ -429,15 +430,25 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None, part=None):
     return out
 
 
-def qrr_op(Qrr, trr, cond, IF, didt, Tj=25.0, _fit_cache=None):
+def qrr_op(Qrr, trr, cond, IF, didt, Tj=25.0, _fit_cache=None, qoss_vr=None, n_tau=None):
     """One-call fl4p/fetlib#37 entry: datasheet (Qrr, trr) + test conditions `cond`
     (dict with IF/didt/Tj, see dslib/qrr_conditions.py) -> predicted recovery at the
     operating point (IF, didt, Tj).
 
-    Returns dict(Qrr, trr, irrm, td, tau, TM, tj_extrapolated, fit) — Qrr/trr/irrm at
-    the OPERATING point; `fit` is the calibration record; `tj_extrapolated` is True
-    whenever Tj != the datasheet Tj (the temperature axis rests on the N_TAU
-    assumption, not on datasheet data).
+    Returns dict(Qrr, qrr_diffusion, q0, decontaminated, trr, irrm, td, tau, TM,
+    tj_extrapolated, fit). The two charges are DIFFERENT quantities and a consumer must
+    pick deliberately, exactly as on the 2pt path:
+      * `Qrr`            — measured-equivalent (diffusion + q0), comparable with a
+                           datasheet number and with qrr_op_2pt's headline. For ranking.
+      * `qrr_diffusion`  — stored charge only. What a loss model books, because the
+                           capacitive share is already booked in its Coss/Eoss bucket.
+    `q0` is the capacitive share removed before fitting, = QRR_QOSS_FRACTION*qoss_vr;
+    with qoss_vr=None it is 0.0, `decontaminated` is False and the two charges coincide
+    (the fit then runs on the RAW datasheet Qrr and over-states diffusion — the caller
+    must surface that, see best_lm_fit's identical contract).
+
+    `n_tau` scales the Tj law; None applies the conservative-bound N_TAU. Pass a
+    resolved per-part exponent (resolve_n_tau) to use measured evidence.
 
     Raises LMFitError when the datasheet point is missing/inconsistent — per the house
     rule, consumers fail loud instead of inventing an operating point.
@@ -446,13 +457,23 @@ def qrr_op(Qrr, trr, cond, IF, didt, Tj=25.0, _fit_cache=None):
         raise LMFitError("no reverse-recovery test conditions — add the part to "
                          "dslib/qrr_conditions.py (see fl4p/fetlib#37)")
     tj_fit = float(cond.get("Tj", 25.0))
-    key = (Qrr, trr, cond.get("IF"), cond.get("didt"), tj_fit)
+    # qoss_vr belongs in the key: it changes the charge the fit is calibrated on, so a
+    # key without it would serve a raw-Qrr fit for a decontaminated request.
+    key = (Qrr, trr, cond.get("IF"), cond.get("didt"), tj_fit, qoss_vr)
     fit = _fit_cache.get(key) if _fit_cache is not None else None
     if fit is None:
-        fit = fit_lm(Qrr, trr, cond.get("IF"), cond.get("didt"), tj_fit=tj_fit)
+        q_cal = calibration_qrr(Qrr, qoss_vr)
+        fit = fit_lm(q_cal, trr, cond.get("IF"), cond.get("didt"), tj_fit=tj_fit)
+        fit = dict(fit, q0=Qrr - q_cal, qrr_diffusion=q_cal, qrr_measured_equiv=Qrr,
+                   decontaminated=qoss_vr is not None)
         if _fit_cache is not None:
             _fit_cache[key] = fit
-    tau = tau_at_tj(fit["tau0"], Tj, tj_fit)
+    tau = tau_at_tj(fit["tau0"], Tj, tj_fit, n_tau=n_tau)
     p = predict(tau, fit["TM"], IF, didt)
-    return dict(Qrr=p["Qrr"], trr=p["trr"], irrm=p["irrm"], td=p["td"],
+    # q0 rides along as a CONSTANT offset to the operating point, same as qrr_op_2pt —
+    # the capacitive share does not scale with di/dt, which is the whole reason for
+    # excluding it from the diffusion fit.
+    return dict(Qrr=p["Qrr"] + fit["q0"], qrr_diffusion=p["Qrr"], q0=fit["q0"],
+                decontaminated=fit["decontaminated"],
+                trr=p["trr"], irrm=p["irrm"], td=p["td"],
                 tau=tau, TM=fit["TM"], tj_extrapolated=(Tj != tj_fit), fit=fit)

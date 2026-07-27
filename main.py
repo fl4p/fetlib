@@ -64,7 +64,14 @@ excludes.add('datasheets/littelfuse/IXTH10P60.pdf')
 
 def main_yaml():
     parser = argparse.ArgumentParser(description='')
-    parser.add_argument('--config-file')
+    # Required. `python3 main.py` with no arguments used to reach main(), which built a
+    # DcDcLoadParams.default() design — that entry point had already decayed to a stub that
+    # computed the design and returned without running anything, and __main__ has called
+    # main_yaml() for a while, so the no-arg form died with a TypeError inside open(None).
+    # An argparse error naming the missing option beats that. README step 6 and CLAUDE.md
+    # both documented the no-arg form and have been corrected.
+    parser.add_argument('--config-file', required=True,
+                        help='YAML project to run, e.g. apps/proj/buck.yaml')
 
     parser.add_argument('-j', default=8)  # parallel jobs
     parser.add_argument('-q')
@@ -122,57 +129,6 @@ def main_yaml():
         args.dcdc.syncFet.qrrOperatingPoint = True
 
     run(args, cargs, os.path.basename(cargs.config_file).split('.yaml')[0])
-
-
-def main():
-    parser = argparse.ArgumentParser(description='')
-
-    # parser.add_argument('command', choices=(
-    #    'discover', 'download', 'parse', 'power'), default='power')
-    parser.add_argument('--dcdc-file')
-    parser.add_argument('-q')
-    parser.add_argument('-substrate')
-    parser.add_argument('--swcd', action='store_true')
-
-    parser.add_argument('--rg-total', default=4.7)  # total gate resistance
-    parser.add_argument('--vpl-fallback', default=4.5)
-    parser.add_argument('--qrr-op', action='store_true',
-                        help='book reverse-recovery loss on the Qrr predicted at THIS '
-                             "converter's operating point (IF = valley current, di/dt from "
-                             'the HS current-rise time) via the Lauritzen-Ma fit, instead of '
-                             "the flat datasheet Qrr measured at the vendor's own test point. "
-                             'Needs curated conditions (dslib/qrr_conditions.py) or two-di/dt '
-                             'rows (dslib/qrr_points.py); parts without either keep the flat '
-                             'value and are marked Qrr_src=datasheet-flat-nofit in the CSV')
-
-    parser.add_argument('-j', default=8)  # parallel jobs
-    parser.add_argument('--no-cache', action='store_true')
-    parser.add_argument('--no-ocr', action='store_true')
-    parser.add_argument('--no-download', action='store_true')
-    parser.add_argument('--tabular-harvest', action='store_true',
-                        help='run Tabula even when text+v2 already satisfy need_symbols '
-                             '(restores pre-2026-07 opportunistic harvesting of non-needed '
-                             'fields into the DB; slower -- adds a Tabula pass per covered part)')
-
-    parser.add_argument('--no-pre-select',
-                        action='store_true')  # also read datasheets of parts that are out of spec, takes much longer
-    parser.add_argument('--clean', action='store_true')
-    args = parser.parse_args(sys.argv[1:])
-
-    if args.clean:
-        raise NotImplementedError()
-        # git clean -xn
-
-    if args.no_cache:
-        from dslib.cache import disk_cache_disable
-        disk_cache_disable(True)
-
-    if not args.dcdc_file:
-        # set DC-DC operating point:
-        dcdc = DcDcLoadParams.default()
-        print('Using default DC-DC:', dcdc)
-    else:
-        raise NotImplemented()
 
 
 class ControlFetArgs():
@@ -500,83 +456,6 @@ def get_fet_specs(ds: DatasheetFields, gd: GateDrive):
         return None
 
 
-def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> Tuple[Optional[Part], Dict[str, any]]:
-    if isinstance(ds, tuple):
-        raise ValueError(ds)
-    else:
-        part = ds.part
-
-    # Built BEFORE get_fet_specs, which needs it to select Rds_on/Qg at the right gate
-    # voltage. Von is still 10 on this legacy argparse path because it exposes no gate-voltage
-    # option — but it now travels explicitly instead of arriving as get_mosfet_specs' hidden
-    # default, so the hardcoding is visible at the call site where it can be fixed.
-    gd = GateDrive(float(args.rg_total), Von=10, Voff=0, fallback_V_pl=float(args.vpl_fallback))
-
-    fet_specs = get_fet_specs(ds, gd)
-
-    if fet_specs is None:
-        # raise
-        return None, dict(mfr=part.mfr,
-                          mpn=part.mpn,
-                          housing=part.package,
-                          errors=', '.join(ds.all_errors()))
-
-    # compute power loss
-    if 1:
-        loss_spec = dcdc_buck_hs(dcdc, fet_specs,
-                                 gd=gd,
-                                 # Lcsi=3e-9, ls_Qoss=200e-9,  # TO220: ~4, SMD~2
-                                 use_datasheet_timings=False
-                                 )
-        ploss = loss_spec.__dict__.copy()
-        del ploss['P_dt']
-        ploss.pop('_cond', None)
-        ploss['P_hs'] = loss_spec.buck_hs()
-        ploss['P_2hs'] = loss_spec.parallel(2).buck_hs()
-        ploss['tr'] = round(loss_spec.get_cond('P_sw')['tr'] * 1e9, 1)  # possibly nan!
-        ploss['tf'] = round(loss_spec.get_cond('P_sw')['tf'] * 1e9, 1)
-        # ploss['P_coss'] = loss_spec.P_coss
-
-        # This CSV scores ONE part in both slots, so the di/dt that commutates its body
-        # diode is the one its own HS turn-on imposes (a symmetric converter). That is
-        # the same self-pairing the P_hs/P_LS columns beside it already assume.
-        qrr_didt = (ls_commutation_didt(dcdc, fet_specs, gd)
-                    if getattr(args, 'qrr_op', False) else None)
-        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, qrr_didt=qrr_didt)
-        ploss['PcossLS'] = loss_spec.P_coss
-        ploss['Prr'] = loss_spec.P_rr
-        rr_cond = loss_spec.get_cond('P_rr')
-        ploss['Qrr_eff'] = round_to_n(rr_cond['Qrr'] * 1e9, 4)  # nC, what P_rr was booked on
-        ploss['Qrr_src'] = rr_cond['Qrr_src']
-        ploss['didt_rr'] = None if qrr_didt is None else round_to_n(qrr_didt / 1e6, 3)  # A/us
-        ploss['PonLS'] = loss_spec.P_cl
-        ploss['PdtLS'] = loss_spec.P_dt
-        ploss['P_LS'] = loss_spec.buck_ls()
-        ploss['P_2ls'] = loss_spec.parallel(2).buck_ls()
-
-    # except Exception as e:
-    #    print(mfr, mpn, 'dcdc_buck_hs', e)
-    #    ploss = {}
-
-    row = dict(
-        **ds.get_row(),
-
-        Vth=part.specs.Vgs_th_max,
-        Vpl=fet_specs and fet_specs.V_pl,
-
-        FoMrect=fet_specs.FoM,
-        FoMrr=fet_specs.FoMqrr,
-        FoMsw=fet_specs.FoMqsw,
-        FoMoss=fet_specs.FoMcoss,
-        QgdQgs=fet_specs.QgdQgsRatio,
-        QgdQgs2=fet_specs.Qgd / fet_specs.Qgs2,
-
-        **ploss,
-    )
-
-    return Part(specs=fet_specs, discovered=part), row
-
-
 # field_repr_salt is composed in because the cached value is a list of DatasheetFields, i.e.
 # PICKLED Field objects. `hash_func_code` defaults to False and the salt was ('13', excludes),
 # so NOTHING in this key covered the code that decides what a Field stores -- and this
@@ -656,74 +535,6 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
 
 
     return dss
-
-
-def generate_parts_power_loss_csv(parts: List[DiscoveredPart], dcdc: DcDcLoadParams, args):
-    assert parts, "No parts to generate"
-
-    print('generating power loss estimates for ', len(parts), 'parts')
-
-    result_rows = []  # csv
-    result_parts: List[Part] = []  # db storage
-    # all_mpn = set()
-
-    dss = read_parts_datasheets(parts, args)
-
-    if len(dss) == 1:
-        # print(repr(dss[0]))
-        dss[0].print(show_cond=True)
-        print('mosfet specs:')
-        print(dss[0].get_mosfet_specs())
-
-        # with open('fet-datasheets.pkl', 'wb') as f:
-        #    pickle.dump(dss, f)
-
-    print(set(ds.part.mpn for ds in dss))
-    print('computing power loss for %s parts...' % len(dss))
-    for ds in dss:
-        if isinstance(ds, tuple) and ds == (None, None):
-            continue
-        if not dcdc.vds_in_range(ds.get_max_or_min_or_typ('Vds')):
-            print(ds.part, 'vds not in range', ds.get_typ_or_max_or_min('Vds'))
-            continue
-        part, row = compute_part_powerloss(ds, dcdc, args=args)
-        if part is not None:
-            result_parts.append(part)
-        if row is not None:
-            result_rows.append(row)
-
-    # print('no P_sw')
-    # for row in result_rows:
-    #    if math.isnan(row.get('P_sw') or math.nan):
-    ##        #no_psw.append((mfr, mpn))
-    #        #print(os.path.join('datasheets', row['mfr'], row['mpn'] + '.pdf'))
-
-    df = pd.DataFrame(result_rows)
-
-    if len(dss) >= 1:
-        os.path.exists('out') or os.makedirs('out', exist_ok=True)
-        dat = f'{datetime.datetime.now():%Y-%m-%d}'
-        out_fn = f'out/{dcdc.fn_str("buck")}-{dat}-inp{len(parts)}.csv'
-        write_csv(df, out_fn)
-        print('\n>>>', out_fn)
-    else:
-        print('skip csv write because only few parts')
-
-    #dslib.store.parts_db.add(result_parts, overwrite=True)
-    #dslib.store.datasheets_db.add(dss, overwrite=True)
-
-    print('')
-    print('')
-    print('stored', len(result_parts), 'parts')
-    show_summary(dss)
-
-    # report
-    # - total datasheets with at least 1 field
-    # - total fields with at least one value
-    # - total values
-    # - total power values
-
-    return result_parts
 
 
 def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc: DcDcLoadParams, gd: GateDrive,
@@ -936,13 +747,19 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             # mosfet might self turn-on
             continue
 
-        # Same self-pairing as compute_part_powerloss: this CSV ranks LS candidates with
+        # Self-pairing: this CSV ranks LS candidates with
         # no named HS partner, so the commutation di/dt is the one the part's own turn-on
         # would impose. A design that knows its actual HS should pass that part's di/dt.
         qrr_didt = (ls_commutation_didt(dcdc, fet_specs, gd, isGaN=ds.part.specs.isGaN)
                     if args.syncFet.qrrOperatingPoint else None)
         loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, isGaN=ds.part.specs.isGaN,
-                                 qrr_didt=qrr_didt)
+                                 qrr_didt=qrr_didt,
+                                 # syncFet.reverseRecoveryFactor was parsed from every
+                                 # project YAML and read by nothing since it was added.
+                                 # Every shipped config sets 1, so wiring it changes no
+                                 # existing result — but a config that sets 0.5 now gets
+                                 # the half it asked for instead of being ignored.
+                                 qrr_factor=args.syncFet.reverseRecoveryFactor)
 
         # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
         # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
@@ -1024,14 +841,4 @@ def show_summary(dss: List[DatasheetFields]):
 
 
 if __name__ == '__main__':
-    # if os.path.isfile('fet-datasheets.pkl'):
-    #    with(open('fet-datasheets.pkl', 'rb')) as f:
-    #        dss: List[DatasheetFields] = pickle.load(f)
-    #
-    #    dss = [d for d in dss if d != (None, None)]
-    #    show_summary(dss)
-
-    # exit(0)
-    # parse_pdf_tests()
-    # main()
     main_yaml()

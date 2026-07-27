@@ -19,6 +19,19 @@ FOM_MAX = 2e5
 Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 
 
+def qrr_part_key(specs):
+    """"mfr:MPN" for qrr_model.resolve_n_tau, or None when `specs` carries no part
+    identity. A module function, not a method: Qrr_op is borrowed as an unbound method by
+    attribute-bag stand-ins in the tests, which have no other MosfetSpecs members.
+
+    None resolves to the CONSERVATIVE bound — the safe direction. Never let an
+    unidentifiable part inherit another family's measured exponent.
+    """
+    part = getattr(specs, 'part', None)
+    mfr, mpn = getattr(part, 'mfr', None), getattr(part, 'mpn', None)
+    return f'{mfr}:{mpn}' if mfr and mpn else None
+
+
 def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
     """Fill `specs.qrr_cond` / `specs.qrr_points` from the curated registries, in place.
 
@@ -369,7 +382,7 @@ class MosfetSpecs:
     def FoMqrr(self):
         return self.Rds_on * self.Qrr * 1e3 * 1e9  # [mΩ*nC]
 
-    def Qrr_op(self, IF, didt, Tj=25.0, detail=False):
+    def Qrr_op(self, IF, didt, Tj=25.0, detail=False, qoss_vr=None):
         """Predicted reverse-recovery charge [C] at an OPERATING point (IF [A],
         didt [A/s], Tj [degC]) — fl4p/fetlib#37. The flat `self.Qrr` is only valid at
         the datasheet test condition; this extrapolates it with the Lauritzen-Ma
@@ -391,25 +404,40 @@ class MosfetSpecs:
         """
         from dslib import qrr_model
         if self.Qrr == 0:
-            return dict(Qrr=0.0, trr=0.0, irrm=0.0, td=0.0, tau=0.0, TM=0.0,
+            # qrr_diffusion/q0 are part of the detail contract on every other path; a
+            # consumer that books diffusion charge must not KeyError on a GaN part.
+            return dict(Qrr=0.0, qrr_diffusion=0.0, q0=0.0, decontaminated=True,
+                        trr=0.0, irrm=0.0, td=0.0, tau=0.0, TM=0.0,
                         tj_extrapolated=False, fit=None,
                         method='zero') if detail else 0.0
         if not hasattr(self, "_lm_fit_cache"):
             self._lm_fit_cache = {}
         # getattr: an instance unpickled from a parts-lib written before the field
         # existed bypasses __init__ and would AttributeError instead of LMFitError.
+        # Resolve the Qrr(Tj) exponent ONCE, per part, here — the measured AO-die fits in
+        # dslib/qrr_tj_specs.py were unreachable from this method: both qrr_model entries
+        # defaulted n_tau to the conservative bound and nothing ever passed anything else,
+        # so a die with its own 25/125 C chart was still extrapolated on the legacy
+        # "Qrr doubles" rule. n_tau_state records which of the three states applied.
+        n_res = qrr_model.resolve_n_tau(qrr_part_key(self))
+        n_stamp = dict(n_tau=n_res["n_tau"], n_tau_state=n_res["state"],
+                       n_tau_source=n_res["source"])
         points = getattr(self, "qrr_points", None)
         fallback_reason = None
         if points:
             try:
                 p = qrr_model.qrr_op_2pt(points, IF, didt, Tj=Tj,
-                                         _fit_cache=self._lm_fit_cache)
+                                         _fit_cache=self._lm_fit_cache,
+                                         n_tau=n_res["n_tau"])
+                p.update(n_stamp)
                 return p if detail else p["Qrr"]
             except qrr_model.LMFitError as e:
                 fallback_reason = str(e)  # e.g. Qrr ~flat with di/dt: 1pt only
         cond = getattr(self, "qrr_cond", None)
         p = qrr_model.qrr_op(self.Qrr, self.trr, cond,
-                             IF, didt, Tj=Tj, _fit_cache=self._lm_fit_cache)
+                             IF, didt, Tj=Tj, _fit_cache=self._lm_fit_cache,
+                             qoss_vr=qoss_vr, n_tau=n_res["n_tau"])
+        p.update(n_stamp)
         # Where the TEST POINT came from, which qrr_model neither knows nor should:
         # 'curated' = hand-read from the PDF, 'parsed' = taken off the parsed Qrr row.
         # A parsed point is the weaker evidence and must stay distinguishable downstream.

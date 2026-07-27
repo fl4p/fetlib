@@ -390,10 +390,44 @@ def validate_datasheet_text(mfr, mpn, text, return_reason=False):
 # A symbol with no entry here is NEVER proven absent -- absence of a rule means "escalate
 # as before", not "fine". Extending this to another family means naming siblings that sit
 # in the SAME table as the symbol, so their presence really does witness its text.
+#
+# Every rule below was scored over 1600 DB parts with the guard's REAL inputs, counting
+# fires against what the full pipeline (tabular AND its OCR rung) actually produced for
+# that part. FIRES/clean/loss, where "clean" = the pipeline never found the symbol either,
+# so the OCR was demonstrably dead work, and "loss" = it did, from a tabular source:
+#
+#     Qgs|Qg_th|Qgs2  <- Qg               53 fires, 52 clean, 0 loss
+#     Qgd             <- Qg               52 fires, 52 clean, 0 loss
+#     Qrr             <- Vsd              78 fires, 78 clean, 0 loss
+#     trr             <- Vsd             109 fires, 109 clean, 0 loss
+#
+# Score a candidate rule the same way before adding it -- and score it with ds.keys() from
+# text+v2, NOT with the DB record's keys. A DB record carries manual_fields overrides,
+# discovery specs and tabular/OCR results that the live guard never sees, and using it as
+# the control inflates fires ~16x while manufacturing false positives that are artifacts
+# of the measurement. That mistake made this exact table look 100% unsafe.
+#
+# Two families were measured and DELIBERATELY LEFT OUT:
+#
+#  * Vsd -- every control tried loses data (littelfuse/IXTH200N10T, whose Vsd the DB holds
+#    from a tabular source). Vsd's own table-mates are trr and Qrr, which go missing more
+#    often than Vsd itself (36.7%/30.5% vs 4.3%), so there is no same-table witness that
+#    is not circular, and a cross-table one (Rds_on+Vgs_th) loses the same part.
+#  * tRise/tFall -- with the honest control (tDon+tDoff) they fire 0 times in 1600: when
+#    the switching-times table is unreadable, tDon/tDoff are unreadable the same way and
+#    the control correctly refuses. The one variant with any yield, tFall <- tRise, loses
+#    2 parts (infineon/IPP070N08N3GXKSA1, IPB067N08N3GATMA1) whose tFall the DB holds
+#    from `.r600_ocrmypdf.pdf>tabula_cli_guess` -- i.e. the OCR rung is NOT always dead
+#    work, and these two are the standing proof of it.
 _ABSENCE_PROOF_SIBLINGS = {
-    'Qgs': ('Qg', 'Qgd'),
-    'Qgs2': ('Qg', 'Qgd'),
-    'Qg_th': ('Qg', 'Qgd'),
+    # gate charge table
+    'Qgs': ('Qg',),
+    'Qgs2': ('Qg',),
+    'Qg_th': ('Qg',),
+    'Qgd': ('Qg',),
+    # source-drain (body diode) table
+    'Qrr': ('Vsd',),
+    'trr': ('Vsd',),
 }
 
 

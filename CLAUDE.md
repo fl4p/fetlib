@@ -18,7 +18,6 @@ There is no `pyproject.toml`/`setup.py` — this is run as scripts from the repo
 
 ```bash
 python3 main.py --config-file apps/proj/buck.yaml    # full pipeline driven by a YAML
-python3 main.py                                       # uses DcDcLoadParams.default()
 python3 discover_parts.py                             # only the parts-discovery + download phase
 python3 datasheet.py <command> <pdf>                  # single-file utility: open|ascii|parse|read-sheet-debug|power|html|html-pm|rasterize
 python3 power_loss_calc.py                            # plot loss curves for hard-coded MPPT designs in apps/mppts/

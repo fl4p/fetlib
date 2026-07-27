@@ -160,6 +160,24 @@ def Rds_on(mf: MosfetSpecs, Id, Tj):
     return mf.Rds_on
 
 
+def qoss_at(mf: MosfetSpecs, V) -> float:
+    """Output charge [C] stored at drain voltage V, on the same Coss(V) ~ 1/sqrt(V) model
+    p_coss_eoss integrates. NaN when Coss or V is unusable — an unknown charge stays
+    unknown rather than defaulting to a plausible one.
+
+    Extracted so the Qrr decontamination (which needs Qoss at the datasheet's REVERSE
+    TEST voltage VR, not at V_bus) cannot drift from the Coss model the Coss/Eoss bucket
+    itself uses. Those two must agree: the whole point of subtracting a capacitive share
+    from Qrr is that this bucket already books it.
+    """
+    if V is None or not math.isfinite(V) or V <= 0 or not math.isfinite(mf.Coss):
+        return math.nan
+    coss_v0 = mf.Coss_V0
+    if math.isfinite(coss_v0) and coss_v0 > 0:
+        return 2 * mf.Coss * (coss_v0 * V) ** .5
+    return 2 * mf.Coss * V
+
+
 def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs) -> Tuple[float, float]:
     # for Coss the HS contribution is the energy stored in Coss
     # which is wasted in its own channel during turn-on
@@ -171,13 +189,11 @@ def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs) -> Tuple[float, float]:
     if math.isfinite(coss_v0) and coss_v0 > 0:
         # Coss is ~1/sqrt(V)
         p_coss = 2 / 3 * mf.Coss * dc.Vi ** (3 / 2) * coss_v0 ** .5 * dc.f
-        qoss = 2 * mf.Coss * (coss_v0 * dc.Vi) ** .5
     else:
         warnings.warn('%s coss v0 not available, using fallback equation' % mf.part.mpn)
         p_coss = 2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f  # 2/3 comes from integration of Coss(V)
-        qoss = 2 * mf.Coss * dc.Vi
 
-    return p_coss, qoss
+    return p_coss, qoss_at(mf, dc.Vi)
 
 
 def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
@@ -261,7 +277,7 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
 
 def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
                  Qrr_temp_rise=Qrr_temp_rise_default,
-                 isGaN=False, qrr_didt=None):
+                 isGaN=False, qrr_didt=None, qrr_factor=1.0):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -275,6 +291,14 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
         dead time) via the Lauritzen-Ma fit in dslib/qrr_model.py. Which path ran is
         reported in cond['P_rr']['Qrr_src'] — the two are NOT comparable numbers and a
         consumer that mixes them must be able to tell them apart.
+    :param qrr_factor: fraction of the recovery charge that actually commutates through
+        this switch, in [0, 1] (YAML syncFet.reverseRecoveryFactor). 1.0 = all of it, the
+        default and the only value any shipped config uses. Below 1 it de-rates the
+        booked charge for a design where the body diode does not carry the full
+        commutation — a parallel Schottky taking part of it, or a topology that avoids
+        hard commutation. It is a DESIGN de-rating applied to the charge the datasheet
+        or the model produced, NOT a correction to either, so it multiplies last and is
+        reported separately in cond['P_rr'].
     :return:
     """
 
@@ -301,12 +325,30 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     if qrr_didt is not None:
         from dslib.qrr_model import LMFitError
         assert math.isfinite(qrr_didt) and qrr_didt > 0, ('qrr_didt', qrr_didt)
+        # Qoss at the datasheet's REVERSE TEST voltage, so the single-point fit can be
+        # calibrated on diffusion charge alone (see the Qrr_base selection below). NaN ->
+        # None -> no decontamination, reported via Qrr_decont.
+        vr = (getattr(mf, 'qrr_cond', None) or {}).get('VR')
+        q_vr = qoss_at(mf, vr)
         try:
-            qrr_detail = mf.Qrr_op(IF=dc.Io_min, didt=qrr_didt, Tj=25.0, detail=True)
+            qrr_detail = mf.Qrr_op(IF=dc.Io_min, didt=qrr_didt, Tj=25.0, detail=True,
+                                   qoss_vr=None if math.isnan(q_vr) else q_vr)
             # detail=True is a mapping by contract; assert it rather than let a future
             # signature slip put a bare float into Qrr_base and multiply on quietly.
             assert isinstance(qrr_detail, dict), qrr_detail
-            Qrr_base = float(qrr_detail['Qrr'])
+            # DIFFUSION charge, not the measured-equivalent headline. The datasheet Qrr
+            # integral also contains the diode's own junction displacement charge, and
+            # P_coss below already books that (doubled) for this same part — booking the
+            # headline here would charge the capacitive share twice. This is exactly the
+            # contract qrr_model.best_lm_fit states: q0 is calibration provenance, and a
+            # consumer that adds it back recreates the double-count.
+            #
+            # It only bites where there is evidence to remove: q0 comes from the part's
+            # own two-di/dt rows (2pt) or QRR_QOSS_FRACTION*Qoss(VR) (1pt, when Coss and
+            # VR are both available). With neither, q0 is 0 and this is the old number —
+            # `decontaminated` says which, and it is NOT a claim of correctness, only of
+            # what was subtracted.
+            Qrr_base = float(qrr_detail['qrr_diffusion'])
             # 'op-1pt-parsed' vs 'op-1pt': a test point taken off the parsed Qrr row is
             # weaker evidence than a hand-read one, and the CSV must let a reader sort on
             # that. Only the 1pt path has a condition source; 2pt fits rows directly.
@@ -320,7 +362,8 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             qrr_src = 'datasheet-flat-nofit'
             qrr_detail = dict(nofit_reason=str(e))
 
-    Qrr_eff = Qrr_base * Qrr_temp_rise  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
+    assert 0 <= qrr_factor <= 1, ('qrr_factor', qrr_factor)
+    Qrr_eff = Qrr_base * Qrr_temp_rise * qrr_factor  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
     # TODO Qrr Id (IPT025N15NM6ATMA1)
     # TODO https://application-notes.digchip.com/070/70-41484.pdf
     # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
@@ -357,7 +400,16 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             R_on=dict(Rds=rds),
             P_dt=dict(Vsd=vsd, tDead=dc.tDead),
             P_rr=dict(Qrr=Qrr_eff, Qrr_ds=mf.Qrr, Qrr_src=qrr_src,
+                      # A de-rated P_rr must never be mistaken for the part's own charge.
+                      **(dict(qrr_factor=qrr_factor) if qrr_factor != 1.0 else {}),
                       **(dict(qrr_didt=qrr_didt, qrr_IF=dc.Io_min) if qrr_didt else {}),
+                      # Qrr_q0 is the capacitive share EXCLUDED from the booked charge
+                      # (0.0 when there was no evidence to exclude any); Qrr_decont says
+                      # whether that exclusion rested on data or defaulted to zero.
+                      **(dict(Qrr_q0=qrr_detail.get('q0'),
+                              Qrr_decont=qrr_detail.get('decontaminated'),
+                              Qrr_n_tau=qrr_detail.get('n_tau_state'))
+                         if qrr_detail and 'q0' in qrr_detail else {}),
                       **(dict(qrr_nofit=qrr_detail['nofit_reason'])
                          if qrr_detail and 'nofit_reason' in qrr_detail else {})),
             P_gd=(dict(Qg=mf.Qg)),

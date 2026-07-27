@@ -51,10 +51,14 @@ def _specs(qrr=DS_QRR, trr=DS_TRR, registries=True, **kw):
     return attach_qrr_registries(mf, MFR, MPN) if registries else mf
 
 
-def test_calibration_point_reproduces_the_flat_value():
-    """At the datasheet's own (IF, di/dt) the operating-point path must return the
-    datasheet charge. Calibrating only that the flag "changes something" would pass
-    just as well if it changed it in the wrong direction or by a wrong scale."""
+def test_calibration_point_reproduces_the_datasheet_minus_the_capacitive_share():
+    """At the datasheet's own (IF, di/dt) the operating-point path must reproduce the
+    datasheet charge — minus q0, the junction displacement charge that P_coss already
+    books for this same part. Calibrating only that the flag "changes something" would
+    pass just as well if it changed it in the wrong direction or by a wrong scale.
+
+    The measured-equivalent headline (diffusion + q0) is what must equal the datasheet
+    number; the BOOKED charge is deliberately smaller by exactly q0."""
     mf = _specs()
     flat = dcdc_buck_ls(DC, mf, gd=GD)
     op = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=DS_DIDT)
@@ -62,7 +66,93 @@ def test_calibration_point_reproduces_the_flat_value():
     assert abs(DC.Io_min - DS_IF) < 1e-9, DC.Io_min      # the identity's precondition
     assert flat.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat'
     assert op.get_cond('P_rr')['Qrr_src'] == 'op-2pt'
-    assert abs(op.P_rr / flat.P_rr - 1) < 1e-6, (op.P_rr, flat.P_rr)
+
+    # the headline the model would rank on still lands on the datasheet row exactly
+    head = mf.Qrr_op(IF=DS_IF, didt=DS_DIDT, detail=True)
+    assert abs(head['Qrr'] / DS_QRR - 1) < 1e-6, head['Qrr']
+    q0 = head['q0']
+    assert q0 > 0, 'the 2pt fit must solve a positive capacitive share here'
+    # ... and the BOOKED charge is that minus q0, so P_rr scales by the same ratio
+    assert abs(op.P_rr / flat.P_rr - (DS_QRR - q0) / DS_QRR) < 1e-6, (op.P_rr, flat.P_rr)
+    assert op.P_rr < flat.P_rr
+    assert op.get_cond('P_rr')['Qrr_decont'] is True
+    assert abs(op.get_cond('P_rr')['Qrr_q0'] - q0) < 1e-18
+
+
+def test_booked_charge_excludes_what_p_coss_already_books():
+    """The double-count this fix exists to kill: the datasheet Qrr integral contains
+    junction displacement charge, and dcdc_buck_ls books the LS Coss loss separately
+    (doubled) a few lines below. Booking the measured-equivalent charge in P_rr would
+    charge that share twice."""
+    mf = _specs()
+    d = mf.Qrr_op(IF=DC.Io_min, didt=5.7e9, detail=True)
+    assert d['qrr_diffusion'] < d['Qrr']                  # they are different numbers
+    assert abs(d['Qrr'] - d['qrr_diffusion'] - d['q0']) < 1e-18
+
+    op = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=5.7e9)
+    booked = op.get_cond('P_rr')['Qrr'] / 1.2            # undo the Tj factor
+    assert abs(booked - d['qrr_diffusion']) < 1e-18, (booked, d['qrr_diffusion'])
+
+    # 1pt with no Coss to work from: nothing is subtracted, and it says so rather than
+    # implying a decontamination happened.
+    bare = _specs(registries=False, Coss=math.nan, Coss_Vds=None)
+    bare.qrr_cond = dict(IF=DS_IF, didt=DS_DIDT, Tj=25.0, VR=60.0)
+    d1 = bare.Qrr_op(IF=DC.Io_min, didt=5.7e9, detail=True)
+    assert d1['method'] == '1pt'
+    assert d1['q0'] == 0.0 and d1['decontaminated'] is False
+    assert d1['qrr_diffusion'] == d1['Qrr']
+
+
+def test_qrr_factor_derates_only_the_reverse_recovery():
+    """syncFet.reverseRecoveryFactor. 1.0 must be a no-op (every shipped config uses it),
+    a fraction must scale P_rr and NOTHING else, and the de-rating must be visible —
+    a halved P_rr that looks like the part's own charge would flatter it in the CSV."""
+    mf = _specs()
+    full = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=5.7e9)
+    assert dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=5.7e9, qrr_factor=1.0).P_rr == full.P_rr
+    assert 'qrr_factor' not in full.get_cond('P_rr')      # no note when nothing happened
+
+    half = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=5.7e9, qrr_factor=0.5)
+    assert abs(half.P_rr / full.P_rr - 0.5) < 1e-12
+    assert half.get_cond('P_rr')['qrr_factor'] == 0.5
+    for attr in ('P_cl', 'P_gd', 'P_coss', 'P_dt'):
+        assert getattr(half, attr) == getattr(full, attr), attr
+
+    # it de-rates the flat path too, not just the model path
+    assert abs(dcdc_buck_ls(DC, mf, gd=GD, qrr_factor=0.25).P_rr
+               / dcdc_buck_ls(DC, mf, gd=GD).P_rr - 0.25) < 1e-12
+    # out-of-range is a config error, not a silent clamp
+    for bad in (-0.1, 1.5):
+        try:
+            dcdc_buck_ls(DC, mf, gd=GD, qrr_factor=bad)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError('qrr_factor=%r must be rejected' % bad)
+
+
+def test_tj_exponent_resolves_per_part_not_always_the_bound():
+    """dslib/qrr_tj_specs.py's measured AO exponents were unreachable from Qrr_op: both
+    qrr_model entries defaulted n_tau to the conservative bound and nothing passed
+    anything else, so a die with its own 25/125 C chart was still extrapolated on the
+    legacy 'Qrr doubles' rule. Calibrate that it now resolves AND that it bites."""
+    from dslib import qrr_model
+    mf = _specs()
+    d = mf.Qrr_op(IF=DC.Io_min, didt=5.7e9, Tj=125.0, detail=True)
+    assert d['n_tau_state'] == 'conservative-bound'       # infineon: no measured data
+    assert d['n_tau'] == qrr_model.N_TAU
+
+    # an AO die resolves to the family pool, and a LOWER exponent must predict LESS
+    # hot charge — the direction is the point, not merely that a different number rode along
+    ao = _specs()
+    ao.part = SimpleNamespace(mpn='AONS66811', mfr='ao')
+    d_ao = ao.Qrr_op(IF=DC.Io_min, didt=5.7e9, Tj=125.0, detail=True)
+    assert d_ao['n_tau_state'] == 'ao-family-pool'
+    assert d_ao['n_tau'] < qrr_model.N_TAU
+    assert d_ao['Qrr'] < d['Qrr'], (d_ao['Qrr'], d['Qrr'])
+    # and at the calibration Tj the exponent cannot matter at all
+    assert (ao.Qrr_op(IF=DC.Io_min, didt=5.7e9, Tj=25.0)
+            == mf.Qrr_op(IF=DC.Io_min, didt=5.7e9, Tj=25.0))
 
 
 def test_converter_didt_raises_the_charge_and_the_loss():
