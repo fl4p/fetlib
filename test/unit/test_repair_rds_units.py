@@ -101,6 +101,27 @@ def test_gate_calibration_would_catch_a_widened_band():
     assert m.gate_rejects_scale_error(130.0, 130.0)
 
 
+def test_numeric_cells_that_float_rejects_do_not_abort_the_pdf():
+    """NUM (^[\\d.]+$) admits a bare '.' and '1.2.3'; float() rejects both. This crashed a
+    full-corpus scan on the first such cell. An unparseable cell is one less anchor value,
+    never a reason to abandon the whole datasheet -- an aborted read looks identical to
+    'nothing to recover' and would silently skip the record."""
+    import re
+
+    from apps.repair_rds_units import NUM
+
+    for bad in ('.', '..', '1.2.3'):
+        assert NUM.match(bad), 'regex no longer admits %r; this test is stale' % bad
+        with pytest.raises(ValueError):
+            float(bad)
+
+    import apps.repair_rds_units as m
+
+    blocks = m._read_blocks(DUAL_UNIT_PDF)
+    assert blocks, 'the real PDF still reads'
+    assert all(isinstance(n, float) for nums, _ in blocks for n in nums)
+
+
 def test_mpn_nominal_is_a_gate_not_a_parser():
     """The gate must decline on part numbers that do not encode a resistance, rather than
     inventing a nominal that would then wave a bad repair through."""

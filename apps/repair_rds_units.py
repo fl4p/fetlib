@@ -163,7 +163,13 @@ def _read_blocks(pdf_path):
             nums, units = [], []
             for cand in blk:
                 if NUM.match(cand):
-                    nums.append(float(cand))
+                    # NUM admits strings float() rejects -- a bare '.', or '1.2.3' from two
+                    # merged cells. Skip those rather than crash: an unparseable cell is one
+                    # less number to anchor against, never a reason to abandon the PDF.
+                    try:
+                        nums.append(float(cand))
+                    except ValueError:
+                        pass
                 elif ohm_unit_to_milli_mul(cand) is not None:
                     units.append(cand)
                 else:
