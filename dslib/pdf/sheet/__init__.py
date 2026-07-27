@@ -391,11 +391,34 @@ def _find_cell_bbox(bbox, cells, min_area_overlap=.3):
 # on input that is already spaced.
 _UNSPACED_RANGE_RE = re.compile(r'(?<=\d)\s*to\s*(?=[-+.\d])', re.IGNORECASE)
 
+# The generic normaliser cannot see "to" after a lower-endpoint unit:
+# "0Vto10V", "25°Cto175°C", "0Ato250uA". Require a recognised unit on BOTH
+# endpoints before removing that boundary. The upper-unit requirement is a
+# guard against package text such as "TC=25°CTO-247": TO-247 is not a numeric
+# condition range and must not be rewritten into one.
+_UNITED_UNSPACED_RANGE_RE = re.compile(
+    rf'(?P<lower>[+-]?\d+(?:\.\d+)?)'
+    rf'(?P<lower_space>\s*)(?P<lower_unit>(?:{any_unit}))'
+    rf'\s*to\s*'
+    rf'(?P<upper>[+-]?(?:\d+(?:\.\d+)?|\.\d+))'
+    rf'(?P<upper_space>\s*)(?P<upper_unit>(?:{any_unit}))',
+    re.IGNORECASE,
+)
+
+
+def _space_united_range(m):
+    return (
+        m.group('lower') + m.group('lower_space') + m.group('lower_unit')
+        + ' to '
+        + m.group('upper') + m.group('upper_space') + m.group('upper_unit')
+    )
+
 
 def parse_cond_str(cond):
     # 'VGS = 0 V, ID = 250 mA'
     symbols = {s.lower(): s for s in {'Vgs', 'Id', 'Vds'}}
 
+    cond = _UNITED_UNSPACED_RANGE_RE.sub(_space_united_range, cond)
     cond = _UNSPACED_RANGE_RE.sub(' to ', cond)
 
     res = dict()

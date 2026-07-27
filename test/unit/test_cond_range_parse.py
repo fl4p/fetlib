@@ -2,8 +2,7 @@
 
 Two layers parse conditions and they must not disagree:
 
-  dslib/pdf/sheet.parse_cond_str   the shared parser (case-insensitive, and it
-                                   already handled units on both endpoints)
+  dslib/pdf/sheet.parse_cond_str   the shared parser and final unit scaler
   dslib/v2._parse_cond_text        v2's per-statement wrapper, which finds the
                                    statements with _COND_ITEM_RE before handing
                                    each one to the shared parser
@@ -13,6 +12,11 @@ _COND_ITEM_RE case-SENSITIVE and unable to accept a unit on the lower endpoint,
 so "VGS=0 TO 10 V", "VGS=0To10V", "VGS=0V to 10V" and "VGS=0 V to 10 V" still
 returned 0.0 from v2 while the shared parser returned 10.0 -- the identical
 failure that commit set out to close.
+
+758b2427 fixed that wrapper disagreement. Its shared normaliser still found
+``to`` only immediately after a digit, however, so compact unit-bearing ranges
+such as ``0Vto10V`` and ``25°Cto175°C`` retained a false lower endpoint in BOTH
+layers.
 
 Why it matters beyond tidiness: gate-drive loss goes as Qg * Vgs * f. A sheet
 that separates its two total-gate-charge rows only by the swing (0-to-4.5 V vs
@@ -28,7 +32,10 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
-from dslib.pdf.sheet import parse_cond_str                      # noqa: E402
+from dslib.pdf.sheet import (                                  # noqa: E402
+    _UNITED_UNSPACED_RANGE_RE,
+    parse_cond_str,
+)
 from dslib.v2 import _parse_cond_text                           # noqa: E402
 
 
@@ -46,6 +53,14 @@ RANGE_SPELLINGS = [
     'VGS=0V to 10V',
     'VGS=0 V to 10 V',
     'VGS=0V TO 10V',
+    # The lower endpoint's unit and "to" may themselves be glued together.
+    # 758b2427 captured these whole in v2, but the shared normaliser still
+    # recognised "to" only immediately after a digit, so both layers retained
+    # the false lower bound.
+    'VGS=0Vto10V',
+    'VGS=0VTO10V',
+    'VGS=0 Vto10 V',
+    'VGS=0V to10V',
 ]
 
 
@@ -69,6 +84,22 @@ def test_negative_range_endpoint():
     assert _v2('VGS=-20to20V') == {'Vgs': 20.0}
 
 
+@pytest.mark.parametrize('text,shared_expect,v2_expect', [
+    ('TJ=25°Cto175°C', {'TJ': 175.0}, {'Tj': 175.0}),
+    ('ID=0Ato250uA', {'Id': 0.00025}, {'Id': 0.00025}),
+    ('VGS=0mVto10V', {'Vgs': 10.0}, {'Vgs': 10.0}),
+])
+def test_compact_ranges_with_units_on_both_endpoints(
+        text, shared_expect, v2_expect):
+    """The downstream parser, not just v2's capture, must see the endpoint.
+
+    Before the fix ``TJ=25°Cto175°C`` yielded 5.0: the condition parser
+    confidently selected a digit from the lower endpoint rather than failing.
+    """
+    assert parse_cond_str(text) == shared_expect
+    assert _v2(text) == v2_expect
+
+
 # --- negative controls: the range clause must not widen the value match -----
 
 def test_row_measurements_are_not_swallowed():
@@ -90,6 +121,11 @@ def test_trailing_word_is_not_eaten():
     "tot" once "V" has been consumed. Measured, not hypothesised.
     """
     assert _v2('VDS=5V total') == {'Vds': 5.0}
+
+
+def test_package_name_is_not_normalised_as_a_range():
+    """The upper unit is what distinguishes a compact range from TO-247."""
+    assert _UNITED_UNSPACED_RANGE_RE.search('TC=25°CTO-247') is None
 
 
 def test_micro_scaling_still_applies():
