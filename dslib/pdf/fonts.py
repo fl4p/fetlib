@@ -15,6 +15,7 @@ from pdfminer.pdftypes import stream_value, list_value, resolve1
 from pdfminer.psparser import literal_name
 
 from dslib.cache import mem_cache, disk_cache
+from dslib.pdf.derivation import ascii_derivation_salt
 
 
 @mem_cache(ttl='99h')
@@ -83,7 +84,7 @@ def unicode_names():
 
 
 @mem_cache(ttl='5min')
-@disk_cache(ttl='99d')
+@disk_cache(ttl='99d', salt=ascii_derivation_salt)
 def find_good_unicodes_for_name(name) -> List[int]:
     try:
         return [ord(unicodedata.lookup(name))]
@@ -359,7 +360,7 @@ class PdfFonts():
         return m
 
 
-@disk_cache(ttl='99d', hash_func_code=True)
+@disk_cache(ttl='99d', hash_func_code=True, salt=ascii_derivation_salt)
 def get_symbol_font_unicode():
     import requests
     url = 'https://unicode.org/Public/MAPPINGS/VENDORS/ADOBE/symbol.txt'
@@ -369,7 +370,7 @@ def get_symbol_font_unicode():
 
 
 @mem_cache(ttl='5min', synchronized=True)
-@disk_cache(ttl='99d', hash_func_code=True)
+@disk_cache(ttl='99d', hash_func_code=True, salt=ascii_derivation_salt)
 def get_font_default_enc(fontname) -> Optional[Dict[int, int]]:
     if not isinstance(fontname, str):
         assert isinstance(fontname, bytes)

@@ -16,6 +16,7 @@ from pdfminer.psexceptions import PSException
 from dslib.cache import disk_cache, mem_cache
 from dslib.field import Field, DatasheetFields, parse_field_value, get_value_with_unit, field_repr_salt
 from dslib.pdf.ascii import pdf_to_ascii, Row, Phrase
+from dslib.pdf.derivation import ascii_derivation_salt
 from dslib.pdf.expr import get_cond_regex, any_unit, DIMENSIONS, Dimension
 from dslib.pdf.parse import detect_fields, DetectedSymbol
 from dslib.pdf.pdf2txt import normalize_text, whitespaces_to_space
@@ -26,25 +27,27 @@ from dslib.pdf.to_html import Annotation
 from dslib.pdf.tree import bbox_union, GraphicBlock, Bbox
 
 # Files whose CONTENT decides what read_sheet derives from a PDF. Relative to
-# this package directory.
+# this package directory. The glyph-to-Row path has a separate shared salt
+# because its nested caches must move with the outer read_sheet cache.
 #
 # annotation.py is deliberately absent: it is reached only through
 # read_sheet_debug (debug_annotations=True), and read_sheet always passes
-# False, so it cannot change a cached result. Everything that can, is here.
+# False, so it cannot change a cached result.
 _SHEET_DERIVATION_SOURCES = (
     ('__init__.py',),      # parse_cond_str, read_sheet_inner, the header regexes
     ('spatial.py',),       # SpatialQuery / take -- how cells are located
     ('tables.py',),        # table_segregation -- how rows become fields
+    ('..', 'parse.py'),    # detect_fields -- which rows become which symbols
+    ('..', 'pipeline.py'), # pdf2pdf fallback and its Ghostscript arguments
 )
 
 
 def _compute_sheet_derivation_sig(root=None):
     """Content hash of the files above, same shape as field_repr_salt.
 
-    ``root`` exists so a test can point this at COPIES under tmp_path and
-    perturb those, instead of rewriting the live sources in place. An in-place
-    test dirties the repo if it is interrupted, fails on a read-only checkout,
-    and races itself under pytest-xdist.
+    ``root`` exists so tests can perturb COPIES under ``tmp_path`` instead of
+    rewriting live sources, which dirties the repo if interrupted and races
+    itself under pytest-xdist.
     """
     from dslib.cache import _file_content_sig
     import hashlib
@@ -52,6 +55,7 @@ def _compute_sheet_derivation_sig(root=None):
     d = root or os.path.dirname(os.path.abspath(__file__))
     h = hashlib.sha256()
     for rel in _SHEET_DERIVATION_SOURCES:
+        h.update('/'.join(rel).encode())
         h.update(_file_content_sig(os.path.join(d, *rel)).encode())
     return 'sheet-deriv:' + h.hexdigest()[:16]
 
@@ -65,12 +69,13 @@ _SHEET_DERIVATION_SIG = _compute_sheet_derivation_sig()
 def sheet_derivation_salt():
     """Cache salt covering HOW read_sheet derives values, not how Fields store them.
 
-    read_sheet is ``@disk_cache(hash_func_code=False, salt=('v11', field_repr_salt))``,
-    so its key sees neither its own function body nor this package. field_repr_salt
-    covers field.py, dslib/__init__.py, conditions.py, pdf/expr.py and
-    pdf/pdf2txt/__init__.py -- legitimately, because those decide a Field's
-    REPRESENTATION -- but nothing covered pdf/sheet, which decides what is
-    extracted in the first place.
+    read_sheet uses ``hash_func_code=False``, so its key sees neither its own
+    function body nor helper-only changes. This salt covers its table, spatial,
+    symbol-detection and PDF-repair logic.
+    ``ascii_derivation_salt`` separately covers the glyph-to-Row path
+    (ascii.py, tree.py, fonts.py, pdf2txt and their external dependencies), and
+    is composed into both read_sheet and the nested pdf_to_ascii/font caches.
+    ``field_repr_salt`` covers how the resulting Field stores its value.
 
     The gap was live: befbb355 changed parse_cond_str in this very file so that
     "VGS=0to10V" reads its endpoint rather than its false lower bound of 0, and
@@ -80,14 +85,11 @@ def sheet_derivation_salt():
     ranked quantity, served from a cache HIT with nothing looking wrong.
 
     Bumping 'v11' would have fixed that ONE commit. This is content-addressed so
-    the next helper-only edit in this package cannot repeat it, which is the
-    difference between a fix and a fix that generalises.
+    the next helper-only edit cannot repeat it, which is the difference between
+    a fix and a fix that generalises.
 
-    Known limits, stated rather than implied: depth 1 from this package, so an
-    edit to pdf/ascii.py, pdf/parse.py or pdf/tree.py still does not move this
-    key (pdf/expr.py and pdf/pdf2txt DO move field_repr_salt, which is also in
-    read_sheet's salt tuple). And like every salt here, it makes future runs
-    correct -- it does not repair values already written to the DB.
+    Like every cache salt here, this makes future reads correct; it does not
+    repair values already written to the DB.
     """
     return _SHEET_DERIVATION_SIG
 
@@ -184,7 +186,8 @@ def read_sheet_debug(pdf_file, expand=True, merge=True, multiline_conditions=Tru
 
 
 @disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False,
-            salt=('v11', field_repr_salt, sheet_derivation_salt))
+            salt=('v11', field_repr_salt,
+                  ascii_derivation_salt, sheet_derivation_salt))
 def read_sheet(pdf_file, expand=True, merge=True, multiline_conditions=True):
     try:
         return read_sheet_inner(pdf_file, expand, merge, debug_annotations=False,

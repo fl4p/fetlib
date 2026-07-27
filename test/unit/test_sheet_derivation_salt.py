@@ -1,10 +1,9 @@
 """read_sheet's cache key must move when read_sheet's DERIVATION changes.
 
 read_sheet is `@disk_cache(hash_func_code=False, salt=('v11', field_repr_salt,
-sheet_derivation_salt))`. Without the third component its key saw neither its
-own body nor its package: field_repr_salt covers field.py, dslib/__init__.py,
-conditions.py, pdf/expr.py and pdf/pdf2txt/__init__.py -- how a Field STORES a
-value -- and nothing covered pdf/sheet, which decides what gets extracted.
+ascii_derivation_salt, sheet_derivation_salt))`. The two derivation salts are
+both required. The sheet salt covers table/symbol logic; the shared ASCII salt
+covers the nested pdf_to_ascii cache that produces its Row objects.
 
 The gap was live. befbb355 changed parse_cond_str in pdf/sheet/__init__.py so a
 swept range reads its endpoint instead of its false lower bound of 0, and every
@@ -26,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
     os.path.abspath(__file__)))))
 
 import dslib.pdf.sheet as sheet_mod                                   # noqa: E402
+import dslib.pdf.derivation as derivation_mod                         # noqa: E402
 from dslib.pdf.sheet import (_SHEET_DERIVATION_SOURCES,               # noqa: E402
                              _compute_sheet_derivation_sig,
                              sheet_derivation_salt)
@@ -88,6 +88,18 @@ def test_parse_cond_str_lives_in_a_declared_source():
         '_SHEET_DERIVATION_SOURCES -- the salt cannot see changes to it')
 
 
+def test_detect_fields_lives_in_a_declared_source():
+    """Symbol detection is a direct semantic input, not a transitive nicety."""
+    import inspect
+    from dslib.pdf.parse import detect_fields
+    defined_in = os.path.abspath(inspect.getsourcefile(detect_fields))
+    declared = {os.path.abspath(os.path.join(PKG_DIR, *rel))
+                for rel in _SHEET_DERIVATION_SOURCES}
+    assert defined_in in declared, (
+        f'detect_fields is defined in {defined_in}, which does not appear in '
+        '_SHEET_DERIVATION_SOURCES -- read_sheet can serve old symbols')
+
+
 def test_read_sheet_key_includes_the_sheet_salt(monkeypatch):
     """End to end: the component reaches read_sheet's actual cache key."""
     from dslib.pdf.sheet import read_sheet
@@ -100,6 +112,19 @@ def test_read_sheet_key_includes_the_sheet_salt(monkeypatch):
     monkeypatch.setattr(sheet_mod, '_SHEET_DERIVATION_SIG', 'sheet-deriv:PERTURBED')
     after = read_sheet.cache_key(pdf)
     assert after != before, 'sheet_derivation_salt does not reach read_sheet cache_key'
+
+
+def test_read_sheet_key_includes_the_nested_ascii_salt(monkeypatch):
+    """An outer miss must not be followed by a stale pdf_to_ascii hit."""
+    from dslib.pdf.sheet import read_sheet
+    pdf = os.path.abspath(os.path.join(PKG_DIR, '..', '..', '..', 'README.md'))
+    assert os.path.exists(pdf)
+
+    before = read_sheet.cache_key(pdf)
+    monkeypatch.setattr(derivation_mod, '_ASCII_DERIVATION_SIG',
+                        'pdf-ascii:PERTURBED')
+    after = read_sheet.cache_key(pdf)
+    assert after != before, 'ascii_derivation_salt does not reach read_sheet cache_key'
 
 
 def test_salt_value_is_reported_not_placeholder():

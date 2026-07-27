@@ -9,12 +9,14 @@ from typing import Literal, Dict, List, Union, Tuple
 from pdfminer.layout import LAParams
 
 from dslib.cache import disk_cache
+from dslib.pdf.derivation import ascii_derivation_salt
 from dslib.pdf.tree import vertical_sort, vertical_merge, pdf_blocks_pdfminer_six, bbox_union, Word, GraphicBlock, \
     TextBlock
 from dslib.pdf.pdf2txt import whitespaces_to_space
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=True, salt=('v11', pdf_blocks_pdfminer_six.__code__.co_code))
+@disk_cache(ttl='999d', file_dependencies=[0], hash_func_code=False,
+            salt=('v11', ascii_derivation_salt))
 def pdf_to_ascii(pdf_path,
                  grouping: Literal['block', 'line', 'word'] = 'line',
                  sort_vert=True,
