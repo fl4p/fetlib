@@ -65,6 +65,49 @@ def test_power_loss():
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil)[0], 2062e-3)) < 0.05
 
 
+def test_bpk_sinusoidal():
+    """Oliver/Ridley p.3, Bpk = Vrms x 10^1 / (4.44 x Area[cm2] x N x f[kHz]).
+
+    ``vrms`` was hardcoded to 0, so this returned 0 T at every operating point
+    -- and zero flux is zero core loss, the one answer that makes any core look
+    perfect. Asserting non-zero alone would not catch a units error, so the
+    value is pinned against two INDEPENDENT closed forms:
+
+    * the same equation rebuilt in SI, Bpk = Vrms / (4.44 * f * N * A_e), which
+      fails if the cm2/kHz/10^1 conversions do not cancel exactly;
+    * the exact volt-second flux of the square wave the inductor actually sees,
+      Bpk = Vo*(1 - D)/(2*f*N*A_e), times the analytic sine/square form-factor
+      ratio (2/4.44)/sqrt(D*(1 - D)). Any scaling slip breaks this at every
+      duty cycle, and the ratio itself is what documents that the sine constant
+      is a 10%-at-D=0.5, 50%-at-D=0.1 approximation.
+    """
+    import math
+
+    from dclib.powerloss import CoilSpecs
+    from maglib.powerloss import Bpk_sinusoidal
+
+    coil = CoilSpecs(Rdc=0, turns=20, core=cores.MagInc_106_KoolMu60)
+    N, A_e = coil.turns, coil.core.A_e
+
+    for vi, vo in [(100, 90), (100, 60), (100, 50), (100, 40), (100, 10)]:
+        dcdc = DcDcLoadParams(vi, vo, 100e3, io=20, iripple=8)
+        D, f = dcdc.D_buck, dcdc.f
+        got = Bpk_sinusoidal(dcdc, coil)
+
+        assert got > 0, (vi, vo, got)
+
+        vrms = math.sqrt(D * (vi - vo) ** 2 + (1 - D) * vo ** 2)
+        assert abs(rel_err(got, vrms / (4.44 * f * N * A_e))) < 1e-12, (vi, vo)
+
+        exact = vo * (1 - D) / (2 * f * N * A_e)
+        ratio = (2 / 4.44) / math.sqrt(D * (1 - D))
+        assert abs(rel_err(got, exact * ratio)) < 1e-12, (vi, vo, got, exact)
+
+    # the flux a real core sees is bounded; a units slip lands orders out
+    dcdc = DcDcLoadParams(100, 50, 100e3, io=20, iripple=8)
+    assert 0.01 < Bpk_sinusoidal(dcdc, coil) < 1.0
+
+
 def test_coil():
     from dclib.powerloss import CoilSpecs
     coil = CoilSpecs(Rdc=0, turns=20, core=cores.MagInc_106_KoolMu60, wire_awg=15, wire_strands=10)
