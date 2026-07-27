@@ -930,13 +930,30 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
                 elif col_typ:
                     for row_ in [row, df_bfill.iloc[i], df_ffill.iloc[i]]:
                         v_typ = row_[col_typ]
+
+                        # `unit` is the STICKY unit carried down from the last row whose
+                        # unit cell parsed. It is None whenever no 'Unit' header was
+                        # detected for this table, which is how 774 Rds_on records reached
+                        # the DB unitless -- and a unitless resistance then lands on the
+                        # reader's unitless default (= already mΩ), silently 1000x low for
+                        # every sheet that quotes ohms. The unit cell is usually right
+                        # there: for a vertically merged cell spanning sub-rows (Infineon
+                        # CoolMOS quotes Tj=25°C and 150°C against ONE 'Ω') _fill_unit
+                        # above already reconstructed it into `row`, and this branch simply
+                        # never looked. Prefer the row's own cell, fall back to sticky.
+                        row_unit = unit
+                        if col_idx['unit']:
+                            cell = row_[col_idx['unit']]
+                            if isinstance(cell, str) and cell.strip() in all_units:
+                                row_unit = cell.strip()
+
                         try:
                             field = Field(
                                 symbol=field_sym,
                                 min=row_[col_idx['min']] if col_idx['min'] else math.nan,
                                 typ=v_typ.split(' ')[0] if isinstance(v_typ, str) else v_typ,
                                 max=row_[col_idx['max']] if col_idx['max'] else math.nan,
-                                mul=1, cond=dict(row_.dropna()), unit=unit,
+                                mul=1, cond=dict(row_.dropna()), unit=row_unit,
                                 source=[source_base, source_name, 'iter_table']
                             )
                             if verbose > 1:

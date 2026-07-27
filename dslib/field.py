@@ -26,6 +26,64 @@ def get_value_with_unit(s):
     return s, None
 
 
+# --- resistance units: ONE definition, shared by the writer and the reader -----------
+# U+03A9 GREEK CAPITAL OMEGA and U+2126 OHM SIGN are DISTINCT codepoints and both occur
+# in real sheets, so they are written as escapes and must not be collapsed to one. O/Q/QO/W
+# are OCR and Symbol-font renderings of omega; keep in sync with expr.py's R unit_regex.
+#
+# ':' 'o' 'OQ' are the same class of artefact, measured on the shipped DB: in many sheets
+# the omega is a Symbol-font glyph with NO ToUnicode map, so it extracts as nothing at all
+# (IRFP4768PBF: "max 17.5m", HY5012W: "3.6 m") or as whatever the table extractor puts in
+# an empty cell. Ground truth for ':' is exact -- Vishay MPNs encode the resistance, and
+# SQD50N10-8M9L/SQM120N10-3M8/SUM90N10-8M2P all read back at ratio 1.00 when ':' is taken
+# as omega. 'm:' likewise checks out against the IRFP4768PBF and HY5012W datasheet text.
+_OHM_BODY = {'\u03a9', '\u2126', 'O', 'Q', 'QO', 'OQ', 'o', 'Ohm', 'ohm', 'OHM', 'W', ':'}
+_OHM_PREFIX_TO_MILLI = {'m': 1.0, '': 1e3, 'k': 1e6, 'M': 1e9}
+
+# Cell-border debris that table extractors glue to the FRONT of a unit cell ('|mQ', 'ImO',
+# 'JmQ', '}mQ', '|(mQ'). Deliberately excludes 'O'/'Q'/'o' -- they are omega renderings and
+# stripping them would eat the unit itself ('Ohm', 'O'). Stripping is safe only because a
+# non-match still returns None: debris that does not leave a valid ohm unit behind (j|nA,
+# l) falls through to NaN exactly as before.
+_OHM_NOISE_PREFIX = '|(){}[]IijJl'
+
+# Scale assumed when a resistance Field carries NO unit at all. Encodes the pre-existing
+# conventions so this refactor changes no value:
+#   Rds_on      canonical milliohm
+#   Rds_on_10v  ohm-scale (100% unitless in the shipped DB; ratio to Rds_on has median
+#               exactly 1.0 after x1000)
+#   Rg          ohm-scale (matches the old field_mul rule: a non-'m' unit meant ohms)
+_RESISTANCE_UNITLESS_TO_MILLI = {'Rds_on': 1.0, 'Rds_on_10v': 1e3, 'Rg': 1e3}
+
+
+def ohm_unit_to_milli_mul(unit):
+    """Multiplier converting a value in `unit` to milliohm, or None if `unit` is not a
+    recognised resistance unit (including empty/None, so callers must decide explicitly
+    what a missing unit means). NEVER inspects magnitude -- guessing scale from how big a
+    number looks is what made main.py's `if rds_on_max < 0.1: *= 1000` anti-monotone."""
+    u = (unit or '').strip()
+    if not u:
+        return None
+
+    # 'm Ω' -- the prefix and the glyph land in the cell with a separator between them.
+    u = u.replace(' ', '').replace(' ', '')
+    u = u.lstrip(_OHM_NOISE_PREFIX)
+    if not u:
+        return None
+
+    if u in _OHM_BODY:
+        return _OHM_PREFIX_TO_MILLI['']
+    if len(u) > 1 and u[0] in 'mkM' and u[1:] in _OHM_BODY:
+        return _OHM_PREFIX_TO_MILLI[u[0]]
+
+    # Bare 'm': the omega did not extract at all. Only 'm' is recovered, never a bare 'k'
+    # or 'M' -- those are ambiguous with a stray letter, whereas an 'm' on a resistance
+    # symbol (the sole caller is get_resistance_milliohm) can only be milliohm.
+    if u == 'm':
+        return _OHM_PREFIX_TO_MILLI['m']
+    return None
+
+
 class Field():
     StatLiteral = Literal['min', 'max', 'typ']
     StatKeys = cast(List[StatLiteral], ['min', 'typ', 'max'])
@@ -67,13 +125,19 @@ class Field():
             unit = 'pF'
 
         if symbol[0] == 'R':
-            if unit in {'mW'}:
+            # ONE definition, actually shared now. This used to hardcode {'mW'} and
+            # {'W','Ω'}, so every other spelling the reader understands ('mΩ', 'kΩ', 'O',
+            # 'Q', ':', '|mQ', ...) fell through unscaled and unrenamed, and the reader had
+            # to re-derive the scale from the raw unit on every read. Both halves now agree
+            # by construction.
+            #
+            # Scaling and RENAMING are one step on purpose: the unit is rewritten to 'mΩ'
+            # exactly when the value is multiplied, so a Field can never be scaled twice --
+            # a second pass sees 'mΩ' and multiplies by 1. Keep them together.
+            r_mul = ohm_unit_to_milli_mul(unit)
+            if r_mul is not None:
                 assert mul == 1
-                mul = 1
-                unit = 'mΩ'
-            if unit in {'W', 'Ω'}:
-                assert mul == 1
-                mul = 1000
+                mul = r_mul
                 unit = 'mΩ'
 
         min = parse_field_value(min, no_raise=True) * mul
@@ -216,6 +280,15 @@ class Field():
             if not math.isnan(getattr(self, s)):
                 lower = getattr(self, s)
 
+        # NOT re-validated here on purpose. A post-hoc check at this point cannot be
+        # correct: fill() has already mutated self, so the only thing left to sacrifice is
+        # a stat that may well be the GOOD one. Measured on ao/AOB66515L, where text's
+        # correct max=1180 arrives first and v2's wrong typ=1.18 merges second: a
+        # "discard the impossible max" guard threw away the only sound value and kept the
+        # wrong one -- worse than the incoherent field it was meant to prevent. The fix is
+        # transactional: validate the INCOMING candidate's unit/source against the already
+        # selected stats and reject the candidate BEFORE mutating. Tracked as step 2 of
+        # docs/resistance-unit-convention-plan.md; deliberately absent rather than wrong.
         # TODO dont fill (n,8,9) with (8,9,n)
 
     def __getitem__(self, item):
@@ -226,6 +299,15 @@ class Field():
         return [self.min, self.typ, self.max]
 
     def __eq__(self, other):
+        """Compare against another Field or a (min, typ, max) triple.
+
+        Anything else returns NotImplemented rather than True. This used to fall through
+        to `return True` for ANY unsupported operand, so `field == 0.62` was vacuously
+        true and assertions written that way could never fail -- five in the test suite
+        were silently passing, three of them against values 1000x off. A comparison we
+        cannot evaluate must not report "equal": be explicit about which stat you mean
+        (`field.typ == x`) or pass a full triple.
+        """
         if isinstance(other, Field):
             assert self.unit == other.unit
             if self.symbol != other.symbol:
@@ -241,7 +323,9 @@ class Field():
                     continue
                 if v != other[i]:
                     return False
-        return True
+            return True
+
+        return NotImplemented
 
     def assert_values(self, min=None, typ=None, max=None):
         if isinstance(min, (tuple, list)):
@@ -331,9 +415,12 @@ class DatasheetFields():
             warnings.warn('failed to create fet specs: %s' % e)
             fet_specs = None
 
-        rds_on_max = ds.get_max('Rds_on_10v', False)
+        # One reader, one scale. This used to take Rds_on_10v (ohm-scale) or fall back to
+        # Rds_on (already mΩ) and then multiply BOTH by 1000 at the Rds_max= line, so the
+        # fallback path reported 503 parts 1000x too big.
+        rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
         if math.isnan(rds_on_max):
-            rds_on_max = ds.get_max('Rds_on', False)
+            rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
 
         Id = ds.get_typ_or_max_or_min('ID_25', False)
         if math.isnan(Id):
@@ -345,7 +432,7 @@ class DatasheetFields():
             housing=part.package,
 
             Vds_max=ds.get_max_or_min('Vds', False),
-            Rds_max=rds_on_max * 1000,
+            Rds_max=rds_on_max,  # already mΩ via get_resistance_milliohm
             Id=Id,
 
             Qg_max=ds.get_max('Qg'),
@@ -431,17 +518,25 @@ class DatasheetFields():
                 return (v * 1e-12)
 
             if sym == 'Rg':
-                if unit and unit[0] == 'm':
-                    return v * 1e-3  # mΩ -> Ω
-                return v
+                # delegate to the single reader (mΩ) -> ohm. The old inline rule
+                # "unit starts with m => mΩ, ELSE assume ohms" believed any unit it did
+                # not recognise, so Rg=168 from a unit='ns' row was consumed as 168 Ω.
+                # stat=typ_or_max_or_min preserves what field_mul actually read before
+                # this refactor (it was called with ds.get_typ_or_max_or_min(k)). The
+                # default max_or_typ changed Rg by 50% on any field carrying both stats
+                # (typ=0.8/max=1.2 -> 1.2 Ohm instead of 0.8), and Rg feeds
+                # ig_on = (Voff-vpl)/rg_total. Scale-only refactor must not move values.
+                return ds.get_resistance_milliohm('Rg', stat='typ_or_max_or_min') * 1e-3
 
             return (v * 1e-9)
 
         ds = self
 
-        rds_on = ds.get_max_or_typ('Rds_on_10v', cond=dict(Vgs=Vgs)) * 1e3
+        # mΩ from a single reader; the *1e3 / bare-fallback pair this replaces assumed
+        # Rds_on_10v was ohm-scale and Rds_on was mΩ without ever checking either.
+        rds_on = ds.get_resistance_milliohm('Rds_on_10v', cond=dict(Vgs=Vgs))
         if math.isnan(rds_on):
-            rds_on = ds.get_max_or_typ('Rds_on', cond=dict(Vgs=Vgs))
+            rds_on = ds.get_resistance_milliohm('Rds_on', cond=dict(Vgs=Vgs))
 
         Id = ds.get_typ_or_max_or_min('ID_25', False)
         if math.isnan(Id):
@@ -535,6 +630,44 @@ class DatasheetFields():
     def get_typ(self, sym):
         r = self.fields_filled.get(sym)
         return math.nan if not r else r.typ
+
+    def get_resistance_milliohm(self, sym, stat='max_or_typ', cond=None) -> float:
+        """The single way to read a resistance symbol. Returns milliohm, or NaN.
+
+        Scale resolution, in order, and NEVER from magnitude:
+          1. Field carries a recognised resistance unit -> use it
+          2. Field carries no unit at all -> the symbol's documented storage default
+          3. Field carries a unit from a DIFFERENT dimension ('ns','pF','V','nC',':')
+             -> NaN
+
+        (3) is the point. A cross-dimension unit means the cell was mis-captured, so the
+        number is not a resistance -- e.g. Rg=168 taken from a unit='ns' switching-time
+        row. Applying the default scale there converts a parse failure into a believable
+        wrong number on the quantity this tool ranks on, and no caller can tell
+        afterwards. NaN is recoverable; a plausible wrong resistance is not.
+
+        Replaces four hand-rolled conversions that disagreed: get_row's unconditional
+        *1000, get_mosfet_specs' *1e3/*1e-3 pair, field_mul's Rg branch, and main.py's
+        `if < 0.1: *= 1000` magnitude guess.
+        """
+        f = self._get_by_cond(sym, cond) if cond else self.fields_filled.get(sym)
+        if not f:
+            return math.nan
+        v = f.max_or_typ if stat == 'max_or_typ' else getattr(f, stat)
+        if v is None or math.isnan(v):
+            return math.nan
+
+        milli_mul = ohm_unit_to_milli_mul(f.unit)
+        if milli_mul is not None:
+            return v * milli_mul
+
+        if (f.unit or '').strip():
+            warnings.warn('%s %s has non-resistance unit %r; refusing to guess a scale'
+                          % (getattr(getattr(self, 'part', None), 'mpn', '?'), sym, f.unit))
+            return math.nan
+
+        default_mul = _RESISTANCE_UNITLESS_TO_MILLI.get(sym)
+        return math.nan if default_mul is None else v * default_mul
 
     def get_unit(self, sym):
         r = self.fields_filled.get(sym)
