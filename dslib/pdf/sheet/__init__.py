@@ -301,9 +301,34 @@ def _find_cell_bbox(bbox, cells, min_area_overlap=.3):
     return bbox_union(boxes) if boxes else Bbox(0, 0, 0, 0)
 
 
+# "0to10V" -- a swept range written without spaces. get_cond_regex's range
+# clause requires \s+to\s+, so with the spaces missing the SYMBOL pattern
+# matches "to10V" whole (two letters plus [a-z0-9]*) and the range is never
+# seen; parse then keeps the range's LOWER bound.
+#
+# That is a wrong number, not a lost one. infineon/BSC0904NSI states its two
+# total-gate-charge rows as
+#     Qg  8.5  11.3 nC  VDD=15V,ID=30A,VGS=0to4.5V
+#     Qg  17   22   nC  VDD=15V,ID=30A,VGS=0to10V
+# and both parsed to Vgs=0.0 -- identical, so the rows became indistinguishable
+# and asking for Qg at 10 V returned the 4.5 V charge, 8.5 nC instead of 17.
+# Gate-drive loss goes as Qg*Vgs*f, so that is a 2x error in a ranked quantity.
+# ("Vgs = 0" is also false on its face: no gate charge is measured at zero
+# drive.)
+#
+# Spacing the "to" is all that is needed -- every spaced form already parses
+# correctly and yields the upper endpoint ("VGS = 0 to 10 V" -> 10,
+# "Tj = -55 to 150 C" -> 150), so this routes the unspaced form into the path
+# that is already right rather than inventing a second convention. Idempotent
+# on input that is already spaced.
+_UNSPACED_RANGE_RE = re.compile(r'(?<=\d)\s*to\s*(?=[-+.\d])', re.IGNORECASE)
+
+
 def parse_cond_str(cond):
     # 'VGS = 0 V, ID = 250 mA'
     symbols = {s.lower(): s for s in {'Vgs', 'Id', 'Vds'}}
+
+    cond = _UNSPACED_RANGE_RE.sub(' to ', cond)
 
     res = dict()
     m_all = list(get_cond_regex().finditer(cond))

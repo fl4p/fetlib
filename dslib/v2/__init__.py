@@ -222,9 +222,26 @@ def _canonical_cond(cond: Optional[dict]) -> Optional[dict]:
 
 
 # One "<symbol> = <number><unit>" statement. The value is the FIRST number
-# after the "=", and nothing past its unit is part of it.
+# after the "=", and nothing past its unit is part of it -- EXCEPT a swept
+# range, "<number> to <number><unit>", which is one statement and not two.
+#
+# Without the range clause the value stopped at the first number and the up-to-
+# three letters after it, so "VGS=0to10V" was captured as "0to" and parsed as
+# Vgs=0. infineon/BSC0904NSI separates its two total-gate-charge rows ONLY by
+# that endpoint (0to4.5V -> 8.5 nC, 0to10V -> 17 nC), so both rows landed on
+# Vgs=0.0, became indistinguishable, and a request for the 10 V charge returned
+# the 4.5 V one -- 8.5 nC where 17 was meant, in a quantity the loss model
+# ranks on.
+#
+# The clause is deliberately narrow: it requires a literal "to" FOLLOWED BY A
+# DIGIT, so it cannot reopen the hole the first-number-only rule exists to
+# close. "VGS=10V 7.8 9.5" still stops at 10V (no "to"), and prose such as
+# "VDS=5V total" still stops at 5V ("tal" is not a number). Scaling and the
+# choice of endpoint stay parse_cond_str's job -- it already reads every
+# spaced range as its upper bound.
 _COND_ITEM_RE = re.compile(
-    r"([^,;=]{1,24})[=≈]\s*([+-]?\d[\d.]*\s*[a-zA-Zµμ°Ω%]{0,3})")
+    r"([^,;=]{1,24})[=≈]\s*"
+    r"([+-]?\d[\d.]*\s*(?:to\s*[+-]?\d[\d.]*\s*)?[a-zA-Zµμ°Ω%]{0,3})")
 
 # Both micro codepoints appear in the wild — MICRO SIGN (U+00B5) and GREEK
 # SMALL LETTER MU (U+03BC) — and the char class above accepts either so the
