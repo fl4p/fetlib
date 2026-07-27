@@ -105,15 +105,36 @@ def test_wire():
     assert abs(rel_err(rac, acf * rdc)) < 0.01
 
     # example from https://s3.amazonaws.com/micrometals-production/filer_public/7c/72/7c728863-9c0e-40b3-ba86-a3f94d5ad1c1/acresistance_rev0_110123.pdf
+    #
+    # acr_factor_micrometals returns the EXCESS factors: Rac = Rdc * (1 + Fs + Fp),
+    # with the +1 deliberately removed (see wire.py) and added back by its only
+    # production consumer, Winding.Rac_sepe. The app note's 2.5060 is the TOTAL
+    # ratio, so it must be compared against 1 + the sum. Comparing it to the bare
+    # sum asserted 2.5060 == 1.5060 and failed by exactly 1.0 -- the DC term.
+    # With the conventions aligned the model reproduces the app note to 1.7e-5.
     from maglib.wire import acr_factor_micrometals
-    assert abs(rel_err(2.5060, sum(acr_factor_micrometals(23e-9, 1e-3, 100e3, 1, 32, 14.1e-3, 27.69e-3)))) < 1e-4
+    assert abs(rel_err(2.5060, 1 + sum(
+        acr_factor_micrometals(23e-9, 1e-3, 100e3, 1, 32, 14.1e-3, 27.69e-3)))) < 1e-4
 
-    acr_factor_micrometals()
-
-    ac_resistance_factor(23e-9, 1e-3, 100e3)
-
+    # Cross-check two independent skin-effect models. Same convention fix:
+    # ac_resistance_factor returns the TOTAL ratio (>= 1, it is Rac/Rdc for a
+    # hollow cylinder) while acr_factor_micrometals returns the excess.
+    #
+    # Restricted to where ac_resistance_factor is DEFINED. Its own precondition
+    # is sd/diameter < 0.3 -- the hollow-cylinder approximation needs the skin
+    # depth well inside the wire -- and 8 of the 20 points below violate it, so
+    # the loop used to die on an assert at its first iteration rather than
+    # compare anything. Widening that guard to make the loop run would be
+    # fixing the check instead of the number: outside its domain the model is
+    # not merely imprecise, it is inapplicable.
+    n_compared = 0
     for d in [0.7e-3, 1.0e-3, 1.2e-3, 1.5e-3, 2e-3]:
         for f in [20e3, 40e3, 100e3, 200e3]:
+            if skin_depth(23e-9, f) / d >= 0.3:
+                continue
             a = ac_resistance_factor(23e-9, d, f)[0]
             b = acr_factor_micrometals(23e-9, d, f, 1, 32, 14.1e-3, 27.69e-3)[0]
-            assert abs(rel_err(a, b)) < 0.07
+            assert abs(rel_err(a, 1 + b)) < 0.07, (d, f, a, 1 + b)
+            n_compared += 1
+    # A skip-guarded loop that skips everything passes while testing nothing.
+    assert n_compared == 12, n_compared
