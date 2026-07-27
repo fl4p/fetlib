@@ -156,6 +156,14 @@ ALL_REPORTED = SCALE_LIKE | {
     ('infineon', 'IPP057N08N3 G'), ('infineon', 'IPP057N08N3GXKSA1'),
     ('infineon', 'ISC0805NLS'), ('ti', 'CSD19506KTT'), ('ti', 'CSD19506KTTT'),
     ('xnrusemi', 'XR65R36H'),
+
+    # Added 2026-07-27 when apps/recover_db_from_snapshot.py restored an Rds_on field this
+    # record had lost. Stored 94140 mΩ against a catalog 94 mΩ: ratio 1001 but the digits
+    # are NOT equal (94140 vs 94), so it classifies as a near-decade disagreement rather
+    # than scale-like -- consistent with a digit concatenation ("94" and "140" from one row)
+    # rather than a lost SI prefix. Not investigated further, hence no CONFIRMED_MECHANISM
+    # entry; the audit surfacing it is the point.
+    ('hxy', 'FCMT099N65S3-HXY'),
 }
 
 
@@ -165,10 +173,20 @@ def test_corpus_membership_is_stable():
     Asserts the exact MEMBER SETS, not just counts. A count is a proxy: members can swap
     silently and the total stay put -- the same proxy-vs-property hole fixed twice already
     in this work (the cache signature, and the errors-column source count).
+
+    The 5282 -> 5308 bump on 2026-07-27 is a real corpus change, not a silenced failure.
+    This assertion did its job first: a main.py run served a stale read_parts_datasheets
+    cache and overwrote the DB, 1348 records lost 65631 fields, and this dropped to 5046.
+    It was left RED until the data came back rather than being adjusted to match the
+    damage. apps/recover_db_from_snapshot.py then merged the richer snapshot with the 1183
+    fields only the newer DB had, which restored the 5282 AND gave 65 records an Rds_on
+    they had never had -- hence 26 more comparable records than before the incident, and
+    one new reported row. If this number moves again, find out which of those two things
+    happened before touching it.
     """
     from apps.audit_rds_witnesses import rows
     comparable, rs = rows()
-    assert comparable == 5282
+    assert comparable == 5308
     got = {(x['mfr'], x['mpn']) for x in rs}
     assert got == ALL_REPORTED, ('added: %s  missing: %s'
                                  % (got - ALL_REPORTED, ALL_REPORTED - got))
