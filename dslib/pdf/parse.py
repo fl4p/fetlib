@@ -163,6 +163,47 @@ def regex_ver_salt():
 #   pdf/expr.py         symbol regexes, DIMENSIONS, any_unit -- which cells count as values
 #   pdf/sheet/__init__  parse_cond_str -- the conditions a Field is selected by
 #   pdf/pdf2txt        normalize_text / ocr_post_subs, applied before any of the above
+#   pdf/fix_encoding   the glyph matcher that decides WHICH CHARACTERS the text layer of a
+#                      scrambled PDF contains at all. Everything above operates on its
+#                      output for those files, so it sits UPSTREAM of the entire derivation
+#                      -- a matcher change rewrites every value parsed from such a sheet.
+#                      Demonstrated: before the width/topology tie-break, three Infineon
+#                      sheets read as "N-channeI, normaI IeveI" and one CoolMOS family
+#                      yielded no Rds_on at all, so its unitless fallback was read 1000x
+#                      low. Cached parses from that generation are wrong in a way no other
+#                      key on this module can see.
+#   pdf/pipeline       pdf2pdf's method table and the order they are attempted in, i.e.
+#                      WHICH repair a given file gets. `gs` (-dPDFSETTINGS=/printer
+#                      -dPDFA=2), `sips`, `cups` and `qpdf_decrypt` are bare subprocess
+#                      calls with no cache of their own, so a flag change there is
+#                      invisible to every other key and this salt is the only guard.
+#                      CAVEAT, so nobody trusts this further than it goes: the methods
+#                      pipeline.py DISPATCHES to are separately cached with `out_files`
+#                      (ocrmypdf salt='v03' and notably without hash_func_code,
+#                      rasterize_pdf, convertapi). A change to one of those BODIES moves
+#                      this salt and forces a full re-parse, but the OCR'd artifact is
+#                      then served from its own out_files cache unchanged -- an expensive
+#                      no-op, and coverage that looks broader than it is. Argument-level
+#                      changes (dpi=600 -> 500) do propagate.
+#
+# COST, measured rather than assumed, because adding to this list is not free:
+# invalidating it kills 61577 parse_datasheet entries (1.2 GB) and 46379 tabula_read
+# entries (679 MB), and re-parsing costs ~6 s/part mean with every other cache warm (vs
+# 0.12 s on a hit, ~50x) -- about 10 h single-threaded over 6040 parts, 1-2 h wall with
+# main.py's parallelism, and worse when tabula_browser misses (298 s observed).
+#
+# For fix_encoding.py specifically that buys correctness for 50 of 6040 parts (0.83%) --
+# 2368 PDFs have a fixable suspect font but only 88 fail validation, and only those reach
+# the repair at all. 5990 parts paying so 50 are right is a poor trade in isolation, and
+# it recurs on every commit to a file under active development. It is kept anyway for two
+# reasons: parse.py is entry #1 and is edited far more often, so the cache generation
+# already turns over on roughly every change here (the marginal cost of these two entries
+# in the commit that added them was exactly zero); and the alternative is serving a stale,
+# PLAUSIBLE value forever for the 50, which includes four parts whose Rds_on was 1000x
+# wrong. A narrower key would have to make the repaired artifact itself part of the key --
+# parse_datasheet is keyed on the ORIGINAL pdf's content, so nothing per-file can be
+# expressed in a salt fixed at decoration time; that needs a disk_cache change, not a
+# tweak here.
 #
 # field.py is deliberately ABSENT: field_repr_salt already covers it and is composed alongside
 # this in the same salt tuples, so listing it here would only hash it twice.
@@ -174,6 +215,8 @@ _PARSE_DERIVATION_SOURCES = (
     ('pdf', 'expr.py'),
     ('pdf', 'sheet', '__init__.py'),
     ('pdf', 'pdf2txt', '__init__.py'),
+    ('pdf', 'fix_encoding.py'),
+    ('pdf', 'pipeline.py'),
 )
 
 
@@ -189,6 +232,20 @@ def _compute_parse_code_sig(root=None):
     h = hashlib.sha256()
     for rel in _PARSE_DERIVATION_SOURCES:
         h.update(_file_content_sig(os.path.join(d, *rel)).encode())
+
+    # The glyph matcher's REFERENCE DATA, not just its code. Which system font supplies the
+    # comparison bitmaps decides which characters a repaired text layer ends up containing,
+    # and it is resolved at runtime from whatever is installed -- so hashing fix_encoding.py
+    # alone leaves the same signature-vs-proxy hole one level out. Imported locally: this
+    # runs at parse.py import time and fix_encoding pulls in fontTools and PIL.
+    #
+    # Skipped when `root` is set, because that parameter exists so the salt tests can
+    # perturb COPIES of the source tree under tmp_path -- the system's fonts are not part of
+    # that tree and would make those tests depend on the host's font set.
+    if root is None:
+        from dslib.pdf.fix_encoding import reference_font_salt
+        h.update(reference_font_salt().encode())
+
     return 'parse-src:' + h.hexdigest()[:16]
 
 
@@ -365,6 +422,30 @@ def validate_datasheet_text(mfr, mpn, text, return_reason=False):
         print(mpn + ' not found in PDF text(%s)' % whitespaces_to_space(strip_no_print_latin(text))[:60])
         return 'mpn-not-found-in-' + whitespaces_to_space(strip_no_print_latin(text))[:300] if return_reason else False
 
+    # KNOWN TOO LOOSE, and a "require the stripped variant letter near the stem" tightening
+    # was tried here and REVERTED. Recording why, so it is not re-attempted the same way:
+    #
+    #  * It rejected 23 correctly-filed datasheets on the full on-disk corpus (22397 PDFs),
+    #    13 of them live parts_db candidates. In every case the stripped letter was the first
+    #    character of a PACKAGING or ordering code, not a device variant: BSS83IXUSA1 (XUSA1),
+    #    SI2301-TP (-TP tape&reel), AO3402-HXY (-HXY vendor tag, absent from the sheet),
+    #    BSS126H6327XTSA2 (H6327XTSA2). My own measurement missed all of them because I ran
+    #    it over datasheets_db, which is a 27% subset of the corpus -- the tightening looked
+    #    free at 0/5809 and was not.
+    #  * The cost of a false reject here is NOT just a wasted repair attempt. The repair loop
+    #    below catches only TooManyPages, and fix_font_enc raises ValueError('no bad fonts')
+    #    on a healthy PDF, so BSS126H6327XTSA2 lost EVERY parsed field.
+    #  * No window value separates the two populations: legitimate stem-to-variant distances
+    #    run 0..258 chars, and failures fall 72/28/23/21/17/5/2/0 for windows 5/8/10/12/15/
+    #    20/50/100.
+    #  * It was inert against the class it claimed to close anyway: 94% of MPNs normalize to
+    #    more than 7 chars, so [:7] has already discarded the distinguishing suffix, and 4361
+    #    (mfr, stem) groups covering 73% of records hold more than one MPN.
+    #
+    # The axis that actually separates them is "is the stripped letter part of an orderable
+    # suffix?", and dslib/mpn_match.py already encodes that ([A-Z]{2,5}\d plus a gated
+    # Infineon allowance) along with a docstring about this exact bug class. A real fix
+    # belongs there, not in a character-window heuristic on a 7-char prefix.
     return True
 
 
