@@ -123,7 +123,17 @@ class MosfetBasicSpecs():
 
         return list(filter(bool, [
             f('Vds', n, n, self.Vds_max),
-            f('Rds_on_10v', n, n, self.Rds_on_10v_max),
+            # Ohms, stated rather than implied. `ensure_ohm` above has already forced this
+            # attribute to ohms -- twice -- so the unit is known here with certainty, and
+            # Field.__init__ converts it to the canonical mΩ on the way in.
+            #
+            # This is the ONLY constructor of Rds_on_10v fields anywhere: all 10908 in the
+            # shipped DB came through here, via 13 vendor scrapers and no parse source.
+            # Leaving the unit off meant the reader had to fall back to a guessed
+            # 'unitless means ohms' default for every one of them, which is the mechanism
+            # that put ~4.5% of Rds_on values in the DB out by 1000x. Same class of bug,
+            # same fix: say what the number is instead of inferring it downstream.
+            f('Rds_on_10v', n, n, self.Rds_on_10v_max, unit='Ω'),
             f('ID_25', n, self.ID_25, n),
             f('Vgs_th', n, n, self.Vgs_th_max),
             f('Qg', n, self.Qg_typ_nC, self.Qg_max_nC, unit='nC')
