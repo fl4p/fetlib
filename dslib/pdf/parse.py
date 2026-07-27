@@ -368,6 +368,110 @@ def validate_datasheet_text(mfr, mpn, text, return_reason=False):
     return True
 
 
+# Symbols whose ABSENCE from a datasheet can be proven, mapped to the sibling symbols
+# that must already have been parsed for that proof to count.
+#
+# The proof is two-part: (a) the symbol's own detection regex -- the very one the text
+# and tabular parsers use -- matches nowhere in the text layer, and (b) the siblings WERE
+# parsed, so the table that would hold the symbol demonstrably rendered as readable text.
+# Together those mean no amount of re-rasterizing can make the symbol appear, because it
+# is not printed on the sheet. IRFI4229PBF is the case that motivated this: its gate
+# charge table lists only Qg (73/110 nC) and Qgd (24 nC), no Qgs/Qg_th/Qgs2, so
+# tabula_read climbed its whole pre-method ladder to the 600 dpi OCR rung -- ~3 min and
+# 24 MB of derived files -- and still reported the symbol missing, as it always will.
+#
+# (b) is what keeps this from being an anti-monotone false PASS. A bare "label not found
+# -> skip OCR" test would fire hardest on exactly the sheets it must not: the scrambled
+# font-encoding records, where labels are unfindable BECAUSE the text layer is broken and
+# OCR is the actual fix. Requiring the siblings to have parsed means the check can only
+# conclude "absent" while holding positive evidence that the text is intact; when that
+# evidence is missing it escalates exactly as before.
+#
+# A symbol with no entry here is NEVER proven absent -- absence of a rule means "escalate
+# as before", not "fine". Extending this to another family means naming siblings that sit
+# in the SAME table as the symbol, so their presence really does witness its text.
+_ABSENCE_PROOF_SIBLINGS = {
+    'Qgs': ('Qg', 'Qgd'),
+    'Qgs2': ('Qg', 'Qgd'),
+    'Qg_th': ('Qg', 'Qgd'),
+}
+
+
+def _symbol_detectable_in_text(regs, symbol, lines) -> bool:
+    reg = regs.get(symbol)
+
+    if reg is None:
+        # No detector for this symbol => the parsers find it some other way and this
+        # function cannot speak to it. Claim "present" so nothing is ever skipped on the
+        # strength of our own ignorance.
+        return True
+
+    if isinstance(reg, tuple):
+        # Drop the ignore-substring list on purpose. It only ever makes a match LESS
+        # likely, and here a missed match becomes a wrong "provably absent" -- the one
+        # direction that loses data. Over-matching just preserves today's behaviour.
+        reg = reg[0]
+
+    # The detect regexes are written for CELL contents (`^`-anchored, and rec() rewrites
+    # \s so it cannot span newlines), so they are applied per line -- which is how the
+    # spec-table labels come out of extract_text anyway ("Qgd\nGate-to-Drain Charge").
+    return any(reg.search(line) for line in lines)
+
+
+def symbols_provably_absent(need_symbols, pdf_text, have_symbols, mfr) -> set:
+    """Subset of `need_symbols` that this datasheet demonstrably does not specify.
+
+    Only symbols listed in `_ABSENCE_PROOF_SIBLINGS` can qualify, and only while their
+    siblings appear in `have_symbols`. A tuple (alias group) qualifies only if EVERY
+    member does -- the group asks for any one of them, so one detectable member is enough
+    to keep looking.
+    """
+    if not need_symbols or not pdf_text:
+        return set()
+
+    regs = get_field_detect_regex(mfr)
+    lines = [ln for ln in map(str.strip, pdf_text.splitlines()) if ln]
+    have_symbols = set(have_symbols)
+
+    absent = set()
+
+    for sym in need_symbols:
+        members = sym if isinstance(sym, tuple) else (sym,)
+
+        siblings = set()
+        for m in members:
+            sib = _ABSENCE_PROOF_SIBLINGS.get(m)
+            if sib is None:
+                siblings = None  # no proof defined for this member -> none for the group
+                break
+            siblings.update(sib)
+
+        if siblings is None:
+            continue
+
+        if not siblings.issubset(have_symbols):
+            continue  # (b) failed: no witness that the holding table is readable
+
+        if any(_symbol_detectable_in_text(regs, m, lines) for m in members):
+            continue  # (a) failed: the label IS printed, extraction just missed it
+
+        absent.add(sym)
+
+    return absent
+
+
+def drop_ocr_pre_methods(methods):
+    """Strip OCR rungs from a tabula_read pre-method ladder, for --no-ocr.
+
+    Never returns an empty ladder: 'nop' reads the PDF as-is and is what makes the
+    difference between "no OCR" and "no tabular at all".
+    """
+    kept = tuple(m for m in methods if 'ocr' not in m)
+    if kept == tuple(methods):
+        return methods
+    return kept or ('nop',)
+
+
 class NoTabularData(ValueError):
     pass
 
@@ -502,6 +606,12 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                                'r600_ocrmypdf',  # IPB027N10N3
                                )  # 'cups',
 
+    if no_ocr:
+        # --no-ocr used to filter only the text-repair ladder above, while tabula_read's
+        # OWN pre-method ladder kept its 'r600_ocrmypdf' rung -- so the flag did not mean
+        # what it says, and the most expensive OCR path in the pipeline ran anyway.
+        tabular_pre_methods = drop_ocr_pre_methods(tabular_pre_methods)
+
     # Field priority is INSERTION ORDER: Field.fill keeps the first non-NaN per
     # stat and later stages only fill the gaps (see dslib/field.py:add/fill).
     # The method-domination study (apps/method_audit.py) found the cheap
@@ -524,10 +634,12 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
     import dslib.v2
     fields = dslib.v2.parse_datasheet(pdf_path, mfr=mfr, mpn=mpn).all_fields()
     method = 'r600_ocrmypdf'
-    if not fields:
+    if not fields and not no_ocr:
         # v2 returns empty on scanned/image-only PDFs (OCR is out of its scope and it
         # says so via ds.errors), so the OCR retry that served read_sheet still earns
         # its keep -- it is what turns a scanned sheet from zero-yield into parsed.
+        # Gated on no_ocr: this call ignored the flag, which is a third way --no-ocr
+        # reached ocrmypdf anyway.
         f2 = pdf_path + '.' + method + '.pdf' if method != 'nop' else pdf_path
         pdf2pdf(pdf_path, f2, method)
         fields = dslib.v2.parse_datasheet(f2, mfr=mfr, mpn=mpn).all_fields()
@@ -547,6 +659,19 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
         # blast radius grew now that ds.keys() reflects broad text+v2 coverage).
         need_symbols = subsctract_needed_symbols(need_symbols, ds.keys(), copy=True)
 
+    # Symbols this sheet demonstrably does not print are dropped from what TABULAR is
+    # asked to FIND, but deliberately not from the decision to run tabular at all: the
+    # cheap nop/gs passes still harvest everything else on the sheet, we only refuse to
+    # climb the ladder to OCR chasing a value that cannot be there. See
+    # _ABSENCE_PROOF_SIBLINGS for why absence is only ever concluded from evidence.
+    tabular_need = need_symbols
+    if need_symbols:
+        absent = symbols_provably_absent(need_symbols, pdf_text, ds.keys(), mfr)
+        if absent:
+            print(pdf_path, 'not specified in this datasheet:', absent,
+                  '- not escalating tabular pre-methods for it')
+            tabular_need = need_symbols - absent
+
     # tabular (Tabula): most expensive (~177s/part) and ~90% redundant -- last
     # resort for whatever text+v2 still didn't cover. With text now first,
     # the need reaching here is already shrunk, so tabular does strictly less work
@@ -560,7 +685,8 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
         try:
             # if verbose:
             # print(pdf_path, 'tabular read ...  need=', need_symbols)
-            tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods, need_symbols=need_symbols)
+            tabular_ds = tabula_read(pdf_path, pre_process_methods=tabular_pre_methods,
+                                     need_symbols=tabular_need)
             if not tabular_ds:
                 warnings.warn('tabula_read(%r) failed' % pdf_path)
                 # raise NoTabularData(pdf_path)
@@ -576,7 +702,10 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
             # raise
 
     if not ds:
-        if not force_ocr:
+        # `not no_ocr`: force_ocr asserts against no_ocr at the top, and this retry used
+        # to be taken with no_ocr dropped on the floor -- the fourth and last way the
+        # flag reached ocrmypdf. With --no-ocr a zero-yield sheet now raises instead.
+        if not force_ocr and not no_ocr:
             return parse_datasheet(pdf_path, mfr, mpn, tabular_pre_methods=tabular_pre_methods,
                                    need_symbols=need_symbols, force_ocr=True)
         raise NoTabularData(pdf_path)
