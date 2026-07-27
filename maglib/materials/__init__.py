@@ -1,4 +1,5 @@
 import os.path
+import warnings
 from math import isfinite, nan
 from typing import Callable, Literal
 
@@ -60,10 +61,33 @@ class MagneticCoreMaterialSpecs:
             dc_magnetization, mfr, mpn, 'dc_magnetization')
 
     def permeability_dc_bias(self, H, no_raise=False):
+        """Effective permeability at DC bias H (A/m).
+
+        ``no_raise=True`` suppresses the saturation check because the design
+        sweeps in apps/ legitimately walk past it -- they scan turns counts to
+        find one that fits and must not abort on the candidates that do not.
+
+        It used to suppress it SILENTLY, so a caller could not tell a value
+        inside the validated 25%-of-mu_i band from one taken deep in
+        saturation: KDM_SendustKS_125 at H=1e5 returns 0.283*mu_r with no
+        signal whatsoever, and that number then propagates into Ldc and into
+        every flux and loss figure derived from it. Suppressing the ABORT is
+        reasonable; suppressing the fact is not, so the out-of-range case now
+        warns. The message is deliberately constant per material so Python's
+        default once-per-location filter collapses a sweep's repeats instead of
+        drowning it.
+        """
         H_oe = H / .7958e2
         dc_bias = self.dc_bias(H_oe=H_oe)
-        if not no_raise:
-            assert 0.25 <= dc_bias <= 1, "dc bias core saturation too high, %%µi = %.0f%%" % (dc_bias * 100)
+        in_range = 0.25 <= dc_bias <= 1
+        if not in_range:
+            if not no_raise:
+                assert False, "dc bias core saturation too high, %%µi = %.0f%%" % (dc_bias * 100)
+            warnings.warn(
+                '%s/%s: dc-bias permeability is outside the validated '
+                '25%%..100%% band; the value is returned unchecked because '
+                'no_raise=True. Inductance and every flux/loss figure derived '
+                'from it are extrapolated here.' % (self.mfr, self.mpn))
         # too much DC bias inductivity drop
         return dc_bias * self.mu_r
 

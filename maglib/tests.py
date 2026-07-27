@@ -92,6 +92,62 @@ def test_unusable_material_raises():
         Bpk_tesla=0.05, f_khz=100) > 0
 
 
+def test_winding_bore():
+    """A core without datasheet OD/ID must refuse by name, not AttributeError.
+
+    dcdc_buck_coil needs the bore for the mean turn length b_eq =
+    pi/2*(ID+OD). Reaching it through ``core.shape.ID`` gave
+    "'NoneType' object has no attribute 'ID'" from inside the loss
+    calculation, naming neither the core nor the missing quantity -- and every
+    core defined with only l_e/A_e/Vol hit it, so the live coil-loss path was
+    unreachable for most of the library.
+
+    Three cores were passing ``**shape.values()``, which returns l_e/A_e/Vol
+    and DROPS od/id, leaving shape=None on cores whose geometry is known and
+    published. Those are pinned here: a regression to values() puts them back
+    in the refusing set.
+    """
+    import pytest
+
+    # geometry known -> real datasheet bore
+    for core in (cores.Micrometals_MS_130_060, cores.Micrometals_MS_184_060,
+                 cores.Micrometals_MS_184_090, cores.Micrometals_OE_184_060,
+                 cores.Micrometals_MS_184_125):
+        core_id, core_od = core.winding_bore()
+        assert 0 < core_id < core_od < 0.1, (core.mpn, core_id, core_od)
+
+    # geometry genuinely absent -> refuse, and say which core and why
+    for core in (cores.MagInc_106_KoolMu60, cores.KDM_KS130_060A,
+                 cores.Micrometals_OE_226_060):
+        with pytest.raises(ValueError, match=core.mpn):
+            core.winding_bore()
+
+
+def test_dc_bias_suppression_is_not_silent():
+    """no_raise=True may suppress the abort, not the fact.
+
+    The design sweeps in apps/ walk past saturation on purpose, so the assert
+    has to be suppressible. But it used to return a deeply-saturated
+    permeability with no signal at all -- 0.283*mu_r for KDM_SendustKS_125 at
+    H=1e5 -- and that number propagates into Ldc and every flux and loss figure
+    downstream. The caller could not tell it apart from a validated one.
+    """
+    import warnings as _w
+
+    from maglib.materials import KDM_SendustKS_125, MagInc_KoolMu_60
+
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter('always')
+        KDM_SendustKS_125.permeability_dc_bias(1e5, no_raise=True)
+    assert caught, 'out-of-range dc bias was suppressed silently'
+
+    # and an in-range point must stay quiet, or the warning means nothing
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter('always')
+        MagInc_KoolMu_60.permeability_dc_bias(1e3, no_raise=True)
+    assert not caught, [str(c.message) for c in caught]
+
+
 def test_copper_resistivity_tempco():
     """rho(T) = rho20 * (1 + tc*(T-20)); tc is fractional (1/K), so it scales.
 

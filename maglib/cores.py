@@ -80,6 +80,31 @@ class MagneticCoreSpecs:
         assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
         assert abs(rel_err(µ0 * mat.mu_r * A_e / l_e, self.A_L)) < 0.04, (µ0 * mat.mu_r * A_e / l_e, self.A_L)
 
+    def winding_bore(self):
+        """(ID, OD) in m, for the winding models. Raises if not known.
+
+        Proximity loss needs the mean turn length, b_eq = pi/2*(ID + OD), so a
+        core given only l_e/A_e/Vol cannot be wound by
+        ``acr_factor_micrometals``. Callers reached that through
+        ``core.shape.ID`` and got ``AttributeError: 'NoneType' object has no
+        attribute 'ID'`` from inside the loss calculation -- true, loud, and
+        useless: it names neither the core nor what is missing, and every
+        shape-less core in this module hits it, which is most of them.
+
+        Refusing here rather than substituting a guessed bore is deliberate.
+        A plausible OD/ID would flow straight into b_eq and produce a
+        confident, wrong proximity loss; the honest failure is to say the
+        geometry is absent and let the caller supply a ToroidShape.
+        """
+        if self.shape is None or not math.isfinite(getattr(self.shape, 'ID', math.nan)) \
+                or not math.isfinite(getattr(self.shape, 'OD', math.nan)):
+            raise ValueError(
+                '%s: winding geometry unknown -- this core was defined without '
+                'a ToroidShape carrying OD/ID, so proximity loss (b_eq = '
+                'pi/2*(ID+OD)) cannot be computed. Give it shape=<ToroidShape> '
+                'with the datasheet OD/ID rather than guessing them.' % self.mpn)
+        return self.shape.ID, self.shape.OD
+
     def stack(self, n):
         assert n > 0
         if n == 1:
@@ -144,17 +169,22 @@ Micrometals_MS_130_060 = MagneticCoreSpecs('MS-130060-2',
                                            A_L=61e-9,  # nH/N2
                                            )
 
+# `shape=` rather than `**shape.values()`: values() returns only l_e/A_e/Vol
+# and DROPS the bore dimensions, leaving shape=None on a core whose OD/ID are
+# known. The winding models need them -- proximity loss scales with the mean
+# turn length b_eq = pi/2*(ID+OD) -- so stripping them made these cores
+# unusable in dcdc_buck_coil for no reason. Same numbers, plus the geometry.
 # https://datasheets.micrometals.com/MS-184060-2-DataSheet.pdf
 Micrometals_MS_184_060 = MagneticCoreSpecs('MS-184060-2',
                                            materials.Micrometals_Sendust_60u,
-                                           **MicrometalsT184.values(),
+                                           shape=MicrometalsT184,
                                            A_L=135e-9,  # nH/N2 (checksum)
                                            )
 
 # https://datasheets.micrometals.com/MS-184090-2-DataSheet.pdf
 Micrometals_MS_184_090 = MagneticCoreSpecs('MS-184090-2',
                                            materials.Micrometals_MS_T_090u,
-                                           **MicrometalsT184.values(),
+                                           shape=MicrometalsT184,
                                            A_L=202e-9,  # nH/N2 (checksum)
                                            )
 
@@ -168,7 +198,7 @@ Micrometals_MS_184_125 = MagneticCoreSpecs('MS-184125-2',
 # https://datasheets.micrometals.com/OE-184060-2-DataSheet.pdf
 Micrometals_OE_184_060 = MagneticCoreSpecs('OE-184060-2',
                                            materials.Micrometals_OE_60u,
-                                           **MicrometalsT184.values(),
+                                           shape=MicrometalsT184,
                                            A_L=135e-9,  # nH/N2
                                            )
 
