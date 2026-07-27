@@ -60,7 +60,17 @@ def d2awg(d):
 
 
 def copper_resistivity_tempco(resistivity20, temp, tc=0.00393):
-    return resistivity20 + (temp - 20) * tc
+    """Resistivity at ``temp`` from its 20 degC value.
+
+    rho(T) = rho20 * (1 + tc*(T - 20))
+
+    The temperature coefficient is a FRACTIONAL change per kelvin (1/K), so it
+    scales the resistivity; it was being ADDED to it. That put a dimensionless
+    quantity in series with ohm-metres and returned 0.0786 ohm*m at 100 degC
+    against a true 2.208e-8 -- seven orders of magnitude, and copper reading as
+    an insulator. No caller and no test, which is why it survived.
+    """
+    return resistivity20 * (1 + tc * (temp - 20))
 
 
 def dc_resistance(resistivity, length: float, diameter: float):

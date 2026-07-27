@@ -1,8 +1,46 @@
 import os.path
-from math import nan
+from math import isfinite, nan
 from typing import Callable, Literal
 
 from dslib.cache import mem_cache
+
+
+def _finite_or_raise(fn: Callable, mfr, mpn, what: str):
+    """Wrap a material curve so a non-finite result RAISES.
+
+    A curve built from unknown coefficients returns nan, and nan is the worst
+    possible answer here because it does not stay nan. ``dclib/powerloss.py``
+    combines the two core-loss methods with ``max(P_core1, P_core2)``, and
+    ``max(0, nan)`` is ``0`` in CPython -- so a material whose loss CANNOT BE
+    COMPUTED is reported as a core with NO LOSS, which is the single most
+    favourable answer the model can give. It then wins the ranking on the
+    strength of the thing nobody could evaluate. The same run reports
+    ``mthd: 1`` because ``nan > 0`` is False, claiming a method that never ran.
+
+    Absence of evidence must not encode absence of loss, so this raises
+    instead. Loud beats plausible: an unusable material should stop a design,
+    not quietly top it.
+
+    Not hypothetical. ``KDM_SendustKS_125`` is written with literal ``nan``
+    exponents (see below) and backs ``KDM_KS184_125A`` in ``maglib/cores.py``.
+    The same path is reachable for any Micrometals material whose CSV cell
+    fails to parse, because ``try_float`` turns a ValueError into nan and feeds
+    it straight into the coefficient tuple.
+    """
+    if fn is None:
+        return None
+
+    def guarded(*args, **kwargs):
+        v = fn(*args, **kwargs)
+        if not isfinite(v):
+            raise ValueError(
+                '%s/%s: %s is not usable (returned %r for %s). Its curve '
+                'coefficients are unknown or failed to parse; supply them '
+                'rather than letting the value flow on -- nan reads as zero '
+                'loss downstream.' % (mfr, mpn, what, v, kwargs or args))
+        return v
+
+    return guarded
 
 
 class MagneticCoreMaterialSpecs:
@@ -15,9 +53,11 @@ class MagneticCoreMaterialSpecs:
         self.mpn = mpn
         self.mu_r = mu_r
         assert isinstance(mu_r, int) and 10 <= mu_r <= 6000
-        self.core_loss_density = core_loss_density
-        self.dc_bias = dc_bias
-        self.dc_magnetization = dc_magnetization
+        self.core_loss_density = _finite_or_raise(
+            core_loss_density, mfr, mpn, 'core_loss_density')
+        self.dc_bias = _finite_or_raise(dc_bias, mfr, mpn, 'dc_bias')
+        self.dc_magnetization = _finite_or_raise(
+            dc_magnetization, mfr, mpn, 'dc_magnetization')
 
     def permeability_dc_bias(self, H, no_raise=False):
         H_oe = H / .7958e2

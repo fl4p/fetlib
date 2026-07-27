@@ -34,6 +34,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
 # Imported for collection by pytest -- each is a real test function.
 from maglib.tests import (test_bpk_sinusoidal,  # noqa: F401,E402
                           test_coil,  # noqa: F401,E402
+                          test_copper_resistivity_tempco,  # noqa: F401,E402
                           test_mat,   # noqa: F401,E402
                           test_power_loss,  # noqa: F401,E402
+                          test_unusable_material_raises,  # noqa: F401,E402
                           test_wire)  # noqa: F401,E402

@@ -65,21 +65,72 @@ def test_power_loss():
     assert abs(rel_err(core_loss_from_dc_bias(dcdc, coil)[0], 2062e-3)) < 0.05
 
 
+def test_unusable_material_raises():
+    """A curve that cannot be evaluated must refuse, not return nan.
+
+    nan does not stay nan. dclib/powerloss.py combines the two core-loss
+    methods with max(P_core1, P_core2), and max(0, nan) is 0 in CPython, so a
+    material whose loss cannot be computed was reported as a core with NO LOSS
+    -- the most favourable answer available -- and the run went on to claim
+    'mthd: 1' because nan > 0 is False, naming a method that never ran.
+
+    KDM_SendustKS_125 is written with literal nan exponents and backs
+    KDM_KS184_125A in cores.py, so this is reachable, not hypothetical.
+    """
+    import pytest
+
+    from maglib.materials import KDM_SendustKS_125, Micrometals_Sendust_60u
+
+    with pytest.raises(ValueError):
+        KDM_SendustKS_125.core_loss_density(Bpk_tesla=0.05, f_khz=100)
+
+    # the same material's dc_bias HAS real coefficients and must be unaffected
+    assert 0 < KDM_SendustKS_125.dc_bias(H_oe=50) < 1
+
+    # and a healthy material must not be disturbed by the guard
+    assert Micrometals_Sendust_60u.core_loss_density(
+        Bpk_tesla=0.05, f_khz=100) > 0
+
+
+def test_copper_resistivity_tempco():
+    """rho(T) = rho20 * (1 + tc*(T-20)); tc is fractional (1/K), so it scales.
+
+    It was being added to the resistivity -- a dimensionless number in series
+    with ohm-metres -- returning 0.0786 ohm*m at 100 degC against a true
+    2.208e-8. Copper read as an insulator, seven orders out.
+    """
+    from maglib.wire import MaterialResistivity, copper_resistivity_tempco
+
+    r20 = MaterialResistivity.Copper.value
+    assert copper_resistivity_tempco(r20, 20) == r20
+    assert abs(rel_err(copper_resistivity_tempco(r20, 100), 2.208e-8)) < 0.01
+    assert abs(rel_err(copper_resistivity_tempco(r20, 40), 1.812e-8)) < 0.01
+    # must stay in the ballpark of a metal, which the additive form did not
+    assert 1e-8 < copper_resistivity_tempco(r20, 150) < 1e-7
+
+
 def test_bpk_sinusoidal():
     """Oliver/Ridley p.3, Bpk = Vrms x 10^1 / (4.44 x Area[cm2] x N x f[kHz]).
 
     ``vrms`` was hardcoded to 0, so this returned 0 T at every operating point
     -- and zero flux is zero core loss, the one answer that makes any core look
     perfect. Asserting non-zero alone would not catch a units error, so the
-    value is pinned against two INDEPENDENT closed forms:
+    value is pinned against two closed forms:
 
     * the same equation rebuilt in SI, Bpk = Vrms / (4.44 * f * N * A_e), which
       fails if the cm2/kHz/10^1 conversions do not cancel exactly;
     * the exact volt-second flux of the square wave the inductor actually sees,
       Bpk = Vo*(1 - D)/(2*f*N*A_e), times the analytic sine/square form-factor
-      ratio (2/4.44)/sqrt(D*(1 - D)). Any scaling slip breaks this at every
-      duty cycle, and the ratio itself is what documents that the sine constant
-      is a 10%-at-D=0.5, 50%-at-D=0.1 approximation.
+      ratio (2/4.44)/sqrt(D*(1 - D)).
+
+    CORRECTION: an earlier version called those two INDEPENDENT. They are not.
+    Whenever D = Vo/Vi the second reduces algebraically to the first, so it
+    adds one proposition (that D_buck is Vo/Vi) and no separate check of the
+    units, the 4.44, or the half-swing convention. The mutation coverage is
+    real -- vrms=0, dropping (1-D)Vo^2, D<->1-D, missing Hz->kHz, missing
+    m2->cm2, 4.44->4.0, dropping x10, peak-to-peak, dropping turns all fail --
+    but they fail via the FIRST assertion. Calling it independent corroboration
+    was the kind of claim this file exists to stop.
     """
     import math
 
@@ -150,26 +201,46 @@ def test_wire():
     # example from https://s3.amazonaws.com/micrometals-production/filer_public/7c/72/7c728863-9c0e-40b3-ba86-a3f94d5ad1c1/acresistance_rev0_110123.pdf
     #
     # acr_factor_micrometals returns the EXCESS factors: Rac = Rdc * (1 + Fs + Fp),
-    # with the +1 deliberately removed (see wire.py) and added back by its only
-    # production consumer, Winding.Rac_sepe. The app note's 2.5060 is the TOTAL
-    # ratio, so it must be compared against 1 + the sum. Comparing it to the bare
-    # sum asserted 2.5060 == 1.5060 and failed by exactly 1.0 -- the DC term.
-    # With the conventions aligned the model reproduces the app note to 1.7e-5.
+    # with the +1 deliberately removed (see wire.py). The app note's 2.5060 is the
+    # TOTAL ratio, so it must be compared against 1 + the sum. Comparing it to the
+    # bare sum asserted 2.5060 == 1.5060 and failed by exactly 1.0 -- the DC term.
+    # With the conventions aligned the model reproduces the app note to 1.7e-5,
+    # and 1 + f_skin tracks the exact Kelvin-function solution to <= 0.19% over
+    # the whole grid below, which is what settles the direction: bare f_skin is
+    # ~100% low at low frequency, where the true ratio tends to 1.
+    #
+    # CORRECTION: an earlier version of this comment called Winding.Rac_sepe the
+    # "only production consumer". That was false and it mattered -- asserting it
+    # instead of checking is why a live double-count went unnoticed. There are
+    # three call sites, and dclib/powerloss.py is the one on the shipped path.
     from maglib.wire import acr_factor_micrometals
     assert abs(rel_err(2.5060, 1 + sum(
         acr_factor_micrometals(23e-9, 1e-3, 100e3, 1, 32, 14.1e-3, 27.69e-3)))) < 1e-4
 
-    # Cross-check two independent skin-effect models. Same convention fix:
+    # Cross-check the two skin-effect models. Same convention fix:
     # ac_resistance_factor returns the TOTAL ratio (>= 1, it is Rac/Rdc for a
     # hollow cylinder) while acr_factor_micrometals returns the excess.
     #
-    # Restricted to where ac_resistance_factor is DEFINED. Its own precondition
-    # is sd/diameter < 0.3 -- the hollow-cylinder approximation needs the skin
-    # depth well inside the wire -- and 8 of the 20 points below violate it, so
-    # the loop used to die on an assert at its first iteration rather than
-    # compare anything. Widening that guard to make the loop run would be
-    # fixing the check instead of the number: outside its domain the model is
-    # not merely imprecise, it is inapplicable.
+    # Restricted to where ac_resistance_factor is defined: its own assert is
+    # sd/diameter < 0.3 (ac_resistance() uses 0.25 for the same approximation),
+    # and 8 of the 20 points below violate it, so the loop used to die at its
+    # first iteration rather than compare anything.
+    #
+    # Read what this actually measures. Against the exact Kelvin-function
+    # solution the micrometals model is accurate to 0.02% on the EXCLUDED
+    # points and 0.19% on the included ones -- it is best exactly where this
+    # loop refuses to look. So the spread below is almost entirely
+    # ac_resistance_factor's own error against a near-exact reference, not two
+    # models independently agreeing. The tolerance is also one-sided: the
+    # baseline disagreement is already +5.35%, so a downward error in
+    # ac_resistance_factor of 7% passes here (it is caught by the reference
+    # assertions above, not by this loop).
+    #
+    # And both models are pure functions of zeta = d/sd, so a multiplicative
+    # error in skin_depth slides both along the same curve and CANNOT be seen
+    # here at all -- measured: skin_depth x1.10 leaves this loop green. Its
+    # only sensitivity to sd is the sample count, which is why n_compared is
+    # asserted below; do not remove that believing the tolerance covers it.
     n_compared = 0
     for d in [0.7e-3, 1.0e-3, 1.2e-3, 1.5e-3, 2e-3]:
         for f in [20e3, 40e3, 100e3, 200e3]:
