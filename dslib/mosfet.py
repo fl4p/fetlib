@@ -448,6 +448,9 @@ class MosfetSpecs:
         p = qrr_model.evaluate_lm_fit(fit, IF, didt, Tj=Tj)
         if p["method"] == "1pt":
             # Where the TEST POINT came from, which qrr_model neither knows nor should:
+        # 'curated' = hand-read from the PDF, 'layout' = machine-read from the datasheet
+        # table geometry (dslib/qrr_layout_conditions.py), 'parsed' = from the keyed cond
+        # dict. Descending evidence quality; all three reach Qrr_src.
             # 'curated' = hand-read from the PDF, 'parsed' = off the parsed Qrr row.
             # A parsed point is weaker evidence and must stay distinguishable downstream.
             p["cond_source"] = (cond or {}).get("source", "curated")

@@ -15,12 +15,24 @@ own `source='layout'` tag, and they rank BELOW the hand-curated table:
 
     qrr_points (per-row) > qrr_conditions (hand-read) > THIS > parsed cond keys
 
-THE SAFETY PROPERTY is not regex confidence, it is a value cross-check. The extractor also
-reads the Qrr and trr VALUES out of the same block and requires them to match what the DB
-independently parsed. If the block the condition came from is not the block the DB got its
-numbers from, the values disagree and the candidate is dropped -- 61 were, in the run that
-produced the shipped module. Survivors must also admit a Lauritzen-Ma fit with a physical
-IRRM (<= 5x IF).
+THE PRIMARY SAFETY PROPERTY is a value cross-check, not regex confidence. The extractor
+also reads the Qrr and trr VALUES out of the same block and requires them to match what
+the DB parsed independently, so a condition taken from a different block than the charge
+is dropped -- 229 were, in the run that produced the shipped module.
+
+WHAT THAT CROSS-CHECK DOES NOT COVER, because getting this wrong shipped six bad entries:
+it is only independent for cross-ROW and cross-BLOCK errors. When the DB value and the
+layout value are two readings of the same UN-NORMALISED text, they agree while both being
+wrong. IRFB38N20D prints "1.3 2.0 C" -- the micro glyph dropped -- the DB stores 1.3 with
+unit 'PC', the layout regex reads 1.3, they match, and the shipped charge was 1000x too
+small. Agreement between two readings of one corrupted source is not corroboration. Hence
+the unit gate in harvest(): a Qrr whose unit survives as C/uC/PC proves normalisation did
+NOT happen, so its scale is unknown and it is refused outright.
+
+Survivors must also admit a Lauritzen-Ma fit with an IRRM between 0 and 5x IF, and a
+Qrr/IF above a floor. That bound is TWO-SIDED on purpose -- it was one-sided at first
+(reject IRRM > 5x IF), which is exactly why a 1000x-too-small charge, whose implied IRRM
+is ~0, passed it without complaint.
 
 CALIBRATED against the seven entries in dslib/qrr_conditions.py that were read off the
 PDFs by hand. That calibration is not decoration: the first version of this extractor used
@@ -121,6 +133,13 @@ def extract_with_block(body):
                 break
             if RE_VSD_ROW.search(lines[j]):
                 break                      # forward-voltage row: stop, never cross it
+            if RE_QRR_ROW.search(lines[j]):
+                break                      # ANOTHER charge row: that block is not ours.
+                # Review-hardening, not an observed failure: no live instance was found
+                # across the 409-entry registry (every dual-block sheet anchored to its
+                # own block). But the value cross-check cannot catch this one -- `qv` is
+                # read off line `i`, which is always right for SOME block -- so the window
+                # has to refuse it structurally rather than be caught downstream.
         hi = min(len(lines), i + 3)        # continuation lines below the Qrr row
         for j in range(i + 1, hi):         # ... but never past a new section
             if RE_SECTION_BREAK.search(lines[j]):
@@ -194,6 +213,25 @@ def harvest():
         if not qrr or not trr or math.isnan(qrr) or math.isnan(trr):
             stats['no Qrr/trr in DB'] += 1
             continue
+        # The Qrr SCALE must be trustworthy before its operating point is worth reading.
+        #
+        # The value cross-check below compares the layout reading against the DB reading,
+        # and those are NOT independent when both come from the same un-normalised text:
+        # IRFB38N20D's sheet prints "1.3 2.0 C" where the micro glyph was dropped, the DB
+        # stores typ=1.3 with unit 'PC' (mangled uC), and the layout regex reads the same
+        # 1.3. Both agree, on a number 1000x too small. Agreement between two readings of
+        # one corrupted source is not corroboration.
+        #
+        # So gate on the unit itself: nC (the canonical storage) or nothing, never a
+        # surviving 'C'/'uC'/'PC' that proves normalisation did NOT happen. 28 Qrr fields
+        # in the shipped DB carry such a unit. NB this only protects THIS registry -- the
+        # same corrupt scalar still feeds the flat P_rr path, which is a pre-existing bug
+        # with a wider blast radius (dslib/field.py's uC fix band misses these on both its
+        # unit test and its 0.1-0.9 magnitude window).
+        unit = str(getattr(fq, 'unit', '') or '').strip().lower()
+        if unit and unit not in ('nc',):
+            stats['Qrr unit not normalised (%s)' % unit] += 1
+            continue
         pdf = os.path.join(REPO, 'datasheets', key[0], key[1] + '.pdf')
         if not os.path.exists(pdf):
             stats['no pdf'] += 1
@@ -217,7 +255,20 @@ def harvest():
             stats['LM fit fails'] += 1
             continue
         if f['irrm'] > 5.0 * c['IF']:
-            stats['IRRM implausible'] += 1
+            stats['IRRM implausible (too high)'] += 1
+            continue
+        # TWO-SIDED, deliberately. The bound above was the only plausibility check and it
+        # only rejected too MUCH charge, so a Qrr 1000x too small produced IRRM ~ 0 and
+        # sailed through -- a guard that vanishes in one direction is not a guard.
+        #
+        # The floor is on Qrr/IF (nC per A, i.e. a recovery time scale) because that is
+        # where the corrupt parts separate cleanly: the six lost-prefix entries sat at
+        # 0.050-0.052 nC/A while the lowest LEGITIMATE entry in the corpus is 0.58
+        # (nce/NCE8295A) and the hand-verified IAUCN08S7N013 is 0.68. 0.2 sits in an 11x
+        # gap -- ~3x clear of the real parts and ~4x clear of the corrupt ones -- so it is
+        # calibrated against both directions, not just the failure it was written for.
+        if qrr / c['IF'] < 0.2:
+            stats['Qrr/IF below any physical recovery (lost unit prefix?)'] += 1
             continue
         stats['ACCEPTED'] += 1
         out.append(dict(mfr=key[0], mpn=key[1], IF=c['IF'], didt=c['didt'],

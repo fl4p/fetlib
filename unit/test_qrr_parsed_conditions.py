@@ -219,6 +219,37 @@ def test_generated_layout_entries_are_physically_bounded():
     # corroborates the fit). Rejecting those would have been the test asserting its
     # author's expectation over the datasheets. The concentration check still fails loudly
     # if the extractor starts pulling arbitrary numbers, which is the actual risk.
+    # The CHARGE must be physical against its own test current, not just the conditions.
+    #
+    # This assertion exists because its absence shipped six wrong entries. IRFB38N20D and
+    # five siblings print "1.3 2.0 C" -- the micro glyph dropped -- so the DB holds
+    # Qrr=1.3 nC where the datasheet means 1.3 uC, and the layout reader agreed with it
+    # because both read the same un-normalised text. Two readings of one corrupted source
+    # are not a cross-check. They sat at Qrr/IF = 0.05 nC/A against a corpus minimum of
+    # 0.58, and passed every gate because the only plausibility bound was one-sided
+    # (IRRM too HIGH), so a 1000x-too-small charge produced IRRM ~ 0 and looked fine.
+    from dslib.store import datasheets_db
+    dss = datasheets_db.load()
+    by = {k[1]: ds for k, ds in dss.items()}
+    ratios = []
+    for (mfr, mpn), c in Q.items():
+        ds = by.get(mpn)
+        if ds is None:
+            continue
+        fq = ds.fields_filled.get('Qrr')
+        if not fq:
+            continue
+        try:
+            v = fq.typ_or_max_or_min
+        except ValueError:
+            continue
+        if v and not math.isnan(v):
+            ratios.append((v / c['IF'], mfr, mpn))
+    assert ratios, 'could not cross-check any entry against the DB'
+    low = [r for r in ratios if r[0] < 0.2]
+    assert not low, ('Qrr/IF below any physical recovery time -- likely a lost unit '
+                     'prefix: %s' % low[:5])
+
     didts = [c['didt'] / 1e6 for c in Q.values()]
     assert all(10 <= d <= 20000 for d in didts), 'di/dt outside any real test range'
     common = sum(1 for d in didts if round(d) in (100, 300, 500, 1000))

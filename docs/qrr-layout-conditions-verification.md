@@ -1,6 +1,6 @@
 # Verification sheet: machine-read Qrr test conditions
 
-`dslib/qrr_layout_conditions.py` holds 409 entries read from the datasheet TABLE
+`dslib/qrr_layout_conditions.py` holds 403 entries read from the datasheet TABLE
 LAYOUT by `apps/emit_qrr_layout_conditions.py`. They are NOT human-verified. They rank
 below the hand-curated `dslib/qrr_conditions.py` and carry `source="layout"`, surfacing
 in the CSV as `Qrr_src=op-1pt-layout`.
@@ -22,7 +22,7 @@ so what remains to check by eye is whether the block itself is the right one.
 
 2 random entries from each of the 10 largest vendors:
 
-### infineon / IRFB4620PBF
+### infineon / IRFS4620TRLPBF
 - read as: **IF = 15 A**, **di/dt = 100 A/µs**, VR = 100, Tj = 25 °C
 - datasheet block:
 ```
@@ -34,131 +34,124 @@ nC
 ––– 432 ––– TJ = 125°C
 ```
 
-### infineon / IAUTN12S5N018GATMA1
-- read as: **IF = 50 A**, **di/dt = 100 A/µs**, VR = 60, Tj = 25 °C
+### infineon / IRFP4227PBF
+- read as: **IF = 46 A**, **di/dt = 100 A/µs**, VR = 50, Tj = 25 °C
 - datasheet block:
 ```
-Reverse recovery time2) t rr V R=60 V, I F=50A, – 45 67 ns
-di F/dt =100 A/µs
-Reverse recovery charge2) Q rr – 34 68 nC
-1)
-Practically the current is limited by the overall system design including the customer-specific PCB.
+trr Reverse Recovery Time ––– 100 150 ns TJ = 25°C, IF = 46A, VDD = 50V
+Qrr Reverse Recovery Charge ––– 430 640 nC di/dt = 100A/µs e
 ```
 
-### onsemi / FDBL86066-F085
-- read as: **IF = 80 A**, **di/dt = 300 A/µs**, VR = None, Tj = 25 °C
+### onsemi / NTB011N15MC
+- read as: **IF = 41 A**, **di/dt = 300 A/µs**, VR = 75, Tj = 25 °C
 - datasheet block:
 ```
-trr Reverse Recovery Time IF = 80 A, dISD/dt = 300 A/ms − 36 54 ns
-Qrr Reverse Recovery Charge − 84 126 nC
-trr Reverse Recovery Time IF = 80 A, dISD/dt = 1000 A/ms − 32 48 ns
-Qrr Reverse Recovery Charge − 243 365 nC
+Reverse Recovery Time tRR VGS = 0 V, VDD = 75 V 49 ns
+Reverse Recovery Charge QRR dIS/dt = 300 A/ms, IS = 41 A 210 nC
+Reverse Recovery Time tRR VGS = 0 V, VDD = 75 V 36 ns
+Reverse Recovery Charge QRR dIS/dt = 1000 A/ms, IS = 41 A 421 nC
 ```
 
-### onsemi / NTBLS002N08MC
-- read as: **IF = 40 A**, **di/dt = 300 A/µs**, VR = None, Tj = 25 °C
+### onsemi / FDMS004N08C
+- read as: **IF = 22 A**, **di/dt = 300 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-Reverse Recovery Time tRR 35 nS
-IF = 40 A, di/dt = 300 A/ms
-Reverse Recovery Charge QRR 74 nC
-Reverse Recovery Time tRR 27 nS
-IF = 40 A, di/dt = 1000 A/ms
+trr Reverse Recovery Time 26 41 ns
+IF = 22 A, di/dt = 300 A/μs
+Qrr Reverse Recovery Charge 48 76 nC
+trr Reverse Recovery Time 19 31 ns
+IF = 22 A, di/dt = 1000 A/μs
 ```
 
-### huayi / HYG090N15NS1P
-- read as: **IF = 50 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+### huayi / HY1420P
+- read as: **IF = 30 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-trr Reverse Recovery Time - 87 - ns
-ISD=50A,dISD/dt=100A/μs
-Qrr Reverse Recovery Charge - 251 - nC
+trr Reverse Recovery Time - 48 - ns
+ISD=30A,dISD/dt=100A/μs
+Qrr Reverse Recovery Charge - 78 - nC
 ```
 
-### huayi / HYG065N10LS1P
-- read as: **IF = 20 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+### huayi / HYG200N12NS1P
+- read as: **IF = 30 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-trr Reverse Recovery Time - 44.1 - ns
-ISD=20A,dISD/dt=100A/μs
-Qrr Reverse Recovery Charge - 53.4 - nC
+trr Reverse Recovery Time - 44 - ns
+ISD=30A,dISD/dt=100A/μs
+Qrr Reverse Recovery Charge - 81.1 - nC
 ```
 
-### ao / AOTL66811
+### ao / AONS66908
 - read as: **IF = 20 A**, **di/dt = 500 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
 trr Body Diode Reverse Recovery Time IF=20A, di/dt=500A/ms 40 ns
-Qrr Body Diode Reverse Recovery Charge IF=20A, di/dt=500A/ms 233 nC
-A. The value of RqJA is measured with the device mounted on 1in2 FR-4 board with 2oz. Copper, in a still air environment with TA =25°C. The
+Qrr Body Diode Reverse Recovery Charge IF=20A, di/dt=500A/ms 260 nC
+A. The value of RqJA is measured with the device mounted on 1in 2 FR-4 board with 2oz. Copper, in a still air environment with TA =25°C. The Power
 ```
 
-### ao / AONS66916T
+### ao / AOT66914L
 - read as: **IF = 20 A**, **di/dt = 500 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-trr Body Diode Reverse Recovery Time IF=20A, di/dt=500A/ms 42 ns
-Qrr Body Diode Reverse Recovery Charge IF=20A, di/dt=500A/ms 215 nC
-A. The value of RqJA is measured with the device mounted on 1in2 FR-4 board with 2oz. Copper, in a still air environment with TA =25°C. The
+trr Body Diode Reverse Recovery Time IF=20A, di/dt=500A/ms 55 ns
+Qrr Body Diode Reverse Recovery Charge IF=20A, di/dt=500A/ms 335 nC
+A. The value of RqJA is measured in a still air environment with TA =25°C. The Power dissipation PDSM is based on R qJA t≤ 10s and the maximum
 ```
 
-### xnrusemi / XRS125N12HT
-- read as: **IF = 40 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
-- datasheet block:
-```
-t rr Reverse Recovery time I S =40A, -- 60 -- ns
-Q rr Reverse Recovery Charge dI/dt=100A/μs -- 109 -- nC
-a1
-：Repetitive rating; pulse width limited by maximum junction temperature
-```
-
-### xnrusemi / XRS150P10H
-- read as: **IF = 22 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
-- datasheet block:
-```
-trr Reverse Recovery Time IF=-22A , di/dt=100A/µs , --- 86 --- nS
-Qrr Reverse Recovery Charge TJ= 2 5 C --- 271 --- nC
-a1：Repetitive rating; pulse width limited by maximum junction temperature
-```
-
-### toshiba / TK34A10N1
-- read as: **IF = 34 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
-- datasheet block:
-```
-Reverse recovery time (Note 6) trr IDR = 34 A, VGS = 0 V  61  ns
--dIDR/dt = 100 A/µs
-Reverse recovery charge (Note 6) Qrr  110  nC
-Note 5: Ensure that the channel temperature does not exceed 150.
-```
-
-### toshiba / TK42A12N1
-- read as: **IF = 42 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
-- datasheet block:
-```
-Reverse recovery time (Note 6) trr IDR = 42 A, VGS = 0 V  80  ns
--dIDR/dt = 100 A/µs
-Reverse recovery charge (Note 6) Qrr  190  nC
-Note 5: Ensure that the channel temperature does not exceed 150.
-```
-
-### siliup / SP010P16GHTQ
+### xnrusemi / XRS50N15F
 - read as: **IF = 20 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-Reverse Recovery Time Trr - 96 - nS
-IS=-20A, di/dt=100A/us, TJ=25℃
-Reverse Recovery Charge Qrr - 205 - nC
-Note :
+trr Reverse Recovery Time IF=20A ,di/dt=100A / µs , --- 70 --- nS
+Qrr Reverse Recovery Charge TJ= 2 5 C --- 154.7 --- nC
 ```
 
-### siliup / SP025N16GHTO
-- read as: **IF = 20 A**, **di/dt = 200 A/µs**, VR = None, Tj = 25 °C
+### xnrusemi / XRS30N10D
+- read as: **IF = 10 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-Reverse Recovery Time Trr - 168 - nS
-IS=20A, di/dt=200A/us, TJ=25℃
-Reverse Recovery Charge Qrr - 795 - nC
-Note :
+trr Reverse Recovery Time IF=10A , di/dt=100A/µs , --- 39 --- nS
+Reverse Recovery Charge TJ= 2 5 C 30 nC
+Qrr --- ---
+```
+
+### toshiba / TK22A10N1
+- read as: **IF = 22 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+- datasheet block:
+```
+Reverse recovery time (Note 6) trr IDR = 22 A, VGS = 0 V  54  ns
+-dIDR/dt = 100 A/µs
+Reverse recovery charge (Note 6) Qrr  94  nC
+Note 5: Ensure that the channel temperature does not exceed 150.
+```
+
+### toshiba / TK72E12N1
+- read as: **IF = 72 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+- datasheet block:
+```
+Reverse recovery time (Note 7) trr IDR = 72 A, VGS = 0 V  110  ns
+-dIDR/dt = 100 A/µs
+Reverse recovery charge (Note 7) Qrr  290  nC
+Note 6: Ensure that the channel temperature does not exceed 150.
+```
+
+### siliup / SP020N09GHTO
+- read as: **IF = 50 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+- datasheet block:
+```
+Body Diode Reverse Recovery Time Trr 128 nS
+IS = 50A, dIF/dt = 100A/us
+Body Diode Reverse Recovery Charge Qrr 643 nC
+```
+
+### siliup / SP1012CP8
+- read as: **IF = 3 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+- datasheet block:
+```
+Reverse Recovery Time Trr - 35 - nS
+IS=3A, di/dt=100A/us, TJ=25℃
+Reverse Recovery Charge Q rr - 26 - nC
 ```
 
 ### nce / NCEP02T10
@@ -169,25 +162,17 @@ Reverse Recovery Time trr TJ = 25°C, IF = 50A - 140 nS
 Reverse Recovery Charge Qrr di/dt = 100A/μs - 600 nC
 ```
 
-### nce / NCEP02T10D
-- read as: **IF = 50 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+### nce / NCE0140IA
+- read as: **IF = 20 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
 - datasheet block:
 ```
-Reverse Recovery Time trr TJ = 25°C, IF = 50A - 140 nS
-Reverse Recovery Charge Qrr di/dt = 100A/μs - 600 nC
+Reverse Recovery Time trr TJ = 25°C, IF = 20A - 33 nS
+(Note3)
+Reverse Recovery Charge Qrr di/dt = 100A/μs - 54 nC
+Forward Turn-On Time ton Intrinsic turn-on time is negligible (turn-on is dominated by LS+LD)
 ```
 
-### st / STD20NF20
-- read as: **IF = 20 A**, **di/dt = 100 A/µs**, VR = 50, Tj = 25 °C
-- datasheet block:
-```
-trr Reverse recovery time ISD = 20 A, di/dt = 100A/µs 155 ns
-Qrr Reverse recovery charge VDD = 50 V - 775 nC
-IRRM Reverse recovery current (see Figure 20) 10 A
-trr Reverse recovery time ISD = 20 A, di/dt = 100 A/µs 183 ns
-```
-
-### st / STF100N10F7
+### st / STP100N10F7
 - read as: **IF = 80 A**, **di/dt = 100 A/µs**, VR = 80, Tj = 150 °C
 - datasheet block:
 ```
@@ -197,14 +182,15 @@ Qrr Reverse recovery charge VDD = 80 V, TJ = 150 °C - 146 nC
 IRRM Reverse recovery current - 4 A
 ```
 
-### vishay / SIDR510EP-T1-RE3
-- read as: **IF = 10 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+### st / STP80NF10FP
+- read as: **IF = 80 A**, **di/dt = 100 A/µs**, VR = 50, Tj = 150 °C
 - datasheet block:
 ```
-Body diode reverse recovery time trr - 56 102 ns
-Body diode reverse recovery charge Qrr IF = 10 A, di/dt = 100 A/μs, - 65 130 nC
-Reverse recovery fall time ta TJ = 25 °C - 26 -
-ns
+trr Reverse recovery time 155 ns
+ISD=80A, VDD = 50V
+Qrr Reverse recovery charge 850 nC
+di/dt = 100A/µs,Tj=150°C
+IRRM Reverse recovery current 11 A
 ```
 
 ### vishay / SiDR570EP
@@ -217,12 +203,22 @@ Reverse recovery fall time ta TJ = 25 °C - 65 -
 ns
 ```
 
+### vishay / SIDR5102EP-T1-RE3
+- read as: **IF = 10 A**, **di/dt = 100 A/µs**, VR = None, Tj = 25 °C
+- datasheet block:
+```
+Body diode reverse recovery time trr - 53 106 ns
+Body diode reverse recovery charge Qrr IF = 10 A, di/dt = 100 A/μs, - 67 134 nC
+Reverse recovery fall time ta TJ = 25 °C - 25 -
+ns
+```
+
 
 ## Vendor spread
 
 | mfr | entries |
 |---|--:|
-| infineon | 130 |
+| infineon | 124 |
 | onsemi | 75 |
 | huayi | 38 |
 | ao | 35 |
