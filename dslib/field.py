@@ -105,6 +105,23 @@ def ohm_unit_to_milli_mul(unit):
     return None
 
 
+# Files whose content decides how a Field STORES a value. Not just this module: the
+# conversion reaches out of it, and every edge is a place the old function-granular salt
+# was blind.
+#   field.py        the unit tables, Field.__init__, get_value_with_unit, parse_field_value
+#   dslib/__init__  round_to_n_dec -- rounding changes the stored magnitude
+#   conditions.py   normalize_conditions -- decides the cond a stat is selected by
+#   pdf/expr.py     any_unit, the regex get_value_with_unit splits a "value unit" cell on
+#   pdf/pdf2txt     normalize_text / whitespaces_to_space, applied before the split
+_FIELD_REPR_SOURCES = (
+    ('field.py',),
+    ('__init__.py',),
+    ('conditions.py',),
+    ('pdf', 'expr.py'),
+    ('pdf', 'pdf2txt', '__init__.py'),
+)
+
+
 def field_repr_salt():
     """Cache salt covering how a Field STORES a value: the magnitude and the unit string.
 
@@ -125,30 +142,74 @@ def field_repr_salt():
     hash_func_code=False), tabular, extract_fields_from_text and the outer parse_datasheet
     all hashed code that could not see a Field-representation change.
 
-    Deliberately NOT a content hash of this whole file, unlike v2_code_salt. That would
-    rebuild every parse cache in the corpus on a comment edit, and tabular costs ~177 s a
-    part over 6040 parts. Instead this follows pdf/ascii.py's idiom and pins the exact
-    surface that decides the stored representation:
+    A CONTENT HASH of the source files, the same shape as v2_code_salt -- which is exactly
+    why dslib.v2 was never vulnerable to any of this.
 
-      - the TABLES, by value. Bytecode alone is not enough: _OHM_BODY et al. are globals,
-        so editing one changes no LOAD_GLOBAL and co_code would not move.
-      - the CODE that applies them, as co_code. Bytecode and not source, so rewording a
-        comment (or this docstring) does not invalidate anything, while a real change to
-        the conversion does.
+    This replaces a function-granular version that hashed the unit tables by value plus
+    `co_code` of the three converting functions. That was an attempt to buy precision (a
+    comment edit would not rebuild the corpus) and it was WRONG, in the specific way this
+    whole plan exists to stamp out: it answered "unchanged" when the semantics had changed.
+    Three demonstrated holes, two of them found by review after it had already been
+    committed:
 
-    Sorted so set/dict iteration order cannot make the key unstable between runs.
+      1. `co_code` omits `co_consts`. Swapping Field.__init__'s 'mΩ' literal for 'Ω'
+         changes what every Field stores and leaves the bytecode byte-for-byte identical.
+      2. `co_code` omits nested code objects. Field.__init__ contains `_unit_value`, whose
+         entire body was invisible.
+      3. Even a perfect fingerprint of those three functions is not the closure.
+         Field.__init__ calls parse_field_value; get_value_with_unit uses `any_unit` and
+         normalize_text. Monkeypatching parse_field_value to double its result changed
+         Field('Qg',1,2,3,'nC') from [1,2,3] to [2,4,6] with the salt unmoved.
+
+    (1) and (2) are fixable by fingerprinting harder. (3) is not: every new call edge out
+    of this module is another silent hole, and nothing makes the omission visible. A guard
+    with an unbounded number of undetectable holes is a mute button, so the precision
+    optimisation is abandoned rather than patched a third time.
+
+    COST, accepted deliberately: any edit to the files above -- INCLUDING A COMMENT --
+    rebuilds these four caches. Prose is no longer free. That is the price of the key
+    covering the derivation instead of a proxy for it, and v2_code_salt has been paying it
+    for field.py all along.
+
+    An unreadable dependency RAISES rather than being skipped: silently dropping a file
+    would narrow the key and reintroduce the bug, so it must be louder than a cache miss.
+
+    KNOWN LIMITS -- stated because a guard whose scope is overclaimed is the failure mode
+    this replaces, and none of these is currently reachable-and-silent:
+      - The file list is depth 1 from this module. normalize_text's own helpers live in the
+        same file, so today the closure is complete; a NEW cross-module call added to any
+        listed function would not extend the list by itself. Adding an import here means
+        checking whether it decides a stored value.
+      - unicodedata.normalize is stdlib, so its behaviour is pinned by the Python version
+        rather than by anything here. Not in the key: a Python upgrade changes far more than
+        this and is not a silent same-environment drift.
+      - This says nothing about whether an already-pickled Field is canonical. It stops
+        MIXING generations by rebuilding on change; repairing existing DB records is
+        Phase 3 in docs/resistance-unit-convention-plan.md.
     """
-    return (
-        'v01',
-        tuple(sorted(_OHM_BODY)),
-        tuple(sorted(_OHM_PREFIX_TO_MILLI.items())),
-        _OHM_NOISE_PREFIX,
-        tuple(sorted(_RESISTANCE_UNITLESS_TO_MILLI.items())),
-        tuple(sorted(_WRITER_CANONICAL_SYMBOLS)),
-        ohm_unit_to_milli_mul.__code__.co_code,
-        get_value_with_unit.__code__.co_code,
-        Field.__init__.__code__.co_code,
-    )
+    # Private, but same project. Memoized by (path, mtime, size), so once warm this is a
+    # stat per file per call rather than a re-hash.
+    from dslib.cache import _file_content_sig
+    import hashlib
+    import os
+    d = os.path.dirname(os.path.abspath(__file__))
+    h = hashlib.sha256()
+    for rel in _FIELD_REPR_SOURCES:
+        h.update(_file_content_sig(os.path.join(d, *rel)).encode())
+
+    # unidecode is the thing that maps Ω -> 'O', and 'O' is in _OHM_BODY. A version bump
+    # changes which glyphs collapse to which ASCII, i.e. it changes what counts as an ohm
+    # unit, from outside every file above. Third-party, so no content hash -- version only.
+    #
+    # Read from package metadata, NOT `unidecode.__version__`: this package does not define
+    # that attribute, so the first version of this used getattr(..., 'unknown') and recorded
+    # the same constant on every run. An inert component that looks present is worse than an
+    # absent one, and it is the same anti-monotone shape as the bug this salt exists for.
+    # A version that cannot be read RAISES rather than degrading to a placeholder.
+    from importlib.metadata import version as _pkg_version
+    h.update(('unidecode=' + _pkg_version('Unidecode')).encode())
+
+    return 'field-repr:' + h.hexdigest()[:16]
 
 
 class Field():

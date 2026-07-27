@@ -25,7 +25,7 @@ import warnings
 from typing import Optional
 
 from dslib.cache import disk_cache
-from dslib.field import DatasheetFields, Field
+from dslib.field import DatasheetFields, Field, field_repr_salt
 from dslib.v2.chars import extract_pages_with_rows, page_likely_needs_ocr
 from dslib.v2.tables import (ExtractedRow, _num_with_unit, find_headers,
                              parse_rows_for_page)
@@ -432,7 +432,13 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
         return None
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=(v2_code_salt, 'v01'),
+# field_repr_salt is here as well as v2_code_salt, and is NOT redundant with it. Measured
+# (dependency x producer matrix): _V2_DEP_SOURCES contains field.py and pdf/expr.py but not
+# dslib/__init__.py (round_to_n_dec), conditions.py, or pdf/pdf2txt/__init__.py
+# (normalize_text) — so a pdf2txt-only edit moved the other four producers and left v2
+# serving pre-change Fields. Sharing the ONE representation salt instead of copying its file
+# list into _V2_DEP_SOURCES is what stops the two drifting apart again.
+@disk_cache(ttl='999d', file_dependencies=[0], salt=(v2_code_salt, field_repr_salt, 'v01'),
             hash_func_code=True)
 def parse_datasheet(pdf_path: str,
                     mfr: Optional[str] = None,

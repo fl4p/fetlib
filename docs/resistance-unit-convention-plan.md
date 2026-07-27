@@ -172,25 +172,81 @@ coverage: `extract_fields_from_text`, the aggregate `parse_datasheet`, `tabula_r
 already covered by `v2_code_salt`. `tabula_browser` deliberately is **not** — it returns
 `List[pd.DataFrame]` and has no Field representation to go stale.
 
-**Not** a content hash of `field.py`, unlike `v2_code_salt`, because the measured cost of
-that is a full-corpus rebuild on a comment edit (tabular ~177 s/part x 6040 parts). It
-follows `pdf/ascii.py`'s idiom instead and pins the exact surface that decides the stored
-representation: the unit tables **by value** (bytecode alone would miss them — `_OHM_BODY`
-is a global, so editing it moves no `LOAD_GLOBAL`) plus `co_code` of
-`ohm_unit_to_milli_mul`, `get_value_with_unit` and `Field.__init__` (bytecode, not source,
-so prose edits are free).
+**It is a content hash of the source files**, the same shape as `v2_code_salt` — which is
+exactly why `dslib.v2` was never vulnerable to any of this. The files are `field.py`,
+`dslib/__init__.py` (`round_to_n_dec`, rounding changes the stored magnitude),
+`conditions.py`, `pdf/expr.py` (`any_unit`) and `pdf/pdf2txt/__init__.py`
+(`normalize_text`), plus `unidecode.__version__` — that library maps `Ω`→`O` and `'O'` is
+in `_OHM_BODY`, so a version bump changes what counts as an ohm unit from outside every
+file listed.
+
+**A first attempt at this was function-granular and wrong**, in precisely the way this plan
+exists to stamp out: it answered "unchanged" when the semantics had changed. It hashed the
+unit tables by value plus `co_code` of the three converting functions, to buy the property
+that a comment edit would not rebuild the corpus. Three holes, two found by review *after*
+it was committed as `835f5ec7`:
+
+1. `co_code` omits `co_consts` — swapping `Field.__init__`'s `'mΩ'` literal for `'Ω'`
+   changes what every Field stores and leaves the bytecode byte-for-byte identical.
+2. `co_code` omits nested code objects — `Field.__init__` contains `_unit_value`, whose
+   entire body was invisible.
+3. Three functions are not the closure. `Field.__init__` calls `parse_field_value`;
+   `get_value_with_unit` uses `any_unit` and `normalize_text`. Doubling
+   `parse_field_value`'s result moved `Field('Qg',1,2,3,'nC')` from `[1,2,3]` to `[2,4,6]`
+   with the salt unmoved.
+
+(1) and (2) are fixable by fingerprinting harder. **(3) is not** — every new call edge out
+of the module is another hole and nothing makes the omission visible. An unbounded number
+of undetectable holes is a mute button, so the precision optimisation was abandoned rather
+than patched a third time. The lesson is the checklist's item 4 verbatim: the signature has
+to cover the code that *derives* the value, and a cheaper proxy for it will leak.
+
+**Cost, accepted deliberately:** any edit to those files, *including a comment*, rebuilds
+the four caches. `test_prose_is_deliberately_not_free` records that so the tradeoff is not
+silently reversed by someone who has not read why.
 
 Closure was **measured, not assumed** — a salt that is defined but absent from a given key
-is dead. Perturbing a unit table and diffing each producer's own `.cache_key`: all four
-moved, and all restored to baseline. The first run reported v2 as *not* moving; that was a
-probe limitation, not a dead salt — `v2_code_salt` hashes `field.py` on disk, which an
-in-memory monkeypatch cannot move. Re-tested by mutating the file itself: v2's key moves
-and restores. **A zero difference meant "not measured", not "no change".**
+is dead. It took three attempts to measure it correctly, and each wrong attempt is worth
+recording because each looked like success:
 
-Calibrated in both directions in `test/unit/test_field_repr_salt.py` (7 tests): the salt
-moves for a table edit, a writer-scope change and a stored-default change, and does *not*
-move for comments/docstrings. A salt that fires on every edit is as useless as one that
-never fires, because the pressure to stop bumping it is how these guards die.
+1. **Perturbed a unit table in memory.** Four producers moved, v2 did not, and I nearly
+   published v2 as a dead salt. It was the probe: `v2_code_salt` hashes `field.py` on disk,
+   which an in-memory monkeypatch cannot move. *A zero difference meant "not measured".*
+2. **Perturbed `field.py` on disk.** All five moved, and I called the closure shut. But
+   `field.py` is in *both* `field_repr_salt`'s list and v2's `_V2_DEP_SOURCES`, so that was
+   **one row of a matrix generalised without warrant**.
+3. **The actual matrix — every dependency × every producer.** Three real holes, all in v2:
+   `dslib/__init__.py`, `conditions.py` and `pdf/pdf2txt/__init__.py` are absent from
+   `_V2_DEP_SOURCES`, so a `pdf2txt`-only `normalize_text` edit moved four producers and
+   left **v2 serving pre-change Fields**.
+
+|  dependency | text | parse_ds | tabula | read_sheet | v2 (before) |
+|---|---|---|---|---|---|
+| `field.py` | move | move | move | move | move |
+| `dslib/__init__.py` | move | move | move | move | **STALE** |
+| `conditions.py` | move | move | move | move | **STALE** |
+| `pdf/expr.py` | move | move | move | move | move |
+| `pdf/pdf2txt/__init__.py` | move | move | move | move | **STALE** |
+
+Fixed by adding `field_repr_salt` to v2's decorator — sharing the **one** representation
+salt rather than copying its file list into `_V2_DEP_SOURCES`, which is what stops the two
+drifting apart again. Matrix now closed 5×5, and it is a parametrised test rather than a
+scratch probe. Calibrated by reintroducing the hole: the test fails naming the exact
+dependency *and* the exact producer, while still passing for `field.py` and `pdf/expr.py`,
+which genuinely are in `_V2_DEP_SOURCES`.
+
+**One row of a matrix is not the matrix.** That is the transferable lesson here, and it is
+the same error as calibrating a guard only on the cases it already handles.
+
+Calibrated in `test/unit/test_field_repr_salt.py` (11 tests). The closure test is
+parametrised over **every** declared dependency and asserts the salt moves for each, since
+a dependency that does not reach the key is a silent hole. It also asserts an unreadable
+dependency **raises** rather than narrowing the key, and that prose is *not* free.
+
+The first version of these tests passed against the broken salt, because they only
+exercised what it could already see — globals and prose, never a literal or a nested body.
+That is the same shape as the guard's own bug: **a calibration that only tests the cases
+the guard handles cannot detect the cases it misses.**
 
 Also landed here: `Field.__init__`'s canonicalisation gate changed from `symbol[0] == 'R'`
 to the explicit `_WRITER_CANONICAL_SYMBOLS`. `Rth*` also starts with `R` and is quoted in
