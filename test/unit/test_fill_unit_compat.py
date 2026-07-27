@@ -42,6 +42,17 @@ def test_unit_dimensions_uses_exprs_tables():
     assert 'Q' in unit_dimensions('nC')
 
 
+@pytest.mark.parametrize('unit,dimension', [
+    ('nS', 't'),
+    ('PF', 'C'),
+    ('nc', 'Q'),
+    ('a', 'I'),
+    ('v', 'V'),
+])
+def test_unit_dimensions_uses_the_parsers_case_insensitive_semantics(unit, dimension):
+    assert dimension in unit_dimensions(unit)
+
+
 def test_unit_dimensions_covers_the_wider_ohm_body():
     """_OHM_BODY is deliberately wider than expr's R unit_regex; those spellings must not
     classify as unknown or the merge guard goes blind on exactly the corrupt units."""

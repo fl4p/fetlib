@@ -148,6 +148,79 @@ def regex_ver_salt():
     return 'v51', expr.dim_regs_csv, expr.dim_regs_multiline, get_field_detect_regex('any')
 
 
+# Code that DERIVES a parsed field but is invisible to every existing key on this module.
+#
+# `hash_func_code=True` hashes only the decorated function's OWN source, and tabula_read does
+# not even set it. So extract_fields_from_dataframes -- which decides the symbol a row becomes
+# and the unit it carries -- is covered by neither: a helper-only fix there keeps serving the
+# pre-fix cached value forever, and it looks exactly like a fix that did not work. That is not
+# hypothetical; the iter_table unit fix landed under precisely this hole.
+#
+# Scope is the whole derivation, one module per thing that can change the numbers:
+#   pdf/parse.py        this module in full -- detect_fields, the row iteration, _fill_unit,
+#                       extract_fields_from_dataframes; the helpers the decorated entry points
+#                       delegate to and which function-granular hashing cannot see
+#   pdf/expr.py         symbol regexes, DIMENSIONS, any_unit -- which cells count as values
+#   pdf/sheet/__init__  parse_cond_str -- the conditions a Field is selected by
+#   pdf/pdf2txt        normalize_text / ocr_post_subs, applied before any of the above
+#
+# field.py is deliberately ABSENT: field_repr_salt already covers it and is composed alongside
+# this in the same salt tuples, so listing it here would only hash it twice.
+#
+# NOT inspect.getsource of the helper: that repeats the proxy hole one level down, since the
+# helper's own callees would still be invisible. Content-hash the files, v2_code_salt style.
+_PARSE_DERIVATION_SOURCES = (
+    ('pdf', 'parse.py'),
+    ('pdf', 'expr.py'),
+    ('pdf', 'sheet', '__init__.py'),
+    ('pdf', 'pdf2txt', '__init__.py'),
+)
+
+
+def _compute_parse_code_sig(root=None):
+    """Hash the derivation sources under `root` (default: the dslib package directory).
+
+    An unreadable dependency RAISES rather than being skipped -- silently narrowing the key
+    is the very failure this exists to prevent, so it must be louder than a cache miss.
+    """
+    import hashlib
+    from dslib.cache import _file_content_sig
+    d = root or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    h = hashlib.sha256()
+    for rel in _PARSE_DERIVATION_SOURCES:
+        h.update(_file_content_sig(os.path.join(d, *rel)).encode())
+    return 'parse-src:' + h.hexdigest()[:16]
+
+
+def legacy_parse_code_salt(root=None):
+    """Content hash of the code that derives a parsed field outside the hashed function.
+
+    SNAPSHOTTED AT IMPORT, not read per call. Hashing on every call inverts the guarantee:
+    a long-lived process still executing the OLD parse.py would see a concurrent on-disk
+    edit, compute the NEW hash, and write its OLD results under the NEW generation key --
+    poisoning that generation for every later process, which then trusts entries produced by
+    code it never ran. A cache key must describe the code that ACTUALLY PRODUCED the value,
+    and the only source of that is what this process imported.
+
+    Residual, shared with field_repr_salt: a module edited between interpreter start and this
+    module's import is hashed in its new form while an earlier-loaded module may hold the old
+    one. That is milliseconds at startup rather than the whole run. Closing it properly needs
+    each artifact's source as its loader saw it (__loader__.get_source) or source quiescence
+    at startup.
+
+    `root` exists ONLY so the calibration tests can perturb COPIES under tmp_path rather than
+    rewriting live sources. Production callers pass nothing and get the import snapshot.
+    """
+    if root is None:
+        return _PARSE_CODE_SIG
+    return _compute_parse_code_sig(root)
+
+
+# Captured at import, deliberately eagerly: see legacy_parse_code_salt. Cheap -- four
+# _file_content_sig calls, memoized by (path, mtime, size).
+_PARSE_CODE_SIG = _compute_parse_code_sig()
+
+
 @disk_cache(ttl='999d', salt=(regex_ver_salt, field_repr_salt, 'v01'), hash_func_code=True)
 def extract_fields_from_text(pdf_text: str, mfr, pdf_path='', verbose=False) -> DatasheetFields:
     assert mfr
@@ -351,7 +424,8 @@ def ocr_pdf(pdf_path, method='r600_ocrmypdf'):
     return out_path
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, field_repr_salt, 'v04'),
+@disk_cache(ttl='999d', file_dependencies=[0],
+            salt=(regex_ver_salt, field_repr_salt, legacy_parse_code_salt, 'v04'),
             ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
@@ -981,7 +1055,8 @@ def extract_fields_from_dataframes(dfs: List[pd.DataFrame], mfr, ds_path='', ver
     return fields
 
 
-@disk_cache(ttl='999d', file_dependencies=[0], salt=(regex_ver_salt, field_repr_salt))
+@disk_cache(ttl='999d', file_dependencies=[0],
+            salt=(regex_ver_salt, field_repr_salt, legacy_parse_code_salt))
 def tabula_read(ds_path, pre_process_methods=None, need_symbols=None, verbose=False) -> DatasheetFields:
     """
 

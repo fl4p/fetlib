@@ -433,7 +433,7 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
         return None, dict(mfr=part.mfr,
                           mpn=part.mpn,
                           housing=part.package,
-                          errors=', '.join(ds.errors))
+                          errors=', '.join(ds.all_errors()))
 
     # compute power loss
     if 1:
@@ -688,7 +688,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 Rds_max=rds_on_max / i,
                 Id=fet_specs.Id * i,
                 Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-                errors=', '.join(ds.errors),
+                errors=', '.join(ds.all_errors()),
 
                 date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
                 dateC=ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
@@ -765,7 +765,13 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                             Rds_max=fet_specs2.Rds_on * 1000 / i,
                             Id=idp if not math.isnan(idp) else fet_specs.Id,  # TODO min ?
                             Qsw=fet_specs and (fet_specs.Qsw * 1e9),
-                            errors=', '.join(ds.errors),
+                            # A staged-switching row describes TWO devices, and its Rds_max
+                            # comes from ds2 (above), so reporting only ds's errors drops a
+                            # violation on the very part whose resistance this row states.
+                            # Attributed by mpn because the row names both.
+                            errors=', '.join(
+                                ['%s: %s' % (ds.part.mpn, e) for e in ds.all_errors()] +
+                                ['%s: %s' % (ds2.part.mpn, e) for e in ds2.all_errors()]),
 
                             date='',  # ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
                             dateC='',  # ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
@@ -866,7 +872,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 Vsd=fet_specs and (fet_specs.Vsd),
                 QgdQgs=fet_specs and fet_specs.QgdQgsRatio,
 
-                errors=', '.join(ds.errors),
+                errors=', '.join(ds.all_errors()),
 
                 date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
                 dateC=ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',

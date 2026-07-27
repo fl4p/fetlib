@@ -129,7 +129,10 @@ def unit_dimensions(unit) -> frozenset:
         if not rx:
             continue
         try:
-            if re.fullmatch(rx, u):
+            # field_value_regex_variations compiles these expressions IGNORECASE. Use the
+            # same flags here or real parser outputs such as nS, PF, nc and lowercase v are
+            # misclassified as unknown and the merge guard becomes ordering-dependent again.
+            if re.fullmatch(rx, u, re.IGNORECASE):
                 dims.add(name)
         except re.error:
             continue

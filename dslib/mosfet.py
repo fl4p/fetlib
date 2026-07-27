@@ -3,6 +3,19 @@ import warnings
 
 from dslib import isnum, rel_err, round_to_n_dec
 
+# Rds_on[mOhm] * Qg[nC]. See the assert in MosfetSpecs.__init__ for how these were chosen.
+# Asserted in two places (once in SI units) -- keep them derived from here, not re-typed.
+# FOM_MIN is 20, not 10, because 20 is what the code ACTUALLY enforced before these two
+# asserts were unified: the SI-unit copy used 2e-11 C*Ohm, which is FoM 20, and both ran.
+# Collapsing them onto the more permissive 10 would have been a silent loosening of the
+# bound that matters most -- the LOWER one is what catches a 1000x-LOW Rds_on, since it
+# maps a normal FoM of ~600 onto 0.6. One record sits in the gap (IQEH50NE2LM7UCGSC,
+# FoM 13.5); it was already failing before, so 20 preserves behaviour rather than changing
+# it. Unifying duplicated bounds must take the STRICTER value, or the merge is a quiet
+# regression dressed as a cleanup.
+FOM_MIN = 20.0
+FOM_MAX = 2e5
+
 Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 
 
@@ -136,8 +149,38 @@ class MosfetSpecs:
         self.Vsd = Vsd  # body diode forward
         self.trr = trr
 
+        # FoM = Rds_on[mOhm] * Qg[nC]. Bounds are a scale sanity check, not a quality metric.
+        #
+        # The ceiling was 20000, which is a low/mid-voltage assumption: FoM grows steeply with
+        # Vds, so 600-800 V parts legitimately land far above it. Measured over 5593 DB records
+        # (p50=627, p90=5250, p99=18050, p99.9=63700) 46 records exceed 20000, and above the
+        # real parts there is a clean gap: IXFN27N80 at 1.2e5 and BSP179 at 1.1e5, then nothing
+        # until XR65R110T at 6.4e5 -- which is genuinely wrong, storing 14 Ohm where its own
+        # MPN and PDF say 0.11/0.14 Ohm (a dropped decimal, not a unit error). 2e5 sits in that
+        # gap: every real part passes and the one bad record still fails.
+        #
+        # Two things this comment previously got wrong, both found in review:
+        #   - It claimed STF40N60M2/STFW40N60M2 also fail here. They do not. Their Rds_on field
+        #     is corrupt (88 Ohm) but Rds_on_10v=0.088 Ohm takes precedence in get_mosfet_specs,
+        #     so the constructor never sees the bad value. Checking a raw field is not the same
+        #     as checking what the constructor is actually handed.
+        #   - IXFN27N80's true row is 0.30 Ohm; the DB selected the adjacent 25N80 0.35 Ohm row,
+        #     so its real FoM is ~1.05e5. The headroom argument survives, the number was off.
+        #
+        # At 20000 this rejected 43 records -- every one of them a part whose Rds_on had just
+        # been CORRECTED from a 1000x-low value. The guard was inverted for exactly the class it
+        # should catch: the corrupt 0.16 mOhm reading of IXTX46N50L gave FoM=41.6 and sailed
+        # through, while the true 160 mOhm gives 41600 and was rejected.
+        #
+        # The LOWER bound is what catches the 1000x-low class (it maps a normal FoM of ~600 onto
+        # 0.6) -- see FOM_MIN, which is 20 because that is what the pair of asserts enforced
+        # before they were unified. Raising the ceiling costs upper-bound detection only for
+        # parts whose true FoM already exceeds 200. Note a failure here DELETES the part and
+        # purges its cache (main.py:410), so an empirical upper gap of this kind is better
+        # served report-only (dslib/validate.py) than as a deleting assert; the 2e5 value is
+        # supported, the delete-on-failure policy around it is not.
         fom = Rds_on * Qg * 1e3 * 1e9
-        assert math.isnan(fom) or 10 < fom < 20000, ("fom out of range", fom, Rds_on, Qg)
+        assert math.isnan(fom) or FOM_MIN < fom < FOM_MAX, ("fom out of range", fom, Rds_on, Qg)
 
         assert math.isnan(Qg) or .2e-9 < Qg < 2000e-9, (
             "qg range", Qg, Rds_on, fom)  # 2N7002DWH6327XTSA1, FF3MR20KM1HHPSA1
@@ -158,7 +201,11 @@ class MosfetSpecs:
         assert not isnum(
             Vsd) or 0.2 < Vsd < 5, "Vsd %s out of range" % Vsd  # FBG10N30BC: 2.5V, FF33MR12W1M1HB11BPSA1: 4.2V
 
-        assert math.isnan(Qg * Rds_on) or 2e-11 < Qg * Rds_on < 2e-08, (Qg, Rds_on, Qg * Rds_on)
+        # The SAME check as the `fom` assert above, in SI units: Qg[C]*Rds_on[Ohm] is the FoM
+        # divided by 1e12. It was drifting independently (lower bound 2e-11 == FoM 20, vs 10
+        # above), so both now derive from one pair of constants. Do not re-tighten one alone.
+        assert math.isnan(Qg * Rds_on) or FOM_MIN < (Qg * Rds_on) * 1e12 < FOM_MAX, (
+            Qg, Rds_on, Qg * Rds_on)
 
         if isnum(Qg_th + Qgs):
             assert 0.2 < (Qg_th / Qgs) < 0.8, ((Qg_th / Qgs), Qg_th, Qgs)
