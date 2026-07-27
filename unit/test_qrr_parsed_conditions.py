@@ -79,45 +79,49 @@ def test_one_value_two_conditions_is_refused():
     assert c is None and 'di/dt values' in why
 
 
-def test_captured_multiplier_is_refused_via_the_rating():
+def test_captured_multiplier_is_refused_by_the_physics_check():
     """IXYS/Littelfuse state "IF = 0.5 * ID25"; the regex captures the 0.5 and the test
-    point becomes 0.5 A on a 60 A part -- a 65x charge error reported as a confident fit."""
+    point becomes 0.5 A on a 60 A part -- a 65x charge error reported as a confident fit.
+
+    Caught WITHOUT reference to the part's rating: Qrr=550 nC with trr=118 ns implies
+    IRRM ~ 9.6 A, 19x the forward current that supposedly stored the charge. The triple
+    is self-inconsistent, which is a stronger statement than "small relative to ID_25"."""
     ds = _ds([(550.0, {'IF': 0.5, 'di/dt': 100.0, 'Vgs': 0.0})], [(118.0, {})])
-    c, why = ds.qrr_test_conditions(Id=60.0, detail=True)
-    assert c is None and 'multiplier' in why
-
-
-def test_captured_multiplier_is_refused_without_a_rating_too():
-    """Same part with NO parsed ID_25 -- the rating guard cannot fire, so the physics
-    check must: Qrr=550 nC with trr=118 ns implies IRRM ~ 9.6 A, 19x the claimed 0.5 A
-    forward current that supposedly stored the charge. Absence of the rating must not
-    become absence of the problem."""
-    ds = _ds([(550.0, {'IF': 0.5, 'di/dt': 100.0})], [(118.0, {})])
-    c, why = ds.qrr_test_conditions(Id=None, detail=True)
+    c, why = ds.qrr_test_conditions(detail=True)
     assert c is None and 'IRRM' in why
-    # and the SAME part at its true current is unremarkable
+    # the SAME part at its true current is unremarkable -- direction, not just firing
     ok = _ds([(550.0, {'IF': 30.0, 'di/dt': 100.0})], [(118.0, {})]).qrr_test_conditions()
     assert ok is not None and ok['IF'] == 30.0
 
 
-def test_neither_trr_nor_rating_is_refused_not_waved_through():
-    """The INTERSECTION of the two guards' preconditions, which each of the two tests
-    above leaves covered by the other. Both anti-multiplier checks are conditional --
-    the rating check needs Id, the IRRM check needs trr -- so a part with neither was
-    protected only by the deliberately-wide 0.05 A physical band, i.e. the guard vanished
-    exactly where the evidence was thinnest. 153 parts in the shipped DB reach this state.
-    """
-    ds = _ds([(550.0, {'IF': 0.5, 'di/dt': 100.0})])          # no trr rows at all
-    c, why = ds.qrr_test_conditions(Id=None, detail=True)
-    assert c is None and 'neither trr nor a current rating' in why
-    # a plausible IF with the same missing evidence is refused too -- the point is that
-    # nothing can CHECK it, not that this particular number looks wrong
-    ds2 = _ds([(550.0, {'IF': 30.0, 'di/dt': 100.0})])
-    assert ds2.qrr_test_conditions(Id=None) is None
-    # ... and either piece of evidence is enough to re-enable it
-    assert ds2.qrr_test_conditions(Id=60.0) is not None
+def test_a_genuine_low_current_test_is_not_mistaken_for_a_multiplier():
+    """The false-positive direction, which a rating-ratio guard got wrong.
+
+    Vishay/AO/Diodes characterise body diodes at ~10 A regardless of a 200-400 A rating
+    -- SiRS5100DP really does say "IF = 10 A, di/dt = 100 A/us" on a 241 A part. A guard
+    that refused anything under 5% of ID_25 rejected 36 such parts across the shipped DB
+    and caught ZERO captured multipliers this physics check does not already reject, so
+    it was removed. Calibrating a guard only against its known-BAD input is half the job;
+    this pins the known-GOOD one."""
+    ds = _ds([(160.0, {'IF': 10.0, 'di/dt': 100.0})], [(80.0, {})])   # SiRS5100DP
+    c = ds.qrr_test_conditions()
+    assert c is not None and c['IF'] == 10.0 and c['didt'] == 100e6
+
+
+def test_no_trr_is_refused_so_the_physics_check_is_never_skipped():
+    """trr is required, which is what makes the IRRM check unconditional -- there is no
+    longer a class of parts whose only defence is the deliberately-wide physical band.
+
+    It costs nothing: the Lauritzen-Ma fit consumes the (Qrr, trr) PAIR, so a test point
+    without trr fails at qrr_op time regardless. Refusing here turns a generic downstream
+    LMFitError into a stated reason."""
+    for rows, what in (([(550.0, {'IF': 0.5, 'di/dt': 100.0})], 'implausible IF'),
+                       ([(550.0, {'IF': 30.0, 'di/dt': 100.0})], 'plausible IF')):
+        c, why = _ds(rows).qrr_test_conditions(detail=True)
+        assert c is None and 'no trr' in why, what
+    # supplying trr re-enables it
     assert _ds([(550.0, {'IF': 30.0, 'di/dt': 100.0})],
-               [(118.0, {})]).qrr_test_conditions(Id=None) is not None
+               [(118.0, {})]).qrr_test_conditions() is not None
 
 
 def test_conflicting_tj_rows_are_refused_but_absent_tj_defaults():

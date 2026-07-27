@@ -72,8 +72,28 @@ are missing, so no commutation di/dt could be formed at all. The first group is 
 table's curation target: an entry here (or a fixed parse) puts a part back into the
 ranking, and nothing else does. The second needs gate-charge parsing, not conditions.
 
-Curating an entry here is still worth it for any part that matters: it overrides the
-parsed point. See docs/qrr-parsed-conditions-spotcheck.md for the sample to verify.
+CURATION IS A SMALL LEVER, measured 2026-07-27 rather than assumed. An excluded part
+only distorts the ranking if it would have ranked WELL, and its non-Qrr loss (conduction
++ gate + Coss + dead-time) is a hard lower bound on its P_LS that is known regardless of
+the missing test point. Ranking the ~995 exclusions by that floor: only 16 land inside
+the current top-100. Reading those 16 datasheets:
+
+  * 1  had a complete, quotable test point that also FITS  -> curated here (AOGT68801)
+  * 2  quote a complete point but their DB (Qrr, trr) pair is internally inconsistent
+       -- the trr belongs to a different di/dt row -- so no conditions entry can rescue
+       them (IPT013N08NM5LF, ISC014N08NM6). They need per-row data, i.e. qrr_points.
+  * 6  (the Infineon IAU* family) state ONLY "diF/dt = 100 A/us" on the recovery row.
+       The nearby "IF=100 A" belongs to the Vsd forward-voltage row, and pairing it with
+       Qrr would be exactly the cross-row attribution qrr_test_conditions guards against.
+       Not curatable from the text as parsed; needs a human with the PDF.
+  * the rest have no Qrr at all, or no recovery line in the extracted text.
+
+So the residual exclusions are mostly NOT a conditions-curation problem. They split into
+per-row data (qrr_points), gate-charge parsing, and datasheets that genuinely omit the
+operating point. Curating here is still worth it for a part that matters -- it overrides
+the parsed point -- but it is not the way to move the coverage number.
+
+See docs/qrr-parsed-conditions-spotcheck.md for the verification sample.
 """
 
 QRR_CONDITIONS = {
@@ -98,6 +118,19 @@ QRR_CONDITIONS = {
     # dslib/qrr_points.py and Qrr_op prefers the per-part two-point (tau, TM, q0) fit;
     # this single-point entry remains as the explicit fallback.
     ("infineon", "IPP022N12NM6"): dict(IF=50.0, didt=300e6, VR=60.0, Tj=25.0),
+
+    # Alpha & Omega. Added 2026-07-27 from a targeted pass over the exclusions that
+    # actually cost the ranking (see the note below this dict): AOGT68801 has the lowest
+    # non-Qrr loss floor of every excluded part at the fugu3 point, i.e. it would rank
+    # FIRST, and it was dropped only because its Qrr row parses to two IF values.
+    #
+    # Datasheet text: "Body Diode Reverse Recovery Charge ... IF=20A, di/dt=500A/ms".
+    # The "A/ms" is the m/µ glyph substitution this corpus shows throughout (see
+    # dslib/pdf/fix_encoding.py); read as 500 A/us. That is not a free choice -- at
+    # 500 A/ms the pair is physically absurd, while at 500 A/us the LM fit gives
+    # IRRM = 14.8 A on IF = 20 A (0.74x, squarely in the soft-recovery band). The fit
+    # succeeding at the sane reading and failing at the other IS the corroboration.
+    ("ao", "AOGT68801"): dict(IF=20.0, didt=500e6, VR=None, Tj=25.0),
 }
 
 
