@@ -262,11 +262,20 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
 
 def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
                  Qrr_temp_rise=Qrr_temp_rise_default,
-                 isGaN=False):
+                 isGaN=False, qrr_didt=None):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
     P_bd = V_f * Io * fsw *  (t_BRT + t_BDF) # todo?
+
+    :param qrr_didt: commutation di/dt [A/s] of the converter, from
+        ls_commutation_didt(). None (default) keeps the historical behaviour: the flat
+        datasheet Qrr, which is only valid at the datasheet's own (IF, di/dt) test
+        point. When given, the charge is re-evaluated at THIS converter's operating
+        point (IF = dc.Io_min, the valley current the body diode carries through the
+        dead time) via the Lauritzen-Ma fit in dslib/qrr_model.py. Which path ran is
+        reported in cond['P_rr']['Qrr_src'] — the two are NOT comparable numbers and a
+        consumer that mixes them must be able to tell them apart.
     :return:
     """
 
@@ -279,8 +288,36 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     else:
         vsd = abs(mf.Vsd)
 
-    Qrr_eff = mf.Qrr * Qrr_temp_rise  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
-    # TODO Qrr di/dit, Id, (IPT025N15NM6ATMA1)
+    # Base charge, then the temperature factor. The (IF, di/dt) axes and the Tj axis are
+    # deliberately handled by DIFFERENT mechanisms here:
+    #   * (IF, di/dt) — `qrr_didt` selects the Lauritzen-Ma operating-point charge.
+    #   * Tj          — always the flat `Qrr_temp_rise` scalar, on either path.
+    # qrr_model CAN extrapolate Tj (tau ~ T^N_TAU), but its own module docstring records
+    # that N_TAU=1.2 is a deliberately conservative bound, ~2x steeper than the five
+    # measured AO dies. Stacking that guess on top of the existing 1.2 factor would
+    # double-count the temperature rise AND confound the thing this flag exists to
+    # measure. So the model is evaluated at its calibration Tj (25 C, tj_extrapolated
+    # False) and only the (IF, di/dt) rescale changes between the two paths.
+    Qrr_base, qrr_src, qrr_detail = mf.Qrr, 'datasheet-flat', None
+    if qrr_didt is not None:
+        from dslib.qrr_model import LMFitError
+        assert math.isfinite(qrr_didt) and qrr_didt > 0, ('qrr_didt', qrr_didt)
+        try:
+            qrr_detail = mf.Qrr_op(IF=dc.Io_min, didt=qrr_didt, Tj=25.0, detail=True)
+            # detail=True is a mapping by contract; assert it rather than let a future
+            # signature slip put a bare float into Qrr_base and multiply on quietly.
+            assert isinstance(qrr_detail, dict), qrr_detail
+            Qrr_base = float(qrr_detail['Qrr'])
+            qrr_src = 'op-' + (qrr_detail.get('method') or 'zero')
+        except LMFitError as e:
+            # No curated test conditions / an LM-inconsistent datasheet pair. Keep the
+            # flat value (that is what the caller had before asking), but never let it
+            # pass as an operating-point number — see the Qrr_src contract above.
+            qrr_src = 'datasheet-flat-nofit'
+            qrr_detail = dict(nofit_reason=str(e))
+
+    Qrr_eff = Qrr_base * Qrr_temp_rise  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
+    # TODO Qrr Id (IPT025N15NM6ATMA1)
     # TODO https://application-notes.digchip.com/070/70-41484.pdf
     # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
 
@@ -315,7 +352,10 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
         cond=dict(
             R_on=dict(Rds=rds),
             P_dt=dict(Vsd=vsd, tDead=dc.tDead),
-            P_rr=dict(Qrr=Qrr_eff),
+            P_rr=dict(Qrr=Qrr_eff, Qrr_ds=mf.Qrr, Qrr_src=qrr_src,
+                      **(dict(qrr_didt=qrr_didt, qrr_IF=dc.Io_min) if qrr_didt else {}),
+                      **(dict(qrr_nofit=qrr_detail['nofit_reason'])
+                         if qrr_detail and 'nofit_reason' in qrr_detail else {})),
             P_gd=(dict(Qg=mf.Qg)),
             P_coss=dict(Coss=mf.Coss, Qoss=qoss),
         )
@@ -579,12 +619,13 @@ def mosfet_hs_sw_timings_hs(hs: MosfetSpecs, gd: GateDrive):
     return tr, tf
 
 
-def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
-    # https://www.tij.co.jp/jp/lit/an/slvaeq9/slvaeq9.pdf#page=4
-    # SLVAEQ9–July 2020
-    # An Accurate Approach for Calculating the Eff. of a Synch. Buck Converter Using the MOSFET Plateau Voltage
-    # equation (6) appears to be wrong.
+def _hs_gate_phases(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
+    """Gate-loop voltages/resistances shared by the two SLVAEQ9 consumers below.
 
+    Extracted verbatim from mosfet_hs_sw_timings_hs2 so the current-rise phase can be
+    read on its own (mosfet_hs_current_rise_time) without a second, drifting copy of
+    the plateau/threshold derivation.
+    """
     assert math.isnan(hs.Qsw) or 0 < hs.Qsw < 1000e-9, (hs.part, hs.Qsw)
     rg_total = np.nanmax([hs.Rg, gd.rg_total])
     rg_total_dis = np.nanmax([hs.Rg, gd.rg_total_dis])
@@ -603,9 +644,53 @@ def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
         assert vpl > vgs_th, (hs.part.mpn, vpl, vgs_th)
     assert von > vpl
     v_ir = .5 * (vpl + vgs_th)  # average voltage charging Qgs2
-    tr = (hs.Qgs2 / (von - v_ir) + hs.Qgd / (von - vpl)) * rg_total  # (5)
-    tf = (hs.Qgs2 / (v_ir - gd.Voff) + hs.Qgd / (vpl - gd.Voff)) * rg_total_dis  # (6) *corrected
+    return dotdict(von=von, vpl=vpl, vgs_th=vgs_th, v_ir=v_ir,
+                   rg_total=rg_total, rg_total_dis=rg_total_dis)
+
+
+def mosfet_hs_sw_timings_hs2(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
+    # https://www.tij.co.jp/jp/lit/an/slvaeq9/slvaeq9.pdf#page=4
+    # SLVAEQ9–July 2020
+    # An Accurate Approach for Calculating the Eff. of a Synch. Buck Converter Using the MOSFET Plateau Voltage
+    # equation (6) appears to be wrong.
+    v = _hs_gate_phases(hs, gd, isGaN)
+    tr = (hs.Qgs2 / (v.von - v.v_ir) + hs.Qgd / (v.von - v.vpl)) * v.rg_total  # (5)
+    tf = (hs.Qgs2 / (v.v_ir - gd.Voff) + hs.Qgd / (v.vpl - gd.Voff)) * v.rg_total_dis  # (6) *corrected
     return tr, tf
+
+
+def mosfet_hs_current_rise_time(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
+    """HS drain-current ramp time 0 -> I_L [s] — the FIRST of the two terms in
+    mosfet_hs_sw_timings_hs2's `tr` (the Qgs2 / miller-entry phase).
+
+    This, not the whole `tr`, is the interval over which the LS body diode commutates:
+    the second term (Qgd/(Von-Vpl), the drain VOLTAGE fall) happens after the channel
+    already carries the full inductor current and the diode is in reverse recovery.
+    Charging the commutation to the whole `tr` understates di/dt by 1 + Qgd/Qgs2 —
+    typically 2-4x on the parts in this DB, which is a large error on an axis Qrr is
+    strongly (exponent ~0.8, see dslib/qrr_conditions.py) sensitive to.
+    """
+    v = _hs_gate_phases(hs, gd, isGaN)
+    return hs.Qgs2 / (v.von - v.v_ir) * v.rg_total
+
+
+def ls_commutation_didt(dc: DcDcLoadParams, hs: MosfetSpecs, gd: GateDrive, isGaN=False):
+    """di/dt [A/s] the LS body diode is commutated at, set by how fast the HS turns on.
+
+    The diode carries the valley current dc.Io_min through the dead time, and the HS
+    current ramp steals it over mosfet_hs_current_rise_time.
+
+    Returns None when the HS gate charges needed for the ramp time are missing (NaN
+    Qgs2/Qg_th/Vpl) — an unknown di/dt must stay unknown, so callers fall back to the
+    flat datasheet Qrr WITH provenance rather than to an invented operating point.
+    """
+    try:
+        t_ir = mosfet_hs_current_rise_time(hs, gd, isGaN)
+    except AssertionError:
+        return None
+    if t_ir is None or not math.isfinite(t_ir) or t_ir <= 0:
+        return None
+    return dc.Io_min / t_ir
 
 
 def mosfet_hs_sw_timings_hs_vishay(hs: MosfetSpecs, gd: GateDrive):

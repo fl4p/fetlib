@@ -12,9 +12,9 @@ from typing import List, Dict, Literal, Tuple, Optional, Union
 import pandas as pd
 
 import dslib.manual_fields
-from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls
+from dclib.powerloss import dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt
 from discover_parts import discover_mosfets
-from dslib import write_csv, dotdict
+from dslib import write_csv, dotdict, round_to_n
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, Substrate
 from dslib.fetch import fetch_datasheet
@@ -75,6 +75,16 @@ def main_yaml():
                         help='run Tabula even when text+v2 already satisfy need_symbols '
                              '(restores pre-2026-07 opportunistic harvesting of non-needed '
                              'fields into the DB; slower -- adds a Tabula pass per covered part)')
+    parser.add_argument('--qrr-op', action='store_true',
+                        help='force syncFet.qrrOperatingPoint on for this run: book the LS '
+                             "reverse-recovery loss on the Qrr predicted at THIS converter's "
+                             'operating point (IF = valley current, di/dt from the HS '
+                             'current-rise time) instead of the flat datasheet Qrr measured at '
+                             "the vendor's own test point. Only parts with curated conditions "
+                             '(dslib/qrr_conditions.py) or two-di/dt rows (dslib/qrr_points.py) '
+                             'are rescaled -- 98%% of the current corpus has neither and keeps '
+                             'the flat value, marked Qrr_src=datasheet-flat-nofit in the CSV. '
+                             'Read that column before comparing rows.')
 
     cargs = parser.parse_args(sys.argv[1:])
 
@@ -105,6 +115,12 @@ def main_yaml():
                    q=cargs.q,
                 )
 
+    # CLI override for the YAML knob, so the two rankings can be A/B'd from one config.
+    # One-way on purpose: --qrr-op can enable it, nothing here can turn a config's
+    # `qrrOperatingPoint: true` back off silently.
+    if cargs.qrr_op:
+        args.dcdc.syncFet.qrrOperatingPoint = True
+
     run(args, cargs, os.path.basename(cargs.config_file).split('.yaml')[0])
 
 
@@ -120,6 +136,14 @@ def main():
 
     parser.add_argument('--rg-total', default=4.7)  # total gate resistance
     parser.add_argument('--vpl-fallback', default=4.5)
+    parser.add_argument('--qrr-op', action='store_true',
+                        help='book reverse-recovery loss on the Qrr predicted at THIS '
+                             "converter's operating point (IF = valley current, di/dt from "
+                             'the HS current-rise time) via the Lauritzen-Ma fit, instead of '
+                             "the flat datasheet Qrr measured at the vendor's own test point. "
+                             'Needs curated conditions (dslib/qrr_conditions.py) or two-di/dt '
+                             'rows (dslib/qrr_points.py); parts without either keep the flat '
+                             'value and are marked Qrr_src=datasheet-flat-nofit in the CSV')
 
     parser.add_argument('-j', default=8)  # parallel jobs
     parser.add_argument('--no-cache', action='store_true')
@@ -158,11 +182,18 @@ class ControlFetArgs():
 
 
 class SyncFetArgs():
-    def __init__(self, maxParallel=1, reverseRecoveryFactor: float = 1.0):
+    def __init__(self, maxParallel=1, reverseRecoveryFactor: float = 1.0,
+                 qrrOperatingPoint: bool = False):
         assert isinstance(maxParallel, int) and maxParallel >= 1 and maxParallel <= 20
         self.maxParallel = maxParallel
         assert reverseRecoveryFactor >= 0 and reverseRecoveryFactor <= 1
         self.reverseRecoveryFactor = reverseRecoveryFactor
+        # See main()'s --qrr-op help. Off by default: the flat datasheet Qrr is what every
+        # stored CSV in out/ was ranked with, and the operating-point charge is a different
+        # quantity (typically several times larger at a real converter's di/dt), not a
+        # correction that can be switched on silently under existing results.
+        assert isinstance(qrrOperatingPoint, bool), qrrOperatingPoint
+        self.qrrOperatingPoint = qrrOperatingPoint
 
 
 class InductorArgs():
@@ -480,9 +511,18 @@ def compute_part_powerloss(ds: DatasheetFields, dcdc: DcDcLoadParams, args) -> T
         ploss['tf'] = round(loss_spec.get_cond('P_sw')['tf'] * 1e9, 1)
         # ploss['P_coss'] = loss_spec.P_coss
 
-        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd)
+        # This CSV scores ONE part in both slots, so the di/dt that commutates its body
+        # diode is the one its own HS turn-on imposes (a symmetric converter). That is
+        # the same self-pairing the P_hs/P_LS columns beside it already assume.
+        qrr_didt = (ls_commutation_didt(dcdc, fet_specs, gd)
+                    if getattr(args, 'qrr_op', False) else None)
+        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, qrr_didt=qrr_didt)
         ploss['PcossLS'] = loss_spec.P_coss
         ploss['Prr'] = loss_spec.P_rr
+        rr_cond = loss_spec.get_cond('P_rr')
+        ploss['Qrr_eff'] = round_to_n(rr_cond['Qrr'] * 1e9, 4)  # nC, what P_rr was booked on
+        ploss['Qrr_src'] = rr_cond['Qrr_src']
+        ploss['didt_rr'] = None if qrr_didt is None else round_to_n(qrr_didt / 1e6, 3)  # A/us
         ploss['PonLS'] = loss_spec.P_cl
         ploss['PdtLS'] = loss_spec.P_dt
         ploss['P_LS'] = loss_spec.buck_ls()
@@ -870,7 +910,13 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             # mosfet might self turn-on
             continue
 
-        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, isGaN=ds.part.specs.isGaN)
+        # Same self-pairing as compute_part_powerloss: this CSV ranks LS candidates with
+        # no named HS partner, so the commutation di/dt is the one the part's own turn-on
+        # would impose. A design that knows its actual HS should pass that part's di/dt.
+        qrr_didt = (ls_commutation_didt(dcdc, fet_specs, gd, isGaN=ds.part.specs.isGaN)
+                    if args.syncFet.qrrOperatingPoint else None)
+        loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, isGaN=ds.part.specs.isGaN,
+                                 qrr_didt=qrr_didt)
 
         # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
         # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
@@ -903,6 +949,13 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
                 # sync fet specific:
                 Qrr=fet_specs and (fet_specs.Qrr * 1e9) * i,
+                # The charge P_rr was actually booked on, and where it came from. These
+                # two travel together on purpose: a Qrr_eff column alone cannot tell a
+                # reader whether a row is an operating-point prediction or the flat
+                # datasheet number that survived a failed fit.
+                Qrr_eff=round_to_n(loss_spec.get_cond('P_rr')['Qrr'] * 1e9, 4) * i,
+                Qrr_src=loss_spec.get_cond('P_rr')['Qrr_src'],
+                didt_rr=None if qrr_didt is None else round_to_n(qrr_didt / 1e6, 3),
                 Vsd=fet_specs and (fet_specs.Vsd),
                 QgdQgs=fet_specs and fet_specs.QgdQgsRatio,
 

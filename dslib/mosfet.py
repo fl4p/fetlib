@@ -19,6 +19,40 @@ FOM_MAX = 2e5
 Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 
 
+def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn):
+    """Fill `specs.qrr_cond` / `specs.qrr_points` from the curated registries, in place.
+
+    dslib.store.load_parts() does this for specs unpickled from the parts DB. Specs built
+    fresh from parsed datasheet fields (dslib.field.get_mosfet_specs — the path the whole
+    main.py pipeline runs on) never went through load_parts, so they arrived with both
+    attributes None and MosfetSpecs.Qrr_op could only ever raise LMFitError on them. Any
+    operating-point Qrr consumer wired into that pipeline would have degraded to the flat
+    datasheet value for 100% of parts while looking like it was doing something.
+
+    Fill-if-absent, and each registry imported under its OWN try/except so a broken or
+    renamed qrr_points_for cannot silently disable the qrr_cond attach as well.
+    """
+    if specs is None:
+        return specs
+    try:
+        from dslib.qrr_conditions import qrr_conditions_for
+    except ImportError:
+        qrr_conditions_for = None
+    if qrr_conditions_for is not None and not getattr(specs, 'qrr_cond', None):
+        cond = qrr_conditions_for(mfr, mpn)
+        if cond:
+            specs.qrr_cond = cond
+    try:
+        from dslib.qrr_points import qrr_points_for
+    except ImportError:
+        qrr_points_for = None
+    if qrr_points_for is not None and not getattr(specs, 'qrr_points', None):
+        pts = qrr_points_for(mfr, mpn)
+        if pts:
+            specs.qrr_points = pts
+    return specs
+
+
 class MosfetSpecs:
 
     def __init__(self, Vds_max, Rds_on, Qg, tRise, tFall, Qrr, trr=None, Qgd=None, Qgs=None, Qgs2=None, Qg_th=None,
@@ -344,7 +378,8 @@ class MosfetSpecs:
         from dslib import qrr_model
         if self.Qrr == 0:
             return dict(Qrr=0.0, trr=0.0, irrm=0.0, td=0.0, tau=0.0, TM=0.0,
-                        tj_extrapolated=False, fit=None) if detail else 0.0
+                        tj_extrapolated=False, fit=None,
+                        method='zero') if detail else 0.0
         if not hasattr(self, "_lm_fit_cache"):
             self._lm_fit_cache = {}
         # getattr: an instance unpickled from a parts-lib written before the field

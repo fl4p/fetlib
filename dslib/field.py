@@ -1070,8 +1070,8 @@ class DatasheetFields():
                           f"({lo}..{hi}) — dropped to NaN (check the datasheet parse)")
             return math.nan
 
-        from dslib.mosfet import MosfetSpecs
-        return MosfetSpecs(
+        from dslib.mosfet import MosfetSpecs, attach_qrr_registries
+        return attach_qrr_registries(MosfetSpecs(
             Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,
             Id=Id,
@@ -1089,7 +1089,12 @@ class DatasheetFields():
                          0.05, 2000, 'Id_gfs'),
             Vgs_th=_sane(ds.get('Vgs_th', ('typ',)), 0.3, 8, 'Vgs_th'),
             part=self.part,
-        )
+            # The curated body-diode reverse-recovery registries (test conditions and
+            # multi-di/dt rows) are attached HERE and not only in dslib.store.load_parts:
+            # specs built from parsed fields never pass through load_parts, so without
+            # this every operating-point Qrr consumer on the main.py pipeline would fall
+            # back to the flat datasheet value for every part. See attach_qrr_registries.
+        ), self.part.mfr, self.part.mpn)
 
     def get(self, sym, stat: Union[Tuple[Field.StatLiteral], Field.StatLiteral], required=False):
         if isinstance(stat, str):
