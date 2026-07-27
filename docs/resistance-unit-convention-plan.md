@@ -379,6 +379,71 @@ has already invalidated the parse caches, so the next full run re-parses and reb
 regardless. The repair exists for consumers of the shipped `.pkl` (`apps/ddb.py`,
 `apps/method_audit.py`, the CSV run) that cannot absorb a multi-hour re-parse first.
 
+## Step 2 (provenance policy) — DO NOT IMPLEMENT AS DESIGNED (measured 2026-07-27)
+
+Re-measured against the post-Phase-3 DB. **The Phase 3 repair invalidated the evidence the
+policy was built on**, and two further mechanisms were tried and rejected. Recorded so nobody
+implements the designed policy believing it was validated, and nobody re-derives the dead
+ends.
+
+**Unitless resistance stats by producer, after the repair** (implausible = outside the wide
+sanity band, used only to VALIDATE, never to rescale):
+
+| symbol | producer | n | implausible |
+|---|---|---|---|
+| `Rds_on` | read_sheet | 482 | 13 (2.7%) |
+| `Rds_on` | **tabular** | 35 | **0** |
+| `Rds_on` | text | 6 | 0 |
+| `Rds_on_10v` | 14 vendor sources | ~5476 | **0 in every one** |
+| `Rg` | **tabular** | 91 | **24 (26.4%)** |
+| `Rg` | read_sheet | 69 | 0 |
+| `Rg` | text | 3 | 0 |
+
+### Why each candidate mechanism fails
+
+1. **Refuse the unitless default by producer.** The trust matrix measured `Rds_on`+tabular at
+   54% implausible; it is now **0/35**, because the dimension-aware merge already dropped that
+   contamination. Refusing tabular would now discard 35 good values to catch nothing. Only
+   `Rg`+tabular is still bad, and there the direction is **inverted**: a wrong `Rg` of 64 Ω
+   overstates gate loss, so the part sorts DOWN (safe), while refusing a good `Rg` yields NaN,
+   `powerloss` falls back to `gd.rg_total`, loss is understated and the part sorts UP
+   (dangerous). For `Rg`, a false refuse is worse than a false accept — so refusing 67 good
+   values to remove 24 safe-direction ones is the wrong trade.
+2. **A plausibility bound on `Rg`.** No void. The unitless tabular distribution is continuous
+   over four decades — 10 / 49 / 18 / 11 stats per decade from 0.1 to 800 Ω. Any ceiling cuts
+   arbitrarily through a continuum. See the scope-limit note below: check for bimodality first,
+   which is exactly what this failed.
+3. **Refuse when the candidate's own row contradicts the symbol.** The three known-bad `Rg`
+   rows do carry the contradicting unit in the retained `cond`
+   (`DIT120N08` `{1:'Qgd', 3:'64 nC'}`, `IXTH160N15T` `{2:'60', 3:'ns'}`), which looked like
+   evidence rather than provenance. Measured: **precision 11.9%, recall 18.9%** — because a
+   resistance row's test conditions legitimately cite volts, amps and times
+   (`IXFA180N10T2` fires on its own `VGS = 10V` condition). Not viable.
+
+### What DOES work, and where it belongs
+
+`Rds_on` unitless read 1000x LOW is the dangerous direction (sorts to the TOP of a loss-ranked
+CSV). Detector: **the same raw value stored under both `Rds_on` and `Rds_on_10v` while
+unitless**, whose conventions differ by exactly 1000x (mΩ vs ohm-scale).
+
+| | |
+|---|---|
+| parts with an implausible unitless `Rds_on` | 7 |
+| of those, sharing a raw value with a unitless `Rds_on_10v` | **6** |
+| false positives | **0** (6 of 6 that fire are genuinely implausible) |
+
+Independently confirmed by MPN, which encodes the resistance: `IPB50R140CPATMA1` = 140 mΩ,
+`IPP50R140CPXKSA1` = 140 mΩ, `IPP60R125CPXKSA1` = 125 mΩ, `IPP60R099CPXKSA1` = 99 mΩ — the
+ohm-scale reading matches all four. `SUM85N15-19{,-E3}` reads 19 mΩ ohm-scale vs 0.019 mΩ,
+and 19 mΩ is right for an 85 A/150 V part. This is a sibling disagreement, which Phase 3's own
+rule permits, and it is not a magnitude guess.
+
+**It belongs in the higher-level Rds selector, not in `get_resistance_milliohm`.** The
+primitive resolves ONE symbol's scale from its own unit; teaching it to consult a sibling makes
+it cross-symbol and reintroduces the coupling this refactor removed. The plan already
+sequences this correctly: keep the primitive, add a selector that owns `Rds_on`/`Rds_on_10v`
+precedence. That is where these 6 parts get fixed.
+
 ## Guard checklist for each phase
 
 1. What does it return when it cannot evaluate the unit? → **NaN/refuse**, never a
