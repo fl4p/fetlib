@@ -115,7 +115,7 @@ class _Backend:
     keyed_get = False
     path = ''
 
-    def iter_all(self, mfr=None, mpn_like=None):
+    def iter_all(self, mfr=None, mpn_like=None, mfr_like=None):
         raise NotImplementedError
 
     def replace_all(self, mapping, **kw):
@@ -153,8 +153,9 @@ class _PickleBackend(_Backend):
         self.path = path
         self._lck_path = lock_path
 
-    def iter_all(self, mfr=None, mpn_like=None):
-        assert mfr is None and mpn_like is None, 'filtering needs the sqlite backend'
+    def iter_all(self, mfr=None, mpn_like=None, mfr_like=None):
+        assert mfr is None and mpn_like is None and mfr_like is None, \
+            'filtering needs the sqlite backend'
         with acquire_file_lock(self._lck_path, kill_holder=False, max_time=60):
             if not os.path.exists(self.path):
                 return
@@ -355,7 +356,7 @@ class _SqliteBackend(_Backend):
             return _MISSING
         return self._decode(row[0], row[1], key)
 
-    def iter_all(self, mfr=None, mpn_like=None):
+    def iter_all(self, mfr=None, mpn_like=None, mfr_like=None):
         cx = self._read_conn()
         if cx is None:
             return
@@ -364,19 +365,37 @@ class _SqliteBackend(_Backend):
         if mfr is not None:
             where.append('mfr = ?')
             params.append(mfr)
+        if mfr_like is not None:
+            where.append('mfr LIKE ?')
+            params.append(mfr_like)
         if mpn_like is not None:
             where.append('mpn LIKE ?')
             params.append(mpn_like)
         if where:
             sql += ' WHERE ' + ' AND '.join(where)
-        for k, enc, blob in self._conn().execute(sql, params):
+        sql += ' ORDER BY id'   # see keys(): iteration order is part of the contract
+        for k, enc, blob in cx.execute(sql, params):
             key = _decode_key(k)
             yield key, self._decode(enc, blob, key)
 
     def keys(self):
+        # ORDER BY id. Without it SQLite answers this from the UNIQUE(k) index and returns
+        # keys sorted BY KEY -- a different order from iter_all()'s table scan, which
+        # silently changes any seeded sampling built on it (test/v2_eval.py picks its
+        # sample from this list). Iteration order is part of the contract here, not an
+        # implementation detail.
+        #
+        # What is guaranteed: a stable order, equal to insertion order for an append-only
+        # store, which after a migration is the order the source pickle had. What is NOT:
+        # `id` is a plain INTEGER PRIMARY KEY, so deleting the row holding the CURRENT MAX
+        # id frees that number and the next insert reuses it rather than appending -- so a
+        # delete-then-add of the newest record can leave the new key mid-sequence instead
+        # of at the end. Dormant today (nothing calls del_obj on datasheets_db, which is
+        # the store whose order is depended on). Make the column AUTOINCREMENT if that
+        # contract ever has to hold across deletes.
         cx = self._read_conn()
         return [] if cx is None else [_decode_key(k) for (k,)
-                                      in cx.execute('SELECT k FROM records')]
+                                      in cx.execute('SELECT k FROM records ORDER BY id')]
 
     def count(self):
         cx = self._read_conn()
@@ -674,19 +693,34 @@ class ObjectDatabase(Generic[K, T]):
                 self._cache[key] = obj
         return copy(self._cache[key])
 
-    def iter_items(self, mfr=None, mpn_like=None) -> Iterator[Tuple[K, T]]:
+    def iter_items(self, mfr=None, mpn_like=None, mfr_like=None) -> Iterator[Tuple[K, T]]:
         """Stream records without retaining them -- constant memory, and it does NOT
         populate the identity map. For audits that reduce each record to a summary row;
-        use load() when you need the objects to stay alive and shared."""
+        use load() when you need the objects to stay alive and shared.
+
+        `mfr` is an exact match; `mfr_like`/`mpn_like` take SQL LIKE patterns. NOTE that
+        LIKE is only case-insensitive for ASCII, so a caller emulating a case-folded
+        substring test must keep its own predicate as the decider and treat these purely
+        as a pre-filter -- a pushdown that under-matches drops rows silently.
+
+        NOT suspending cyclic GC here, deliberately, though it looks tempting: each record
+        is a graph of a few hundred Field objects that dies immediately, and disabling the
+        collector around a bare scan does measure ~7% faster. But the records are CYCLIC,
+        so with the collector off they accumulate instead of being reclaimed, and any loop
+        body that allocates pays for the growing heap -- method_audit's per-record
+        ds_path/isfile loop measured 7.1 s deferred vs 3.4 s with GC left alone. An
+        optimisation whose sign depends on the caller's loop body does not belong in the
+        library. The win here comes from not materialising the DB, not from GC tricks.
+        """
         b = self._backend_or_resolve()
         if b.keyed_get:
-            for kv in b.iter_all(mfr=mfr, mpn_like=mpn_like):
+            for kv in b.iter_all(mfr=mfr, mpn_like=mpn_like, mfr_like=mfr_like):
                 yield kv
             return
-        if mpn_like is not None:
+        if mpn_like is not None or mfr_like is not None:
             # refuse rather than silently returning everything: a filter that quietly
             # stops filtering reads as "nothing matched that pattern" at the call site
-            raise NotImplementedError('mpn_like needs the sqlite backend')
+            raise NotImplementedError('LIKE filters need the sqlite backend')
         for k, v in (self._cache.items() if self._cache_complete else b.iter_all()):
             if mfr is not None and (not isinstance(k, tuple) or k[0] != mfr):
                 continue

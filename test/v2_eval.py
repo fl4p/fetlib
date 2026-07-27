@@ -357,10 +357,13 @@ def run(args) -> dict:
         disk_cache_disable(True)
 
     from dslib.store import datasheets_db
+    from dslib.field import MpnMfr
     from dslib.discovery import DiscoveredPart  # noqa: F401  (unpickle support)
     import dslib.v2
 
-    db = datasheets_db.load()
+    # Keys only -- no record is decoded here. Sampling needs the key SET, not the
+    # records, and the store can list keys without touching a blob.
+    all_keys = datasheets_db.keys()
     truth = build_truth()
 
     if args.truth_only:
@@ -371,17 +374,21 @@ def run(args) -> dict:
             keys = [k for k in keys if k[0] in args.mfr]
         groups = [(('truth', ''), keys)]
     else:
-        groups = sample_groups(list(db.keys()), args.groups, args.per_group,
+        groups = sample_groups(list(all_keys), args.groups, args.per_group,
                                args.seed, args.mfr)
 
     symbols = set(args.symbols.split(',')) if args.symbols else None
 
-    # Keep only the references for the sampled parts and drop the 124 MB
-    # pickle. Holding it for the whole run pushed this machine to 94% memory
-    # and the OOM killer took the process with no output written at all.
+    # Fetch ONLY the sampled parts, by key. This used to materialise all ~6k records
+    # (~1.5 GB resident) and then throw all but the sample away -- which pushed this
+    # machine to 94% memory and got the process OOM-killed with no output written.
     wanted = {p for _, ps in groups for p in ps}
-    db = {k: v for k, v in db.items() if k in wanted}
-    datasheets_db.unload()
+    db = {}
+    for mfr, mpn in wanted:
+        stored = datasheets_db.load_obj(MpnMfr(mfr, mpn=mpn))
+        if stored is not None:
+            db[(mfr, mpn)] = stored
+    datasheets_db.unload()   # load_obj hands back copies, so `db` outlives this
 
     parts_out = []
     t_total = 0.0

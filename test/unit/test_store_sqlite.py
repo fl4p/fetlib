@@ -562,6 +562,70 @@ def test_iter_items_streams_without_populating_the_cache(tmp_path):
     assert fresh._cache == {} and fresh._cache_complete is False
 
 
+def test_keys_and_iter_agree_on_order_and_it_is_insertion_order(tmp_path):
+    """Iteration order is part of the contract, not an implementation detail.
+
+    test/v2_eval.py picks a SEEDED sample from keys(). Left to itself SQLite answers
+    keys() from the UNIQUE(k) index -- sorted by key -- while iter_items() scans the table
+    in rowid order. The two disagreed, so the same seed selected a different sample after
+    the migration: no error, no failing test, just a silently different experiment.
+    """
+    inserted = ['M', 'A', 'Z', 'B']
+    db = _db(tmp_path, 'order')
+    for mpn in inserted:                     # one at a time, so rowid order != sorted order
+        db.add([_ds(mpn)])
+
+    fresh = _db(tmp_path, 'order')
+    from_keys = [k[1] for k in fresh.keys()]
+    from_iter = [k[1] for k, _ in fresh.iter_items()]
+    from_load = [k[1] for k in _db(tmp_path, 'order').load()]
+
+    assert from_keys == inserted, 'keys() is not in insertion order: %r' % from_keys
+    assert from_keys == from_iter == from_load
+    assert from_keys != sorted(from_keys), 'fixture cannot tell the two orders apart'
+
+
+def test_order_survives_an_upsert_but_not_a_max_row_delete(tmp_path):
+    """The precise limit of the ordering guarantee, pinned rather than assumed.
+
+    Re-adding an existing key keeps its position (upsert leaves the id alone). But `id` is
+    a plain INTEGER PRIMARY KEY, so deleting the row with the CURRENT MAX id frees that
+    number for reuse -- the next insert lands mid-sequence instead of at the end. Recorded
+    here so the ordering contract is not read as stronger than it is; making the column
+    AUTOINCREMENT is the fix if it ever needs to hold across deletes.
+    """
+    db = _db(tmp_path, 'ord2')
+    for mpn in ('A', 'B', 'C'):
+        db.add([_ds(mpn)])
+
+    db.add([_ds('A', Rds_on=(9.0, 'mOhm'))])          # upsert an existing key
+    assert [k[1] for k in _db(tmp_path, 'ord2').keys()] == ['A', 'B', 'C'], \
+        'an upsert moved a record'
+
+    db.del_obj(MpnMfr('mfr', mpn='C'))                # C holds the max id
+    db.add([_ds('D')])
+    order = [k[1] for k in _db(tmp_path, 'ord2').keys()]
+    assert order == ['A', 'B', 'D'], order            # D reused C's slot; here == the end
+    assert set(order) == {'A', 'B', 'D'}
+
+
+def test_iter_items_leaves_the_collector_alone(tmp_path):
+    """A scan must not change process-global GC state.
+
+    An earlier version suspended cyclic GC during iteration -- ~7% faster on a bare scan,
+    but 2x SLOWER for any loop body that allocates, because the records are cyclic and
+    accumulate with the collector off. Pinned so it does not come back.
+    """
+    import gc
+    db = _db(tmp_path, 'gcx')
+    db.add([_ds('A'), _ds('B'), _ds('C')])
+
+    assert gc.isenabled(), 'fixture assumes gc starts enabled'
+    for _ in _db(tmp_path, 'gcx').iter_items():
+        assert gc.isenabled(), 'iter_items disabled the collector mid-scan'
+    assert gc.isenabled()
+
+
 def test_iter_items_filters_by_mfr(tmp_path):
     db = _db(tmp_path)
     db.add([_ds('A', mfr='infineon', Rds_on=(1.0, 'mOhm')),

@@ -166,7 +166,8 @@ def classify(parsed, ref):
 def rows():
     out = []
     comparable = 0
-    for (mfr, mpn), ds in datasheets_db.load().items():
+    # streamed: every record collapses to at most one dict, so nothing needs retaining
+    for (mfr, mpn), ds in datasheets_db.iter_items():
         parsed = ds.get_resistance_milliohm('Rds_on')
         if math.isnan(parsed) or parsed <= 0:
             continue
@@ -194,12 +195,14 @@ def calibrate():
     x9 decoder scores 100%. What exposes a bad family is a tight cluster at a NON-UNITY
     decade, which is exactly what 'ts' shows.
     """
-    db = datasheets_db.load()
     out = {}
     for mfr in list(MPN_FAMILIES) + ['ts']:
         pat = MPN_FAMILIES.get(mfr, (re.compile(r'^TSM(\d{3})N'), None))
         rs = []
-        for (m, mpn), ds in db.items():
+        # mfr= is an EXACT match on the stored key, which is exactly what `m != mfr`
+        # tested, so this is a true pushdown rather than a narrowing. It also turns the
+        # old O(families x whole-db) nested scan into one indexed query per family.
+        for (m, mpn), ds in datasheets_db.iter_items(mfr=mfr):
             if m != mfr:
                 continue
             nom = mpn_milliohm(mfr, mpn) if mfr in MPN_FAMILIES else (

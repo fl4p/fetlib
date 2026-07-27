@@ -316,9 +316,15 @@ def build_truth(drop_contested: bool = True):
 
 def select_sample(n: int, seed: int, mfr_sub: Optional[str], prefer_truth: bool,
                   truth: Dict[Tuple[str, str], Dict[Key, float]]):
-    db = dslib.store.datasheets_db.load()
+    # Stream: each record is reduced to a (mfr, mpn, path) tuple and released. This used
+    # to materialise the whole DB (~1.5 GB resident) purely to read one attribute per
+    # record -- the resident DB is what OOM-killed the OCR run -- and then free it again.
+    #
+    # No mfr pushdown: `mfr_sub` is a case-folded SUBSTRING test and the store's `mfr=`
+    # filter is an exact match, so pushing it down would silently drop matching parts.
+    # The win here is memory, not scan time.
     cands = []
-    for (mfr, mpn), ds in db.items():
+    for (mfr, mpn), ds in dslib.store.datasheets_db.iter_items():
         if mfr_sub and mfr_sub.lower() not in (mfr or '').lower():
             continue
         try:
@@ -334,10 +340,8 @@ def select_sample(n: int, seed: int, mfr_sub: Optional[str], prefer_truth: bool,
         no = [c for c in cands if (mfr_tag(c[0]), c[1]) not in truth]
         cands = has + no
     sample = cands[:n]
-    # free the 112 MB DB (cached in the ObjectDatabase singleton) so parsing
-    # has memory headroom -- the resident DB is what OOM-killed the OCR run.
     dslib.store.datasheets_db.unload()
-    del db, cands
+    del cands
     import gc
     gc.collect()
     return sample

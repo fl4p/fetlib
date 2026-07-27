@@ -467,12 +467,37 @@ def main(argv=None):
         sub = args.mpn.lower()
         preds.append(lambda ds, s=sub: s in (ds.part.mpn or '').lower())
 
-    db = dslib.store.datasheets_db.load()
-    rows = [ds for ds in db.values() if all(p(ds) for p in preds)]
+    # Push -m/-p into the store as a PRE-filter and stream the rest, so a filtered query
+    # decodes only the matching blobs instead of all ~6k. The Python predicates above are
+    # still what decides: LIKE is case-insensitive for ASCII only, so the pushdown is
+    # applied only for an ASCII needle, where it cannot match less than `sub in x.lower()`.
+    # (LIKE's % / _ wildcards can only match MORE, which the predicates then reject.)
+    def _pushdown(s):
+        """The LIKE pattern for `s`, or None for no pushdown.
+
+        Gated on `s` being TRUTHY, not merely non-None, and it has to match the `if
+        args.mfr:` above exactly. An empty string means "no filter" there, so no predicate
+        is added -- but `_ascii('')` is vacuously true, so an earlier version pushed down
+        `LIKE '%%'` with nothing left to re-filter, and LIKE never matches NULL. A record
+        whose mfr/mpn column is NULL then vanished from `ddb.py -m ''` with no error and
+        no predicate having rejected it. Non-ASCII declines because LIKE is only
+        case-insensitive over ASCII, and a pushdown that under-matches drops rows silently.
+        """
+        if not s or not all(ord(c) < 128 for c in s):
+            return None
+        return '%' + s + '%'
+
+    total = dslib.store.datasheets_db.count()
+    matches = (ds for _, ds in dslib.store.datasheets_db.iter_items(
+                   mfr_like=_pushdown(args.mfr), mpn_like=_pushdown(args.mpn))
+               if all(p(ds) for p in preds))
 
     if args.count:
-        print(len(rows))
+        # counting needs no record kept alive; every other branch below does
+        print(sum(1 for _ in matches))
         return 0
+
+    rows = list(matches)
 
     if args.dominated_methods:
         report_dominated_methods(rows, rtol=args.rtol)
@@ -496,7 +521,7 @@ def main(argv=None):
     if args.limit is not None:
         rows = rows[:args.limit]
 
-    print(f'# {len(rows)} parts (of {len(db)})')
+    print(f'# {len(rows)} parts (of {total})')
     print(f'{"mfr":<14} {"mpn":<32} {"nf":>3}  {"date":<8}')
     for ds in rows:
         d = ds.date_from_text or ds.date_from_meta
