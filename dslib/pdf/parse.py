@@ -142,6 +142,18 @@ def extract_text(pdf_path, try_ocr=False, auto_decrypt=True) -> Tuple[str, DataS
     return pdf_text, meta
 
 
+def chart_digitizer_salt():
+    """The external chart digitizer's generation — see dslib.viz._compute_chart_digitizer_sig.
+
+    Indirected through a callable for the same reason regex_ver_salt is: importing
+    dslib.viz at decoration would pull the pymupdf chart stack into every process that
+    merely imports this module. dslib.viz still snapshots the signature at ITS import, so
+    the value is the generation this process loaded, just resolved on first use.
+    """
+    from dslib.viz import chart_digitizer_salt as _sig
+    return _sig()
+
+
 def regex_ver_salt():
     # callable so decoration doesn't force expr's lazy regex tables (~1.7 s of regex.compile) at
     # import; must return the same tuple the eager version produced or existing entries are orphaned
@@ -636,11 +648,29 @@ def extract_dates(pdf_text: str):
 
 
 def read_charts(pdf_path):
-    from dslib.viz import find_vpl
-    vpl = find_vpl(pdf_path)
+    from dslib.viz import find_vpl_package_results
+    results = find_vpl_package_results(pdf_path)
+    served = next((r for r in results if r.status == 'ok' and r.vpl is not None), None)
+    vpl = None if served is None else served.vpl
     src = 'viz'
 
+    if vpl is None and any(r.vpl is not None for r in results):
+        # The digitizer READ a plateau here and rejected it -- an implausible value, an
+        # assumed axis, a calibration extrapolated past its ticks. Falling through to
+        # the legacy estimator would replace a refusal with an unvetted number, which
+        # is strictly worse than having none: on SUP90140E the package refuses 28.6 V
+        # (two ticks over 48% of the plot box) and the legacy path answers 5.19 V read
+        # off the ON-RESISTANCE chart -- perfectly plausible, entirely fictional, and
+        # carrying no diagnostic to say so. A refusal must stay a refusal.
+        warnings.warn('%s: gate-charge chart refused by the digitizer (%s); no Vpl'
+                      % (os.path.basename(pdf_path),
+                         ', '.join(sorted({d for r in results for d in r.diagnostics}))
+                         or 'no diagnostic'))
+        return []
+
     if vpl is None:
+        # Nothing to digitize at all (no gate-charge panel found). The legacy estimator
+        # is a genuine second opinion here, not a retry of a rejected one.
         from apps.vpl_from_chart import _pick_best, vpl_from_pdf
         vpl = _pick_best(vpl_from_pdf(pdf_path))
         if vpl is not None:
@@ -666,7 +696,12 @@ def ocr_pdf(pdf_path, method='r600_ocrmypdf'):
 
 
 @disk_cache(ttl='999d', file_dependencies=[0],
-            salt=(regex_ver_salt, field_repr_salt, legacy_parse_code_salt, 'v04'),
+            # chart_digitizer_salt covers the EXTERNAL package read_charts delegates Vpl
+            # to. legacy_parse_code_salt hashes files under dslib/ only, so nothing here
+            # moved when the digitizer changed and a cached Vpl stayed wrong forever.
+            # Callable, not called: it must not force the pymupdf import at decoration.
+            salt=(regex_ver_salt, field_repr_salt, legacy_parse_code_salt,
+                  chart_digitizer_salt, 'v04'),
             ignore_missing_inp_paths=True,
             hash_func_code=True)
 def parse_datasheet(pdf_path=None, mfr=None, mpn=None,

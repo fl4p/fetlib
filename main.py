@@ -22,7 +22,8 @@ from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields, field_repr_salt, merge_keeping_absent_symbols
 from dslib.mosfet import GateDrive
 from dslib.pdf.fonts import fontforge_bin
-from dslib.pdf.parse import parse_datasheet, subsctract_needed_symbols, NoTabularData, TooManyPages
+from dslib.pdf.parse import (parse_datasheet, subsctract_needed_symbols, NoTabularData,
+                             TooManyPages, chart_digitizer_salt)
 from dslib.pdf.tabular import tabula_is_running
 from dslib.spec_models import DcDcLoadParams
 from dslib.store import Part
@@ -467,7 +468,14 @@ def get_fet_specs(ds: DatasheetFields, gd: GateDrive):
 # the migration for 1404 records: 4212 fields went back to unitless, where the reader now
 # refuses them. A stale cache is recoverable; a stale cache that WRITES ITSELF INTO THE
 # DATABASE is not, so the key has to move whenever Field representation moves.
-@disk_cache(ttl='999d', salt=('13', excludes, field_repr_salt()))
+#
+# chart_digitizer_salt is here for exactly the same reason, one level out: bumping only
+# parse_datasheet's key re-parses nothing, because THIS cache short-circuits it. The
+# stale DatasheetFields would be served from here and written back to the DB with
+# overwrite=True — the corrected Vpl would never be computed, and the run would look
+# like a successful no-op. A key that gates a DB write must move whenever anything it
+# could have derived differently moves.
+@disk_cache(ttl='999d', salt=('13', excludes, field_repr_salt(), chart_digitizer_salt()))
 def read_parts_datasheets(parts: List[DiscoveredPart], args):
     need_symbols = {
         'tRise', 'tFall',  # HS
