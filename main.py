@@ -657,11 +657,15 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         del ploss['P_dt'], ploss['P_rr']
         ploss.pop('_cond', None)
 
-        rds_on_max = ds.get_max('Rds_on', False)
+        # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
+        # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
+        # Ω->mΩ conversion for the Rds_on_10v branch. It was anti-monotone: 299 parts with
+        # Rds_on_10v >= 100 mΩ never met the <0.1 test, stayed 1000x low, produced ~0 P_on
+        # and sorted to the TOP of the ranking. Precedence also now matches dslib/field.py
+        # (Rds_on_10v first), which previously disagreed with this file.
+        rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
         if math.isnan(rds_on_max):
-            rds_on_max = ds.get_max('Rds_on_10v', False)
-        if rds_on_max < 0.1:
-            rds_on_max *= 1000
+            rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
 
         for i in range(1, args.controlFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
@@ -815,11 +819,15 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         loss_spec = dcdc_buck_ls(dcdc, fet_specs, gd=gd, isGaN=ds.part.specs.isGaN)
 
-        rds_on_max = ds.get_max('Rds_on', False)
+        # Single reader, returns mΩ. This replaces `Rds_on` -> `Rds_on_10v` fallback plus
+        # `if rds_on_max < 0.1: *= 1000`, a magnitude GUESS that was the undocumented
+        # Ω->mΩ conversion for the Rds_on_10v branch. It was anti-monotone: 299 parts with
+        # Rds_on_10v >= 100 mΩ never met the <0.1 test, stayed 1000x low, produced ~0 P_on
+        # and sorted to the TOP of the ranking. Precedence also now matches dslib/field.py
+        # (Rds_on_10v first), which previously disagreed with this file.
+        rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
         if math.isnan(rds_on_max):
-            rds_on_max = ds.get_max('Rds_on_10v', False)
-        if rds_on_max < 0.1:
-            rds_on_max *= 1000
+            rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
 
         for i in range(1, args.syncFet.maxParallel + 1):
             ls = loss_spec.parallel(i)

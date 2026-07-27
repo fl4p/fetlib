@@ -354,11 +354,15 @@ ao = {
 }
 
 vishay = {
-    'SUM70042E-GE3': [
+    'SUM70042E-GE3': [  # error in Datasheet (mistake)
+        # the sheet prints "Reverse recovery charge  - 126 189 uC"; uC is a datasheet
+        # typo, 126 uC is far too high for this part and the gate charges on the same
+        # page are nC. A faithful extractor reads uC and yields 126000 nC, so this
+        # override MUST disagree with the print.
         Field('Qrr', min=math.nan, typ=126, max=189, unit='nC'),
     ],
 
-    'SUP70042E-GE3': [
+    'SUP70042E-GE3': [  # error in Datasheet (mistake)
         Field('Qrr', min=math.nan, typ=126, max=189, unit='nC'),
     ]
 }

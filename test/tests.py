@@ -314,15 +314,28 @@ def test_pdf_parse():
     d = read_sheet('datasheets/littelfuse/IXTK170N10P.pdf')
     assert d.Rds_on == (na,7,9)
 
+    # NOTE: the three Qrr assertions below used to read `d.Qrr == <scalar>`, which was
+    # VACUOUS -- Field.__eq__ returned True for any non-Field/non-triple operand, so they
+    # could never fail. Made explicit; the original expected values are KEPT because they
+    # are right and the code is wrong. Each currently FAILS, exposing a real defect
+    # (see docs/resistance-unit-convention-plan.md, Phase 0 findings):
+    #   AON7462     -> stored 0.22 with unit 'mC'. Field.__init__ converts {uC,μC,∝C,uc}
+    #                  -> nC but NOT 'mC' (a misrendered µC), so 0.22 µC never becomes
+    #                  220 nC. Same class of unit-spelling gap as the ohm one.
+    #   IXFH120N25T -> extraction yields typ=1100, not 1180.
+    #   AOB66515L   -> stored typ=1.18 AND max=1180 in ONE field, i.e. min/typ/max on
+    #                  scales 1000x apart. Field.__init__'s `1 < max/typ < 5` assert
+    #                  cannot catch this because Field.fill() merges stats from DIFFERENT
+    #                  candidates without re-validating the ratio.
     d = parse_datasheet('datasheets/ao/AON7462.pdf')
-    assert d.Qrr == 220
+    assert d.Qrr.typ == 220
 
     #d = read_sheet('datasheets/littelfuse/IXFH120N25T.pdf')
     d = parse_datasheet('datasheets/littelfuse/IXFH120N25T.pdf')
-    assert d.Qrr == 1.18e3 # µC!
+    assert d.Qrr.typ == 1.18e3 # µC!
 
     d = parse_datasheet('datasheets/ao/AOB66515L.pdf')
-    assert d.Qrr == 1.18e3  # µC!
+    assert d.Qrr.typ == 1.18e3  # µC!
 
     d = parse_datasheet('datasheets/vishay/SiR5808DP.pdf')
     assert d.Vgs_th == (2, na, 4)

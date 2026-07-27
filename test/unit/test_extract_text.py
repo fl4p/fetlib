@@ -170,7 +170,12 @@ Re
 1.8
 Q
 -
-> Rg=(n,1.2,1.8)
+> Rg=(n,1200,1800)
+# 'Q' is a Symbol-font/OCR rendering of Ω, so this row is 1.2-1.8 OHM and canonicalises
+# to 1200-1800 mΩ. This expectation used to read (n,1.2,1.8), which encoded the bug where
+# field.py only scaled {'W','Ω'} and left Q/O/Ohm unconverted -- while the assertions at
+# ~L463/L472 already required 'W' -> x1000, so the file contradicted itself. 1.2 Ω is a
+# normal gate resistance; 1.2 mΩ would be a short.
 
 
 Reverse recovery charge")
@@ -607,7 +612,7 @@ ns
     120
     nC
     Qgd
-    Gate Charge Gate to Drain""").Qg == 120
+    Gate Charge Gate to Drain""").Qg.typ == 120
 
     assert p("""RG(int)
     Internal Gate Resistance
@@ -646,7 +651,7 @@ ns
     -
     Ω
     -
-    """, 'any').Rg == 0.62
+    """, 'any').Rg.typ == 620  # sheet prints 0.62 Ω; canonical storage is mΩ
 
     assert extract_fields_from_text("""
     Gate Resistance
