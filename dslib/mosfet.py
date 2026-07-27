@@ -414,37 +414,30 @@ class MosfetSpecs:
             self._lm_fit_cache = {}
         # getattr: an instance unpickled from a parts-lib written before the field
         # existed bypasses __init__ and would AttributeError instead of LMFitError.
-        # Resolve the Qrr(Tj) exponent ONCE, per part, here — the measured AO-die fits in
-        # dslib/qrr_tj_specs.py were unreachable from this method: both qrr_model entries
-        # defaulted n_tau to the conservative bound and nothing ever passed anything else,
-        # so a die with its own 25/125 C chart was still extrapolated on the legacy
-        # "Qrr doubles" rule. n_tau_state records which of the three states applied.
-        n_res = qrr_model.resolve_n_tau(qrr_part_key(self))
-        n_stamp = dict(n_tau=n_res["n_tau"], n_tau_state=n_res["state"],
-                       n_tau_source=n_res["source"])
         points = getattr(self, "qrr_points", None)
-        fallback_reason = None
-        if points:
-            try:
-                p = qrr_model.qrr_op_2pt(points, IF, didt, Tj=Tj,
-                                         _fit_cache=self._lm_fit_cache,
-                                         n_tau=n_res["n_tau"])
-                p.update(n_stamp)
-                return p if detail else p["Qrr"]
-            except qrr_model.LMFitError as e:
-                fallback_reason = str(e)  # e.g. Qrr ~flat with di/dt: 1pt only
         cond = getattr(self, "qrr_cond", None)
-        p = qrr_model.qrr_op(self.Qrr, self.trr, cond,
-                             IF, didt, Tj=Tj, _fit_cache=self._lm_fit_cache,
-                             qoss_vr=qoss_vr, n_tau=n_res["n_tau"])
-        p.update(n_stamp)
-        # Where the TEST POINT came from, which qrr_model neither knows nor should:
-        # 'curated' = hand-read from the PDF, 'parsed' = taken off the parsed Qrr row.
-        # A parsed point is the weaker evidence and must stay distinguishable downstream.
-        p["method"] = "1pt"
-        p["cond_source"] = (cond or {}).get("source", "curated")
-        if fallback_reason:
-            p["fallback_from_2pt"] = fallback_reason
+        # ONE call. qrr_model.best_lm_fit owns all three decisions — 2pt-vs-1pt
+        # preference with an explicit fallback reason, the q0 decontamination, and the
+        # Qrr(Tj) exponent — and evaluate_lm_fit owns turning the fit into a charge.
+        # This method used to re-implement all three, which is the divergence
+        # best_lm_fit was written to prevent; the deck emitter in dcdc-tools calibrates
+        # off the same function, so a second copy here could silently fit a different
+        # diode than the deck it is supposed to agree with.
+        part = qrr_part_key(self)
+        key = (self.Qrr, self.trr, qoss_vr, part,
+               cond and (cond.get("IF"), cond.get("didt"), cond.get("Tj")),
+               points and tuple((r["IF"], r["didt"], r["Qrr"], r["trr"]) for r in points))
+        fit = self._lm_fit_cache.get(key)
+        if fit is None:
+            fit = qrr_model.best_lm_fit(self.Qrr, self.trr, cond, qrr_points=points,
+                                        qoss_vr=qoss_vr, part=part)
+            self._lm_fit_cache[key] = fit
+        p = qrr_model.evaluate_lm_fit(fit, IF, didt, Tj=Tj)
+        if p["method"] == "1pt":
+            # Where the TEST POINT came from, which qrr_model neither knows nor should:
+            # 'curated' = hand-read from the PDF, 'parsed' = off the parsed Qrr row.
+            # A parsed point is weaker evidence and must stay distinguishable downstream.
+            p["cond_source"] = (cond or {}).get("source", "curated")
         return p if detail else p["Qrr"]
 
     def FoMqrr_op(self, IF, didt, Tj=25.0):
