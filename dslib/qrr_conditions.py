@@ -31,23 +31,38 @@ Fields per entry:
 A part ABSENT here has no conditions: consumers MUST fail loud or fall back explicitly
 rather than invent an operating point. See fl4p/fetlib#37.
 
-COVERAGE, measured 2026-07-27 over the shipped parts DB at the fugu3 design point
-(72->27 V, 900 W, 40 kHz; 3720 parts in the Vds window, evaluated through
-dcdc_buck_ls's --qrr-op path):
+THIS TABLE IS NO LONGER THE MAIN SOURCE. The premise above -- that the conditions are
+not in the DB -- was wrong when it was written: dslib/conditions.py (2026-05-18, two
+months before this file) already normalized `di/dt` from 20+ raw spellings, and 90.8%
+of the Qrr fields in the shipped DB carry one. Nothing read them for Qrr, so this
+registry was hand-curated to 8 parts instead. DatasheetFields.qrr_test_conditions()
+now reads them, and attach_qrr_registries takes them at LOWEST precedence:
 
-    operating-point fit ran            70   1.9%   (51 via qrr_points 2pt, 15 1pt, 4 GaN)
-    has Qrr but NO curated conditions 3499  94.1%  <- THIS table is the bottleneck
-    no usable Qrr at all               151   4.1%
+    qrr_points (per-row, two-point)  >  this file (hand-read)  >  parsed
 
-So the model is not what limits the operating-point Qrr feature — this registry is.
-Until it grows, a CSV built with --qrr-op is a MIXED ranking: the ~2% of parts with
-conditions are charged the real (2.4-12x larger, see below) commutation charge while
-the other 98% keep the vendor's gentle test-point value, which systematically flatters
-the uncurated parts. Read the Qrr_src column before comparing two rows.
+Measured 2026-07-27 at the fugu3 design point (72->27 V, 900 W, 40 kHz; 3795 parts in
+the Vds window, through dcdc_buck_ls's --qrr-op path), before -> after wiring parsed
+conditions in:
 
-Rescale magnitude on those 70, same run: commutation di/dt came out p50 ~4000 A/us
-(p10 1971, p90 15016) against datasheet test points of 100-500 A/us, and
-Qrr_op/Qrr_datasheet ran min 1.76 / p50 4.54 / max 14.34, with ZERO parts falling.
+    operating-point fit ran      1.9%  ->  72.3%   (2754 parsed, 52 2pt, 15 curated, 37 GaN)
+    kept the flat datasheet Qrr  98.1% ->  26.7%
+
+Agreement where truth exists: all 8 entries of this table are reproduced exactly by the
+parsed path, and for the 79 qrr_points dies present in the DB by exact key the parsed
+(Qrr, IF, di/dt) triple matches a real datasheet row every time -- none mis-paired.
+
+Rescale magnitude: commutation di/dt at that design point is p50 ~4000 A/us against
+datasheet test points of 100-500, and Qrr_op/Qrr_datasheet runs p10 2.4 / p50 6.3 /
+p90 12.2, six parts falling.
+
+STILL A MIXED RANKING, and now in the more dangerous direction: the 26.7% that keep the
+flat charge are NOT penalised for their reverse recovery, and 8 of the top 10 LS parts
+at that design point are exactly those. Missing data currently reads as a good part.
+Read Qrr_src before comparing rows; op-1pt-parsed, op-1pt and datasheet-flat-nofit are
+three different kinds of number.
+
+Curating an entry here is still worth it for any part that matters: it overrides the
+parsed point. See docs/qrr-parsed-conditions-spotcheck.md for the sample to verify.
 """
 
 QRR_CONDITIONS = {

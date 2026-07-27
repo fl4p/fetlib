@@ -19,8 +19,15 @@ FOM_MAX = 2e5
 Qgs2_Qgs_ratio_estimate = 0.55  # 0.3 ... 0.6
 
 
-def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn):
+def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
     """Fill `specs.qrr_cond` / `specs.qrr_points` from the curated registries, in place.
+
+    `parsed_qrr_cond` is the test point read off the datasheet's own Qrr row
+    (DatasheetFields.qrr_test_conditions). It is consulted ONLY when no curated entry
+    exists, so precedence is: qrr_points (per-row, two-point) > qrr_conditions (hand-read)
+    > parsed. That order lives here, in the one function that owns the registries, rather
+    than being reassembled at each call site. Curated wins because it was read by a human
+    from the PDF; parsed wins over nothing, which is what 94% of the corpus had.
 
     dslib.store.load_parts() does this for specs unpickled from the parts DB. Specs built
     fresh from parsed datasheet fields (dslib.field.get_mosfet_specs — the path the whole
@@ -41,7 +48,14 @@ def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn):
     if qrr_conditions_for is not None and not getattr(specs, 'qrr_cond', None):
         cond = qrr_conditions_for(mfr, mpn)
         if cond:
+            cond.setdefault('source', 'curated')
             specs.qrr_cond = cond
+    # Parsed conditions last, and only if nothing curated claimed the slot. They carry
+    # source='parsed' so a consumer can tell a hand-read operating point from one read by
+    # the table parser -- the two are not equally trustworthy and the loss number must not
+    # pretend they are.
+    if parsed_qrr_cond and not getattr(specs, 'qrr_cond', None):
+        specs.qrr_cond = dict(parsed_qrr_cond)
     try:
         from dslib.qrr_points import qrr_points_for
     except ImportError:
@@ -393,9 +407,14 @@ class MosfetSpecs:
                 return p if detail else p["Qrr"]
             except qrr_model.LMFitError as e:
                 fallback_reason = str(e)  # e.g. Qrr ~flat with di/dt: 1pt only
-        p = qrr_model.qrr_op(self.Qrr, self.trr, getattr(self, "qrr_cond", None),
+        cond = getattr(self, "qrr_cond", None)
+        p = qrr_model.qrr_op(self.Qrr, self.trr, cond,
                              IF, didt, Tj=Tj, _fit_cache=self._lm_fit_cache)
+        # Where the TEST POINT came from, which qrr_model neither knows nor should:
+        # 'curated' = hand-read from the PDF, 'parsed' = taken off the parsed Qrr row.
+        # A parsed point is the weaker evidence and must stay distinguishable downstream.
         p["method"] = "1pt"
+        p["cond_source"] = (cond or {}).get("source", "curated")
         if fallback_reason:
             p["fallback_from_2pt"] = fallback_reason
         return p if detail else p["Qrr"]

@@ -981,6 +981,184 @@ class DatasheetFields():
             l = l.replace(' None', '  ⎵  ')
             print(l)
 
+    def qrr_test_conditions(self, Id=None, detail=False):
+        """The body-diode reverse-recovery test point the parsed `Qrr`/`trr` scalars were
+        measured at: dict(IF, didt, Tj, VR, source='parsed') or None.
+
+        The conditions have been in the DB all along -- dslib/conditions.py normalizes
+        `di/dt` from 20+ raw spellings (incl. OCR artifacts) and 90.8% of the Qrr fields in
+        the shipped DB carry one -- but nothing read them for Qrr, so
+        dslib/qrr_conditions.py was hand-curated instead and reached 8 parts. This is the
+        plumbing that was missing. Curated entries still WIN over this (see
+        dslib.mosfet.attach_qrr_registries): a human-verified point beats a parsed one.
+
+        FAIL-CLOSED, because the failure mode here is a plausible wrong charge rather than
+        a missing one -- qrr_op would report the fit with full confidence either way:
+
+          * attributes conditions ONLY from rows carrying the selected Qrr value, then
+            refuses if THAT value still has more than one di/dt or IF. A part quoting Qrr
+            at several di/dt is therefore handled rather than dropped: the row that
+            supplied the scalar supplies its own test point. Verified against
+            dslib/qrr_points.py, which has per-row ground truth: of the 87 of its dies
+            present in the DB by exact key, 79 yield a parsed test point and the
+            (Qrr, IF, di/dt) triple matches a real datasheet row for every one of those
+            79 -- none mis-paired. (Count is exact-key; the orderable-suffix lookup
+            qrr_points_for uses covers 110/102 instead, same zero mismatches. Those dies
+            take the two-point path in Qrr_op anyway, which is better; this is their
+            fallback.)
+          * refuses when `trr`'s own parsed conditions disagree with `Qrr`'s. The
+            Lauritzen-Ma fit consumes the PAIR, so two operating points silently
+            fitted as one is a wrong tau, not a missing one.
+          * refuses values outside the physical bands below. A mis-parsed di/dt is the
+            single most damaging error this path can make (Qrr goes as ~didt^0.8), and it
+            arrives looking exactly like a good one.
+
+        `detail=True` returns (cond, reason) so callers/audits can report WHY a part was
+        refused instead of only that it was.
+        """
+        def _ret(cond, reason):
+            return (cond, reason) if detail else cond
+
+        def _conds(sym, value=None):
+            """Conditions from the rows of `sym`, restricted to rows carrying `value`.
+
+            The restriction is the fix for the general mis-pairing case, not a detail.
+            `fields_filled` holds ONE merged scalar while conditions live per row, so
+            merging conditions across all rows attributes another row's test point to the
+            selected number. Measured example: STW48NM60N quotes Qrr twice, 10.5 uC at
+            25 C and 14 uC at 150 C, at the same IF and di/dt. The scalar is the 10.5 uC
+            row, but only the 150 C row carries a Tj -- a di/dt-only guard sees no conflict
+            and fits the cold charge at the hot temperature.
+            """
+            out = []
+            for f in self.fields_lists.get(sym, []):
+                if value is not None:
+                    try:
+                        v = f.typ_or_max_or_min
+                    except ValueError:
+                        continue
+                    if v is None or math.isnan(v) or abs(v - value) > 1e-6 * max(1.0, abs(value)):
+                        continue
+                c = normalize_conditions(f.cond) or {}
+                if c:
+                    out.append(c)
+            return out
+
+        fq = self.fields_filled.get('Qrr')
+        if not fq:
+            return _ret(None, 'no Qrr field')
+        try:
+            qrr = fq.typ_or_max_or_min
+        except ValueError:
+            return _ret(None, 'Qrr has no value')
+        if qrr is None or math.isnan(qrr) or qrr <= 0:
+            return _ret(None, 'Qrr not a positive number')
+
+        # abs(): datasheets write the commutation as "-diF/dt = 100 A/us" and the source
+        # current as a negative (both are sign CONVENTIONS for a falling / source-drain
+        # current, same as MosfetSpecs does for Vsd). Rejecting the sign refused 146
+        # otherwise-good parts in this corpus for saying the same thing with a minus.
+        qc = _conds('Qrr', value=qrr)
+        difs = {abs(c['di/dt']) for c in qc if c.get('di/dt')}
+        ifs = {abs(c['I']) for c in qc if c.get('I')}
+        if not difs or not ifs:
+            return _ret(None, 'no IF/di-dt parsed on any Qrr row')
+        # >1 distinct row condition: the merged scalar cannot be attributed to one of them
+        if len(difs) > 1:
+            return _ret(None, 'Qrr quoted at %d di/dt values -- needs per-row data '
+                              '(dslib/qrr_points.py)' % len(difs))
+        if len(ifs) > 1:
+            return _ret(None, 'Qrr quoted at %d IF values -- needs per-row data' % len(ifs))
+
+        didt_us, IF = float(next(iter(difs))), float(next(iter(ifs)))
+
+        # trr must be the SAME measurement, not merely present
+        ft = self.fields_filled.get('trr')
+        try:
+            trr_v = ft.typ_or_max_or_min if ft else None
+        except ValueError:
+            trr_v = None
+        tc = _conds('trr', value=trr_v)
+        t_difs = {abs(c['di/dt']) for c in tc if c.get('di/dt')}
+        t_ifs = {abs(c['I']) for c in tc if c.get('I')}
+        if len(t_difs) > 1 or len(t_ifs) > 1:
+            return _ret(None, 'trr quoted at several operating points')
+        if t_difs and abs(float(next(iter(t_difs))) - didt_us) > 1e-6 * max(1.0, didt_us):
+            return _ret(None, 'trr di/dt (%g) != Qrr di/dt (%g A/us)'
+                        % (float(next(iter(t_difs))), didt_us))
+        if t_ifs and abs(float(next(iter(t_ifs))) - IF) > 1e-6 * max(1.0, IF):
+            return _ret(None, 'trr IF (%g) != Qrr IF (%g A)' % (float(next(iter(t_ifs))), IF))
+
+        # Physical bands. Deliberately wide -- these reject parse damage, they do not
+        # express an opinion about what a sensible test point is. Datasheet di/dt runs
+        # ~50-1500 A/us and IF ~1-400 A across this corpus.
+        if not (0.05 <= IF <= 3000):
+            return _ret(None, 'IF=%g A out of band' % IF)
+        if not (1.0 <= didt_us <= 1e5):
+            return _ret(None, 'di/dt=%g A/us out of band' % didt_us)
+
+        # IXYS/Littelfuse sheets state the test current RELATIVELY: "IF = 0.5 * ID25".
+        # The regex captures the 0.5 and the operating point becomes IF = 0.5 A on an 80 A
+        # part -- a 160x error on the axis Qrr is most sensitive to, which then reports as
+        # a confident op-1pt fit. Measured: it put IXTP80N12T2/IXTA60N20T/IXTQ48N20T at a
+        # 65x charge rescale, the entire top of the distribution. A body-diode test at
+        # under 5% of the part's own rating is not a real test point; refuse it.
+        # Only applies when the rating is known -- an absent Id must not silently pass.
+        have_rating = Id is not None and math.isfinite(Id) and Id > 0
+        have_trr = bool(trr_v and math.isfinite(trr_v) and trr_v > 0)
+        if have_rating and IF < 0.05 * Id:
+            return _ret(None, 'IF=%g A is %.1f%% of the %g A rating -- looks like a '
+                              'captured multiplier ("IF = 0.5 * ID25"), not a current'
+                        % (IF, 100 * IF / Id, Id))
+        # Both anti-multiplier defenses are conditional -- the rating check needs Id, the
+        # IRRM check below needs trr -- so a part missing BOTH is checked only by the
+        # physical band, which is deliberately wide (0.05 A) and would pass a captured
+        # 0.5 without complaint. That is the anti-monotone shape this function exists to
+        # avoid: the guard disappears exactly where there is least evidence. 153 parts in
+        # the shipped DB land here (mostly Infineon IGBT/SiC modules); none show the
+        # symptom TODAY, which is precisely why it must be closed now rather than after a
+        # new vendor's sheets make it a wrong CSV row that nothing flags.
+        if not have_rating and not have_trr:
+            return _ret(None, 'neither trr nor a current rating -- IF=%g A cannot be '
+                              'checked against a captured multiplier' % IF)
+
+        tjs = {c['Tj'] for c in qc if c.get('Tj') is not None}
+        # Tj disagreement among rows carrying the SAME Qrr is unresolvable, so it refuses
+        # like IF/di-dt rather than defaulting. No Tj at all is different and does default:
+        # 25 C is the datasheet reference these tables are quoted at unless stated, which
+        # is a documented convention, not a stand-in for a value we failed to read.
+        if len(tjs) > 1:
+            return _ret(None, 'Qrr rows disagree on Tj (%s)' % sorted(tjs))
+        Tj = float(next(iter(tjs))) if tjs else 25.0
+        if not (-60 <= Tj <= 200):
+            return _ret(None, 'Tj=%g C out of band' % Tj)
+        vrs = {c['Vds'] for c in qc if c.get('Vds')}
+        VR = float(next(iter(vrs))) if len(vrs) == 1 else None
+
+        # Self-consistency of the (Qrr, trr, IF) triple, which catches the multiplier
+        # capture above even when no rating is parsed to compare against. The stored
+        # charge was supplied BY the forward current, so a recovery peak many times IF is
+        # not a physical operating point -- it means Qrr and IF come from different
+        # scales. IXTA60N20T (Qrr=550 nC, trr=118 ns, "IF = 0.5 * ID25" -> IF=0.5 A)
+        # implies IRRM = 9.6 A, i.e. 19x its own forward current; the same part with the
+        # true IF=30 A is unremarkable. Soft-recovery body diodes sit well under 2x even
+        # at high di/dt, so 5x is slack and still rejects the whole captured-multiplier
+        # class. An unfittable pair is refused here too: qrr_op would only raise on it
+        # later, and refusing at the source gives the audit a reason instead of a
+        # generic LMFitError.
+        if have_trr:
+            from dslib import qrr_model
+            try:
+                f = qrr_model.fit_lm(qrr * 1e-9, trr_v * 1e-9, IF, didt_us * 1e6, tj_fit=Tj)
+            except qrr_model.LMFitError as e:
+                return _ret(None, 'pair not LM-representable: %s' % str(e)[:70])
+            if f['irrm'] > 5.0 * IF:
+                return _ret(None, 'implied IRRM=%.1f A is %.0fx IF=%g A -- Qrr and IF are '
+                                  'not from the same measurement' % (f['irrm'],
+                                                                     f['irrm'] / IF, IF))
+
+        return _ret(dict(IF=IF, didt=didt_us * 1e6, VR=VR, Tj=Tj, source='parsed'), None)
+
     def get_mosfet_specs(self, Vgs=None):
         """Specs for the loss model, with condition selection at gate voltage `Vgs`.
 
@@ -1094,7 +1272,9 @@ class DatasheetFields():
             # specs built from parsed fields never pass through load_parts, so without
             # this every operating-point Qrr consumer on the main.py pipeline would fall
             # back to the flat datasheet value for every part. See attach_qrr_registries.
-        ), self.part.mfr, self.part.mpn)
+            # The datasheet's OWN parsed test point goes in as the lowest-precedence
+            # source; curated entries still win. See qrr_test_conditions.
+        ), self.part.mfr, self.part.mpn, parsed_qrr_cond=self.qrr_test_conditions(Id=Id))
 
     def get(self, sym, stat: Union[Tuple[Field.StatLiteral], Field.StatLiteral], required=False):
         if isinstance(stat, str):

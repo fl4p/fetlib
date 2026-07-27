@@ -25,10 +25,9 @@ https://www.ti.com/tool/download/SYNC-BUCK-FET-LOSS-CALC
 """
 
 import math
+import numpy as np
 import warnings
 from typing import Tuple
-
-import numpy as np
 
 from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
 from dslib.mosfet import Qgs2_Qgs_ratio_estimate, MosfetSpecs, GateDrive
@@ -308,7 +307,12 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             # signature slip put a bare float into Qrr_base and multiply on quietly.
             assert isinstance(qrr_detail, dict), qrr_detail
             Qrr_base = float(qrr_detail['Qrr'])
+            # 'op-1pt-parsed' vs 'op-1pt': a test point taken off the parsed Qrr row is
+            # weaker evidence than a hand-read one, and the CSV must let a reader sort on
+            # that. Only the 1pt path has a condition source; 2pt fits rows directly.
             qrr_src = 'op-' + (qrr_detail.get('method') or 'zero')
+            if qrr_detail.get('cond_source') == 'parsed':
+                qrr_src += '-parsed'
         except LMFitError as e:
             # No curated test conditions / an LM-inconsistent datasheet pair. Keep the
             # flat value (that is what the caller had before asking), but never let it
@@ -631,7 +635,7 @@ def _hs_gate_phases(hs: MosfetSpecs, gd: GateDrive, isGaN=False):
     rg_total_dis = np.nanmax([hs.Rg, gd.rg_total_dis])
 
     von = gd.Von_GaN if isGaN else gd.Von
-    assert von > 0
+    assert von > 0, (von, isGaN)
     if isGaN:
         assert math.isnan(hs.Qsw) or hs.Qsw < 10e-9, hs.Qsw
         assert von < 6
@@ -761,11 +765,11 @@ def tests():
 
     dcdc = DcDcLoadParams(vi=62, vo=27, pin=800, f=40e3, ripple_factor=0.3, tDead=500e-9)
     mf = MosfetSpecs.from_mpn('DMT10H9M9SCT', 'diodes')
-    #l = mosfet_hs_sw_timings_hs(mf, GateDrive(6, 12, fallback_V_pl=4.5))
-    #pr = 0.5 * dcdc.Vi * dcdc.Io_min * dcdc.f * l[0]
-    #pf = 0.5 * dcdc.Vi * dcdc.Io_max * dcdc.f * l[1]
-    #assert abs(pr - 0.3) < 0.1
-    #assert abs(pf - 0.7) < 0.1
+    # l = mosfet_hs_sw_timings_hs(mf, GateDrive(6, 12, fallback_V_pl=4.5))
+    # pr = 0.5 * dcdc.Vi * dcdc.Io_min * dcdc.f * l[0]
+    # pf = 0.5 * dcdc.Vi * dcdc.Io_max * dcdc.f * l[1]
+    # assert abs(pr - 0.3) < 0.1
+    # assert abs(pf - 0.7) < 0.1
 
     l2 = mosfet_hs_sw_timings_hs2(mf, GateDrive(6, 12, fallback_V_pl=4.5))
     assert l2
