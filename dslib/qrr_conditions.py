@@ -78,20 +78,27 @@ only distorts the ranking if it would have ranked WELL, and its non-Qrr loss (co
 the missing test point. Ranking the ~995 exclusions by that floor: only 16 land inside
 the current top-100. Reading those 16 datasheets:
 
-  * 1  had a complete, quotable test point that also FITS  -> curated here (AOGT68801)
+  * 7  had a complete, quotable test point that also FITS -> curated here. Six of them
+       needed the PDF rather than the extracted text (see the Infineon block below);
+       reading the text alone had wrongly written them off as uncurateable.
   * 2  quote a complete point but their DB (Qrr, trr) pair is internally inconsistent
        -- the trr belongs to a different di/dt row -- so no conditions entry can rescue
        them (IPT013N08NM5LF, ISC014N08NM6). They need per-row data, i.e. qrr_points.
-  * 6  (the Infineon IAU* family) state ONLY "diF/dt = 100 A/us" on the recovery row.
-       The nearby "IF=100 A" belongs to the Vsd forward-voltage row, and pairing it with
-       Qrr would be exactly the cross-row attribution qrr_test_conditions guards against.
-       Not curatable from the text as parsed; needs a human with the PDF.
   * the rest have no Qrr at all, or no recovery line in the extracted text.
 
-So the residual exclusions are mostly NOT a conditions-curation problem. They split into
+Those 7 (11 DB records with orderable-suffix variants) are now ranked, several near the
+top: IAUCN08S7N013 lands at 2.39 W and IAUMN08S5N012G at 2.77 W against a 1.56 W leader.
+
+The REST of the exclusions are mostly not a conditions-curation problem. They split into
 per-row data (qrr_points), gate-charge parsing, and datasheets that genuinely omit the
-operating point. Curating here is still worth it for a part that matters -- it overrides
-the parsed point -- but it is not the way to move the coverage number.
+operating point. Curating here is worth it for a part that matters -- it overrides the
+parsed point -- but it is not the way to move the coverage number in bulk.
+
+METHOD NOTE, since it changed the answer: judge curatability from the PDF, not from the
+extracted text. Five of the six Infineon dies below look bare in `pdftotext` output
+because their condition cell SPANS the trr and Qrr rows, and the sixth (IPT014N10N5) is
+a print-to-PDF with no text layer at all -- 11 characters extract from the whole file.
+`pdftotext -layout` recovered five; the last needed the page rendered and read.
 
 See docs/qrr-parsed-conditions-spotcheck.md for the verification sample.
 """
@@ -131,6 +138,37 @@ QRR_CONDITIONS = {
     # IRRM = 14.8 A on IF = 20 A (0.74x, squarely in the soft-recovery band). The fit
     # succeeding at the sane reading and failing at the other IS the corroboration.
     ("ao", "AOGT68801"): dict(IF=20.0, didt=500e6, VR=None, Tj=25.0),
+
+    # --- the six high-impact Infineon exclusions, read off the PDFs 2026-07-27 --------
+    # These were initially judged NOT curatable: the plain text extraction returned only
+    # "diF/dt = 100 A/us" for them, and the nearest IF belonged to the Vsd row. Re-reading
+    # with the table layout preserved (pdftotext -layout) recovers the full condition,
+    # which sits in a cell SPANNING the trr and Qrr rows -- that span is why the key-based
+    # parser attached it to trr and left Qrr bare.
+    #
+    # The earlier caution was justified: the recovery IF is NOT the Vsd row's current on
+    # any of them. IAUCN08S7N013 recovers at 50 A while its Vsd row says 88 A, and the
+    # IAUMN08S5N012G/013G pair recover at 50 A against a 100 A Vsd row. Taking the nearby
+    # number would have been wrong by ~2x on four of the five.
+    #
+    # Each entry verified three ways: the condition string is quoted below, the datasheet
+    # Qrr/trr match what the DB holds, and the Lauritzen-Ma fit succeeds with a physical
+    # IRRM (0.03-0.18x IF -- these are soft, low-charge trench diodes).
+    #
+    # "V R=40 V, I F=50A, di F/dt =100 A/us"      Qrr 56 nC / trr 50 ns
+    ("infineon", "IAUMN08S5N012G"): dict(IF=50.0, didt=100e6, VR=40.0, Tj=25.0),
+    # "V R = 40 V, I F = 50 A, di F/dt = 100 A/us, T j = 25 C"   Qrr 177 nC / trr 86 ns
+    ("infineon", "IAUTN08S5N012L"): dict(IF=50.0, didt=100e6, VR=40.0, Tj=25.0),
+    # "V R=40 V, I F=50A, di F/dt =100 A/us"      Qrr 55 nC / trr 49 ns
+    ("infineon", "IAUMN08S5N013G"): dict(IF=50.0, didt=100e6, VR=40.0, Tj=25.0),
+    # "V R=40 V, I F=50A, di F/dt =100 A/us"      Qrr 34 nC / trr 44 ns  (Vsd row: 88 A)
+    ("infineon", "IAUCN08S7N013"): dict(IF=50.0, didt=100e6, VR=40.0, Tj=25.0),
+    # "VR=50 V, IF=100 A, diF/dt=500 A/us"        Qrr 437 nC / trr 49 ns
+    ("infineon", "IPT015N10NF2S"): dict(IF=100.0, didt=500e6, VR=50.0, Tj=25.0),
+    # IPT014N10N5 has NO text layer at all ("Microsoft: Print To PDF", 11 chars extracted)
+    # -- read off the rendered page 5, Table 7 Reverse diode:
+    # "VR=50 V, IF=100 A, diF/dt=100 A/us"        Qrr 316 nC / trr 103 ns
+    ("infineon", "IPT014N10N5"): dict(IF=100.0, didt=100e6, VR=50.0, Tj=25.0),
 }
 
 
