@@ -28,7 +28,6 @@ import argparse
 import collections
 import math
 import os
-import shutil
 import sys
 from copy import deepcopy
 
@@ -142,7 +141,11 @@ def main():
         print('move or delete it first; a second run would destroy the original.')
         return 2
     print('\nbacking up %s -> %s' % (lib, backup))
-    shutil.copyfile(lib, backup)
+    # snapshot(), NOT shutil.copyfile: once the store is sqlite, a plain file copy takes
+    # only the main file and leaves the -wal sidecar behind, so the "backup" can be an
+    # empty database that opens fine and has no tables. It would fail silently, and only
+    # on the day it is needed.
+    datasheets_db.snapshot(backup)
 
     print('writing %d parts' % len(db))
     datasheets_db.add(list(db.values()))

@@ -16,6 +16,8 @@ Two things are asserted throughout, because only the first is usually tested:
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from dslib.field import DatasheetFields, Field, merge_keeping_absent_symbols  # noqa: E402
@@ -99,21 +101,36 @@ def test_absent_stored_record_is_a_passthrough():
 
 
 # --------------------------------------------------------------- through the real store
-def test_field_count_never_decreases_across_a_real_add(tmp_path):
+@pytest.mark.parametrize('backend', ['sqlite', 'pickle'])
+def test_field_count_never_decreases_across_a_real_add(tmp_path, monkeypatch, backend):
     """End-to-end through ObjectDatabase.add, because the defect lives in the CALL, not in
     the merge function -- a correct merge nobody passes is worth nothing.
 
     Also pins the default: the same write WITHOUT merge= still destroys, so this test
     keeps measuring something real if the call site regresses.
+
+    PARAMETRIZED over both storage backends. It used to run on whichever one the store
+    happened to resolve to for an empty tmp_path -- i.e. sqlite only, silently, once the
+    sqlite backend landed -- which left `add`'s other merge branch, and the documented
+    FETLIB_STORE=pickle rollback path, covered by nothing.
     """
+    if backend == 'pickle':
+        monkeypatch.setenv('FETLIB_STORE', 'pickle')
+    else:
+        monkeypatch.delenv('FETLIB_STORE', raising=False)
+
     def n_fields(db):
         return sum(sum(len(v) for v in ds.fields_lists.values()) for ds in db.values())
 
     def fresh_db(name):
+        name = '%s-%s' % (name, backend)
         db = ObjectDatabase(name, key_func=lambda ds: (ds.part.mfr, ds.part.mpn))
         db._lib_path = str(tmp_path / (name + '.pkl'))
         db._lck_path = db._lib_path + '.lock'
         db._lib_mem = {}
+        assert (type(db._backend_or_resolve()).__name__
+                == ('_PickleBackend' if backend == 'pickle' else '_SqliteBackend')), \
+            'this run is not exercising the %s backend it claims to' % backend
         return db
 
     stored = _ds('X', Rds_on=(16.0, 'mOhm'), Rg=(1.5, 'Ohm'), Qrr=(120.0, 'nC'))

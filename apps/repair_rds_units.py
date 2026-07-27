@@ -44,7 +44,6 @@ import argparse
 import math
 import os
 import re
-import shutil
 import sys
 
 import fitz
@@ -341,11 +340,14 @@ def main():
 
     backup = datasheets_db._lib_path + '.bak-rds-units'
     if os.path.exists(datasheets_db._lib_path):
-        shutil.copy2(datasheets_db._lib_path, backup)
+        # snapshot(), not shutil.copy2: a plain copy of a WAL-mode sqlite store misses the
+        # -wal sidecar and yields a backup with no tables in it.
+        datasheets_db.snapshot(backup)
         print('\nbacked up -> %s' % backup)
 
-    datasheets_db._lib_mem = db
-    datasheets_db._write()
+    # save_all(), not the old `_lib_mem = db; _write()`: same records, but a write that
+    # cannot silently drop whatever the mapping omits.
+    datasheets_db.save_all(db)
     print('wrote %d records (%d rescaled)' % (len(repaired), scale_changed))
     return 0
 

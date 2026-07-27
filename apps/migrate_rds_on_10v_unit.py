@@ -37,7 +37,6 @@ second x1000.
 import argparse
 import math
 import os
-import shutil
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -226,7 +225,9 @@ def main():
         while os.path.exists(backup):
             backup = '%s.%d' % (base, n)
             n += 1
-        shutil.copy2(datasheets_db._lib_path, backup)
+        # snapshot(), not shutil.copy2: a plain copy of a WAL-mode sqlite store misses the
+        # -wal sidecar and yields a backup with no tables in it.
+        datasheets_db.snapshot(backup)
         print('\nbacked up -> %s' % backup)
         if backup != base:
             print('  (kept the earlier snapshot at %s)' % base)
@@ -239,8 +240,9 @@ def main():
         # Scale and unit in one step: a second run sees 'mΩ' and skips the field.
         f.unit = 'mΩ'
 
-    datasheets_db._lib_mem = db
-    datasheets_db._write()
+    # save_all(), not the old `_lib_mem = db; _write()`: same records (the fields above are
+    # mutated in place), but a write that cannot silently drop whatever the mapping omits.
+    datasheets_db.save_all(db)
     print('wrote %d fields across %d records' % (len(to_migrate), len(records_touched)))
     return 0
 

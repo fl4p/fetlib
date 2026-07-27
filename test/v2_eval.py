@@ -381,7 +381,7 @@ def run(args) -> dict:
     # and the OOM killer took the process with no output written at all.
     wanted = {p for _, ps in groups for p in ps}
     db = {k: v for k, v in db.items() if k in wanted}
-    datasheets_db._lib_mem = None
+    datasheets_db.unload()
 
     parts_out = []
     t_total = 0.0

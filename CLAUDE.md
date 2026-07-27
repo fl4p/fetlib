@@ -79,6 +79,20 @@ Entry point is `dslib.pdf.parse.parse_datasheet(...)`, called from `main.py:comp
 
 The PDF cache (`@disk_cache` from `dslib/cache.py`) is keyed by file content + args and stored under `data/cache/`. Disable globally with `--no-cache` (calls `disk_cache_disable(True)`); per-worker, this must be re-called inside the worker (see `compile_part_datasheet`).
 
+### 3b. The object stores — `dslib/store.py` (SQLite as of 2026-07-27)
+
+`parts_db` and `datasheets_db` are **SQLite, one row per record, value = a pickle BLOB** (`data/parts-lib.sqlite3`, `data/datasheets-lib.sqlite3`), zlib-compressed. They used to be single whole-file pickles; the `.pkl` files are kept as rollback snapshots.
+
+Why it changed: `compile_part_datasheet` calls `load_obj` **inside every joblib worker** (`main.py`), and on the old store that unpickled the entire DB — 3.5 s and **1.5 GB resident**, times `num_cores()+1` workers, to read two records. Keyed reads are now ~0.5 ms and ~0 MB. `add`/`del_obj` touch only the keys involved instead of rewriting 150 MB, which also removes the read-modify-write race that cost 1348 records 65,631 fields on 2026-07-27.
+
+- **The API is unchanged** — `load()`, `load_obj()`, `add(merge=)`, `del_obj()`, `keys()` all behave as before. `load()` still returns a whole dict.
+- **`load()`/`load_obj()` share instances** (an identity map). This is required, not an optimisation: `load_parts()` attaches curves/conditions by *mutating* the objects `load()` returned, and `MosfetSpecs.from_mpn` reads them back via `load_obj`. Break it and every curve/Qrr feature silently falls back for 100 % of parts.
+- **New:** `iter_items(mfr=, mpn_like=)` streams (1.7 s, ~0 MB for a full pass — use it for audits), `save_all()`, `snapshot()`, `unload()`, `contains()`, `count()`.
+- **Backup with `snapshot()`, never `shutil.copy2`** — a plain copy of a WAL-mode store misses the `-wal` sidecar and yields a backup with no tables in it, silently.
+- **Rollback:** `FETLIB_STORE=pickle` forces the legacy backend, or delete the `.sqlite3`. `apps/migrate_store_to_sqlite.py --db X --export-pkl PATH` writes the store back out as a whole-file pickle.
+- **Do NOT turn the blob into JSON.** A serializer would have to live in `dslib/field.py`, whose content hash *is* `field_repr_salt()` — editing it invalidates ~17 GB of parse cache and forces a full re-parse. It also cannot represent what the records hold (59 % of stat values are NaN; `Field.cond` keys are int 8:1). The long version is in the `dslib/store.py` module docstring.
+- The migration is `apps/migrate_store_to_sqlite.py` (dry-run by default; verifies every record structurally, NaN/numpy-aware, and calibrates its own comparator against known-bad inputs before trusting it).
+
 ### 4. Modelling — `dclib/powerloss.py`
 
 `SwitchPowerLoss(P_cl, P_gd, P_sw, P_coss, P_rr, P_dt, cond=…)` aggregates loss components. `dcdc_buck_hs(...)` / `dcdc_buck_ls(...)` are the per-slot entry points used by `main.py` to fill the CSV columns (`P_on`, `P_on_ls`, `P_sw`, `P_rr`, `P_dt_ls`, `P_hs`, `P_2hs`, `P_ls`, `P_2ls`). The HS/LS asymmetry — reverse-recovery loss `P_rr` is caused by LS but dissipated in HS — is built into the column semantics; preserve that when changing the model.

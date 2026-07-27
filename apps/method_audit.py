@@ -336,7 +336,7 @@ def select_sample(n: int, seed: int, mfr_sub: Optional[str], prefer_truth: bool,
     sample = cands[:n]
     # free the 112 MB DB (cached in the ObjectDatabase singleton) so parsing
     # has memory headroom -- the resident DB is what OOM-killed the OCR run.
-    dslib.store.datasheets_db._lib_mem = None
+    dslib.store.datasheets_db.unload()
     del db, cands
     import gc
     gc.collect()

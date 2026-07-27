@@ -36,7 +36,6 @@ arguments to see exactly which symbols are merged and which candidates are skipp
 import argparse
 import os
 import pickle
-import shutil
 import sys
 from collections import Counter
 
@@ -165,11 +164,16 @@ def main():
         backup = '%s.%d' % (base, n)
         n += 1
     if os.path.exists(datasheets_db._lib_path):
-        shutil.copy2(datasheets_db._lib_path, backup)
+        # snapshot(), not shutil.copy2: a plain copy of a WAL-mode sqlite store misses the
+        # -wal sidecar and yields a backup with no tables in it.
+        datasheets_db.snapshot(backup)
         print('\nbacked up current -> %s' % backup)
 
-    datasheets_db._lib_mem = out
-    datasheets_db._write()
+    # save_all(), not the old `_lib_mem = out; _write()`: `out` is built to be complete
+    # (snapshot records + carried-over current-only keys), and save_all's default refuses
+    # to delete anything the mapping happens to omit -- which is exactly the accident this
+    # tool exists to recover from.
+    datasheets_db.save_all(out)
     print('wrote %d records, %d fields' % (len(out), result_fields))
     print('\nNEXT: run  python3 apps/migrate_rds_on_10v_unit.py --apply')
     print('The snapshot predates the Rds_on_10v unit migration, so that symbol is back on '
