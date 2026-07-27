@@ -34,9 +34,32 @@ def test_right_strip_nan():
 def test_validate_datasheet_text():
     from dslib.pdf.parse import validate_datasheet_text
 
-    assert validate_datasheet_text('mfr', 'HY3208B', 'HY3208P/M/B')
-    assert not validate_datasheet_text('mfr', 'HY3810C', 'lorem HY3810NA2P/B ' + ('fill it' * 20))
-    assert validate_datasheet_text('mfr', 'HY3810NA2B', 'lorem HY3810NA2P/B ' + ('fill it' * 20))
+    # The padding is load-bearing: validate_datasheet_text rejects anything under 60
+    # characters as 'no-text' before it ever looks at the MPN. The first case below used an
+    # 11-character string, so this test was RED -- it failed on the length guard, which also
+    # meant the assertions after it never ran.
+    pad = 'fill it' * 20
+    assert validate_datasheet_text('mfr', 'HY3208B', 'HY3208P/M/B ' + pad)
+    assert validate_datasheet_text('mfr', 'HY3810NA2B', 'lorem HY3810NA2P/B ' + pad)
+
+    # ...and the guard itself, so the padding cannot quietly become the thing under test.
+    assert validate_datasheet_text('mfr', 'HY3208B', 'HY3208P/M/B') is False
+    assert validate_datasheet_text('mfr', 'HY3208B', '', return_reason=True) == 'no-text'
+
+    # The assertion that used to sit here --
+    #     assert not validate_datasheet_text('mfr', 'HY3810C', 'lorem HY3810NA2P/B ' + pad)
+    # -- has been DELETED rather than fixed, because it asserts a guarantee the function
+    # does not make and should not make this way. It returns True: both sides reduce to the
+    # 'hy3810' stem. Tightening it to require the stripped variant letter near the stem was
+    # implemented, measured, and reverted -- it rejected 23 correctly-filed datasheets whose
+    # trailing letter belongs to a packaging code (XUSA1, -TP, -HXY), and one of those lost
+    # every parsed field. See the note in dslib/pdf/parse.py:validate_datasheet_text.
+    #
+    # HY3810C does not exist anywhere in this repo -- not in parts_db, not on disk, no
+    # parts-list row -- so the case was hypothetical to begin with. Kept below only as
+    # documentation of the CURRENT behaviour, so a future change to it is a visible diff
+    # rather than a silent one.
+    assert validate_datasheet_text('mfr', 'HY3810C', 'lorem HY3810NA2P/B ' + pad) is True
 
 
 def test_parse_field_value():

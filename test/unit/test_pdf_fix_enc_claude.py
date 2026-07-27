@@ -54,8 +54,12 @@ ALL_POSITIVE_SAMPLES = (
     + DETECT_ONLY_POSITIVE_SAMPLES
 )
 
+# HY0910D.pdf used to be the negative sample here. It is a positive: two of its
+# Type0 fonts are Identity-H with no /ToUnicode, its part number extracted as
+# "+<\x13\x1c\x14\x13'\x128\x129" and its Rds_on as "5'6\x0b21\x0c \x14\x14\x1bPȍ".
+# See test_pdf_fix_enc.py, which carries the decode.
 NEGATIVE_SAMPLES = [
-    'datasheets/huayi/HY0910D.pdf',
+    'datasheets/ti/CSD19532KTT.pdf',
 ]
 
 

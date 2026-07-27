@@ -17,14 +17,31 @@ CUSTOM_ENCODING_SAMPLES = [
     "datasheets/huayi/HY1920W.pdf",
     "datasheets/infineon/IPP028N08N3_G.pdf",
     "datasheets/infineon/IPW60R041C6.pdf",
-    #"datasheets/huayi/HY0910D.pdf",
+
+    # Was commented out here AND asserted clean below, with the note "actually
+    # it has!" next to the negative entry. It does: two Type0 fonts with
+    # /Encoding /Identity-H, no /ToUnicode and /Ordering (Identity). Page 1 read
+    # as "+<\x13\x1c\x14\x13'\x128\x129" -- 0x1D under "HY0910D/U/V" -- and the
+    # spec line as "5'6\x0b21\x0c \x14\x14\x1bPȍ", i.e. "RDS(ON)= 118mΩ", so a
+    # real Rds_on was sitting behind the broken layer. It now extracts.
+    "datasheets/huayi/HY0910D.pdf",
+
+    # Moved here from the negative list, where it had been asserted clean.
+    # It is not: five of its Type0 fonts use /Encoding /Identity-H with no
+    # /ToUnicode and /Ordering (Identity), so their codes are bare glyph
+    # indices. Page 1 extracted as '0&$&\x14\x13\x131\x13\x1b<' -- every byte
+    # exactly 0x1D below 'MCAC100N08Y', which is what reading glyph indices as
+    # characters looks like. Detection was right and the expectation was wrong;
+    # the file now also repairs to 'MCAC100N08Y / N-CHANNEL / MOSFET'.
+    "datasheets/mcc/MCAC100N08Y-TP.pdf",
 ]
 
-# Sample PDFs WITHOUT custom font encoding (negative test cases)
+# Sample PDFs WITHOUT custom font encoding (negative test cases).
+# Both former entries turned out to be positives, so this list is down to one
+# file. It is load-bearing: without a genuine negative, nothing here would
+# notice detection widening into "flags everything".
 NO_CUSTOM_ENCODING_SAMPLES = [
-    "datasheets/huayi/HY0910D.pdf", # actually it has!
     "datasheets/ti/CSD19532KTT.pdf",
-    "datasheets/mcc/MCAC100N08Y-TP.pdf",
 ]
 
 
@@ -83,6 +100,93 @@ class TestHasCustomFontEncoding:
             results = [has_custom_font_encoding(pdf_path) for _ in range(3)]
             assert all(r == results[0] for r in results), \
                 f"Inconsistent results for {sample}"
+
+
+class TestIdentityHWithoutToUnicode:
+    """A Type0 font with /Encoding /Identity-H and no /ToUnicode.
+
+    Its codes are raw glyph indices, so there is nothing at all to decode them
+    with -- the strongest possible evidence a text layer is unusable. It was
+    also the one shape detection missed: the guard tested `not enc`, and 'the
+    encoding is absent' is a different thing from 'the encoding is Identity-H',
+    which is a perfectly truthy string.
+    """
+
+    SAMPLE = "datasheets/mcc/MCAC100N08Y-TP.pdf"
+
+    def _skip_if_missing(self):
+        if not os.path.exists(_pdf_path(self.SAMPLE)):
+            pytest.skip(f"Sample PDF not found: {self.SAMPLE}")
+
+    def test_raw_extraction_is_provably_shifted_ciphertext(self):
+        """Evidence that the file really is broken, independent of our own
+        detector -- otherwise moving it to the positive list is just asserting
+        whatever the code happens to do."""
+        import pymupdf
+        self._skip_if_missing()
+        text = pymupdf.open(_pdf_path(self.SAMPLE))[0].get_text()
+        garbled = "0&$&\x14\x13\x131\x13\x1b<"
+        assert garbled in text
+        assert "".join(chr(ord(c) + 0x1D) for c in garbled) == "MCAC100N08Y"
+        assert "MCAC100N08Y" not in text
+
+    def test_detected(self):
+        self._skip_if_missing()
+        assert has_custom_font_encoding(_pdf_path(self.SAMPLE)) is True
+
+    def test_repair_recovers_the_part_number(self, tmp_path):
+        """Detecting it is only half the job; assert WHICH text comes back."""
+        import pymupdf
+        self._skip_if_missing()
+        out = fix_pdf_font_encoding(_pdf_path(self.SAMPLE),
+                                    out_path=str(tmp_path / "mcac.pdf"))
+        text = pymupdf.open(out)[0].get_text()
+        assert "MCAC100N08Y" in text
+        assert "N-CHANNEL" in text
+        assert "MOSFET" in text
+
+    def test_registered_collections_are_not_flagged(self):
+        """The widened rule must stay narrow. A missing /ToUnicode on an
+        Adobe-Japan1 (or any registered-collection) font is NOT a defect --
+        a conforming reader maps those through a standard CMap -- so only
+        /Ordering (Identity), or an ordering we cannot read at all, qualifies.
+        """
+        import pymupdf
+        from dslib.pdf.fix_encoding import _font_has_suspect_encoding
+
+        doc = pymupdf.open()
+        page = doc.new_page()
+        page.insert_text((72, 72), "x")
+        xref = doc.get_new_xref()
+        doc.update_object(xref, (
+            '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+KozMinPr6N'
+            ' /Encoding /Identity-H /DescendantFonts [ %d 0 R ] >>' % (xref + 1)))
+        doc.update_object(doc.get_new_xref(), (
+            '<< /Type /Font /Subtype /CIDFontType0 /BaseFont /AAAAAA+KozMinPr6N'
+            ' /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1)'
+            ' /Supplement 6 >> >>'))
+        assert _font_has_suspect_encoding(doc, xref, 'Identity-H') is False
+        doc.close()
+
+    def test_identity_ordering_is_flagged(self):
+        """The positive control for the same rule: same font, Identity
+        ordering, and it must fire. A guard never seen to fire is not a guard.
+        """
+        import pymupdf
+        from dslib.pdf.fix_encoding import _font_has_suspect_encoding
+
+        doc = pymupdf.open()
+        doc.new_page()
+        xref = doc.get_new_xref()
+        doc.update_object(xref, (
+            '<< /Type /Font /Subtype /Type0 /BaseFont /AAAAAA+Arial'
+            ' /Encoding /Identity-H /DescendantFonts [ %d 0 R ] >>' % (xref + 1)))
+        doc.update_object(doc.get_new_xref(), (
+            '<< /Type /Font /Subtype /CIDFontType2 /BaseFont /AAAAAA+Arial'
+            ' /CIDSystemInfo << /Registry (Adobe) /Ordering (Identity)'
+            ' /Supplement 0 >> >>'))
+        assert _font_has_suspect_encoding(doc, xref, 'Identity-H') is True
+        doc.close()
 
 
 class TestFixPdfFontEncoding:

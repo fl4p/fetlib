@@ -21,22 +21,51 @@ The repair strategy is *visual glyph matching*:
    technical symbols.
 4. Pick the closest reference glyph for each source glyph (cosine
    similarity over inked-pixel arrays, with baseline-anchored normalization
-   so x-height letters aren't confused with cap-height letters).
+   so x-height letters aren't confused with cap-height letters), then break
+   near-ties with two non-visual features -- see "Tie-breaking" below.
 5. Synthesize a fresh ``/ToUnicode`` CMap and inject it into the font
    dictionary, replacing any existing one. The embedded glyph outlines are
    left alone so the page renders identically to before; downstream text
    extractors (pdfminer, pdftotext, pymupdf) now see proper unicode.
+
+Tie-breaking
+------------
+Some character pairs are at or past the resolution limit of pixel matching,
+and the failures are systematic rather than random -- every ``l`` in three
+Infineon datasheets extracted as ``I`` ("N-channeI, normaI IeveI"), and every
+``p`` in one display font as ``μ`` ("OμtiMOS"). Cosine similarity separated
+those by 0.003 and 0.008 respectively, which is noise.
+
+Two features that pixel matching does not see resolve them, and they are
+complementary:
+
+* **advance width** -- read from the embedded font's own ``hmtx``, calibrated
+  per font against the reference metrics using only the confidently-matched
+  glyphs. Separates same-shape/different-width pairs: ``l`` 222 vs ``I`` 278,
+  ``C`` 722 vs ``0`` 556.
+* **hole count** -- the number of enclosed background regions, a scale- and
+  weight-invariant topological property. Separates closed-vs-open pairs that
+  are the same width: ``p`` 1 vs ``μ`` 0, ``o`` 1 vs ``u`` 0, ``C`` 0 vs
+  ``0`` 1.
+
+Both are advisory and only run when the top two visual candidates are within
+``_TIE_MARGIN``. When a feature cannot be computed -- Type3 fonts have no
+``hmtx``, a hairline bowl can close or open under rasterization -- it returns
+*no opinion* and the visual winner stands unchanged. Neither feature can
+promote a candidate that visual matching did not already rank near the top.
 
 Public API:
     has_custom_font_encoding(pdf_path) -> bool
     fix_pdf_font_encoding(pdf_path, out_path=None) -> str  # path to saved PDF
 """
 
+import hashlib
 import io
 import logging
 import os
 import pathlib
 import re
+import warnings
 from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional, Set, Tuple, Union
 
@@ -92,6 +121,34 @@ _COMMON_GLYPHS: List[str] = (
 )
 
 _REF_CACHE: Optional[Dict[str, List[np.ndarray]]] = None
+_REF_ADV_CACHE: Optional[Dict[str, List[float]]] = None
+
+# --- tie-breaking constants -------------------------------------------
+# Measured on the three Infineon samples this was built for. The two known
+# mis-resolutions sat at margins 0.0033 and 0.0082; the nearest CORRECT
+# resolution that must not be disturbed sat at 0.047 (p over μ, vision right).
+# 0.03 is between them with roughly a factor of 4 either way -- wide enough to
+# catch the failures, far enough below 0.047 to leave correct calls alone.
+_TIE_MARGIN = 0.03
+
+# A glyph only calibrates the width scale if vision resolved it decisively.
+# Deliberately well above _TIE_MARGIN: a glyph that needed arbitration must not
+# then vote on the scale used to arbitrate it.
+_CONFIDENT_MARGIN = 0.06
+
+# Below this many confident samples the per-font scale is not estimated at all
+# and width abstains. A scale fitted to one or two glyphs is a guess, and a
+# guessed scale applied to a 3.6%-separated pair (p vs μ) decides by noise.
+_MIN_WIDTH_SAMPLES = 4
+
+# The rival's relative width error must be this many times SMALLER than the
+# visual winner's before width overrides vision. l vs I clears it by ~9x.
+_WIDTH_EDGE = 2.0
+
+# How many runners-up to carry per CID. Only candidates inside _TIE_MARGIN can
+# ever win, and more than a handful of distinct characters are never that close
+# to one glyph; the cap just bounds the per-CID work.
+_TIE_CANDIDATES = 6
 
 
 # ----- glyph rendering --------------------------------------------------
@@ -158,6 +215,41 @@ def _find_reference_fonts() -> Tuple[Union[str, bytes], Union[str, bytes]]:
         '(`apt install fonts-dejavu`), Liberation, or any sans-serif via '
         'fontconfig. Tried: '
         + ', '.join(p for pair in _REF_FONT_CANDIDATES for p in pair))
+
+
+def reference_font_salt() -> str:
+    """Identity of the reference fonts the glyph matcher compares against.
+
+    These bitmaps ARE the matcher's reference data: they decide which character each
+    embedded glyph is judged to be, and therefore which characters the repaired text layer
+    contains. Which file supplies them is resolved from the SYSTEM at runtime
+    (`_REF_FONT_CANDIDATES`, then `fc-match`, then Pillow's bundled DejaVu), so a font
+    install -- or simply a different machine -- changes the repaired text with no source
+    change anywhere. Hashing the matcher's code but not its reference data is the
+    signature-vs-proxy hole one level out from the code itself.
+
+    Same treatment `field_repr_salt` gives unidecode: name the external input in the key.
+    Unlike that one this does NOT raise when unresolvable, because "no usable reference
+    font" is a legitimate state on a machine that never repairs a PDF, and failing every
+    import over it would be worse than the gap. It is reported as its own distinct marker
+    instead, so an unresolved run and a resolved one can never share a cache entry.
+    """
+    try:
+        reg, bold = _find_reference_fonts()
+    except Exception:
+        return 'reffonts=UNRESOLVED'
+    from dslib.cache import _file_content_sig
+    parts = []
+    for src in (reg, bold):
+        if isinstance(src, bytes):
+            # Pillow's bundled fallback: no path to stat, so hash the bytes themselves.
+            parts.append('bytes:' + hashlib.sha256(src).hexdigest()[:16])
+        else:
+            try:
+                parts.append(os.path.basename(src) + ':' + _file_content_sig(src))
+            except Exception:
+                parts.append('unreadable:' + os.path.basename(str(src)))
+    return 'reffonts=' + hashlib.sha256('|'.join(parts).encode()).hexdigest()[:16]
 
 
 def _ink_bbox(img: Image.Image, threshold: int = 220) -> Optional[Tuple[int, int, int, int]]:
@@ -227,7 +319,7 @@ def _reference_glyphs() -> Dict[str, List[np.ndarray]]:
     """For each char in `_COMMON_GLYPHS`, the rendering from each available
     reference font (regular + bold). Returns char → list of inked arrays.
     """
-    global _REF_CACHE
+    global _REF_CACHE, _REF_ADV_CACHE
     if _REF_CACHE is not None:
         return _REF_CACHE
     reg_src, bold_src = _find_reference_fonts()
@@ -236,27 +328,154 @@ def _reference_glyphs() -> Dict[str, List[np.ndarray]]:
         return ImageFont.truetype(io.BytesIO(src) if isinstance(src, bytes) else src,
                                   _GLYPH_SIZE)
 
-    fonts = [_load(reg_src), _load(bold_src)]
+    srcs = [reg_src, bold_src]
     # Skip duplicate when fallback returned the same source for both weights.
     if reg_src == bold_src:
-        fonts = fonts[:1]
+        srcs = srcs[:1]
+    fonts = [_load(s) for s in srcs]
+    # Advances are built here rather than in a separate function so the metric
+    # list stays index-aligned with the bitmap list by construction. Two
+    # independent builders, each re-deriving the regular/bold dedup, is exactly
+    # the kind of parallel table that drifts.
+    adv_per_font = [_font_advances(s) for s in srcs]
+
     refs: Dict[str, List[np.ndarray]] = {}
+    advs: Dict[str, List[float]] = {}
     for ch in _COMMON_GLYPHS:
         variants = []
-        for f in fonts:
+        widths = []
+        for f, adv in zip(fonts, adv_per_font):
             arr = _render_glyph(f, ord(ch))
             if arr is not None:
                 variants.append(arr)
+                if ch in adv:
+                    widths.append(adv[ch])
         if variants:
             refs[ch] = variants
+            if widths:
+                advs[ch] = widths
     _REF_CACHE = refs
+    _REF_ADV_CACHE = advs
     return refs
+
+
+def _reference_advances() -> Dict[str, List[float]]:
+    """char -> advance widths (one per reference weight), 1000ths of an em.
+
+    A char may be absent: it renders but its metrics could not be read. Callers
+    must treat that as "no width evidence", never as a width of zero.
+    """
+    if _REF_ADV_CACHE is None:
+        _reference_glyphs()
+    return _REF_ADV_CACHE or {}
 
 
 def _similarity(a: np.ndarray, b: np.ndarray) -> float:
     """Cosine similarity between two inked-pixel arrays. Range ~0..1."""
     denom = float(np.sqrt((a * a).sum() * (b * b).sum())) + 1e-6
     return float((a * b).sum() / denom)
+
+
+# ----- non-visual glyph features ---------------------------------------
+
+def _hole_count(arr: np.ndarray, threshold: float = 0.35) -> int:
+    """Number of background regions fully enclosed by ink ('p'->1, 'μ'->0,
+    'B'->2). Topological, so it survives the weight and width differences that
+    make cosine similarity ambiguous.
+
+    Implemented as a border flood-fill in numpy rather than via scipy.ndimage:
+    scipy is not in requirements.txt and a 64x64 raster does not justify adding
+    it. Iterating binary dilation against the ink mask reaches a fixed point in
+    O(image diameter) passes.
+
+    The background is flooded 8-CONNECTED while regions are counted 4-connected.
+    That pairing is not arbitrary -- mixing connectivities is the standard way
+    out of the digital-topology paradox, and using 4 for both gets this wrong in
+    the direction that matters here. A stroke that closes only DIAGONALLY, which
+    is what antialiasing plus a hard threshold produces at a near-miss junction,
+    blocks a 4-connected background and so invents an enclosed region:
+    demonstrated on a 12x12 ring whose cavity is reachable from outside purely
+    corner-to-corner, which counted as 1 hole. An invented hole is the dangerous
+    direction, because `_break_tie` uses the count to ELIMINATE candidates -- a
+    phantom bowl on a real 'μ' would eliminate 'μ' and promote 'p', reproducing
+    the bug this feature exists to fix with the sign flipped.
+    """
+    ink = arr > threshold
+    bg = ~ink
+    if not bg.any():
+        return 0
+
+    # Flood the background inward from the border until it stops growing.
+    outside = np.zeros_like(bg)
+    outside[0, :] = bg[0, :]
+    outside[-1, :] = bg[-1, :]
+    outside[:, 0] = bg[:, 0]
+    outside[:, -1] = bg[:, -1]
+    while True:
+        grown = outside.copy()
+        grown[1:, :] |= outside[:-1, :]
+        grown[:-1, :] |= outside[1:, :]
+        grown[:, 1:] |= outside[:, :-1]
+        grown[:, :-1] |= outside[:, 1:]
+        # diagonals -- see the connectivity note above
+        grown[1:, 1:] |= outside[:-1, :-1]
+        grown[1:, :-1] |= outside[:-1, 1:]
+        grown[:-1, 1:] |= outside[1:, :-1]
+        grown[:-1, :-1] |= outside[1:, 1:]
+        grown &= bg
+        if grown.sum() == outside.sum():
+            break
+        outside = grown
+
+    enclosed = bg & ~outside
+    if not enclosed.any():
+        return 0
+
+    # Count connected components among the enclosed pixels the same way.
+    remaining = enclosed.copy()
+    n = 0
+    while remaining.any():
+        ys, xs = np.where(remaining)
+        seed = np.zeros_like(remaining)
+        seed[ys[0], xs[0]] = True
+        while True:
+            grown = seed.copy()
+            grown[1:, :] |= seed[:-1, :]
+            grown[:-1, :] |= seed[1:, :]
+            grown[:, 1:] |= seed[:, :-1]
+            grown[:, :-1] |= seed[:, 1:]
+            grown &= remaining
+            if grown.sum() == seed.sum():
+                break
+            seed = grown
+        remaining &= ~seed
+        # A speck of anti-aliasing noise should not read as a counting bowl.
+        # Components below a few pixels are dropped rather than counted.
+        if seed.sum() >= 4:
+            n += 1
+    return n
+
+
+def _font_advances(src: Union[str, bytes]) -> Dict[str, float]:
+    """char -> advance width in 1000ths of an em, for a reference font file."""
+    try:
+        tt = TTFont(io.BytesIO(src) if isinstance(src, bytes) else src,
+                    fontNumber=0, lazy=True)
+        upm = tt['head'].unitsPerEm or 1000
+        cmap = tt.getBestCmap()
+        hmtx = tt['hmtx']
+    except Exception:
+        return {}
+    out: Dict[str, float] = {}
+    for ch in _COMMON_GLYPHS:
+        gname = cmap.get(ord(ch))
+        if not gname:
+            continue
+        try:
+            out[ch] = hmtx[gname][0] * 1000.0 / upm
+        except Exception:
+            continue
+    return out
 
 
 # ----- font analysis ---------------------------------------------------
@@ -301,16 +520,51 @@ def _is_identity_to_unicode(doc: pymupdf.Document, font_xref: int) -> bool:
     return same / len(bfchars) >= 0.9
 
 
+def _cid_ordering(doc: pymupdf.Document, xref: int) -> Optional[str]:
+    """The descendant CIDFont's /CIDSystemInfo /Ordering, or None if unreadable.
+
+    'Identity' means the CIDs are raw glyph indices of a subset font and carry
+    no character meaning whatsoever. A registered collection ('Japan1', 'GB1',
+    …) is the opposite: a conforming reader maps those to unicode through a
+    standard CMap, so a missing /ToUnicode is not by itself a defect there.
+    """
+    try:
+        obj = doc.xref_object(xref)
+        m = re.search(r'/DescendantFonts\s*\[\s*(\d+)\s+0\s+R', obj)
+        desc = doc.xref_object(int(m.group(1))) if m else obj
+        mo = re.search(r'/Ordering\s*\(([^)]*)\)', desc)
+        return mo.group(1) if mo else None
+    except Exception:
+        return None
+
+
 def _font_has_suspect_encoding(doc: pymupdf.Document, xref: int, enc: str) -> bool:
     """A font is suspect (likely scrambled custom encoding) when either:
-        - its Encoding entry is absent / a Differences dict (pymupdf reports `enc=''`)
-          AND it has no /ToUnicode, OR
+        - it has no /ToUnicode and its encoding cannot supply unicode itself, OR
         - it has a /ToUnicode that's an identity mapping.
+
+    The no-/ToUnicode case covers two encodings:
+      * absent / a Differences dict — pymupdf reports `enc=''`;
+      * Identity-H / Identity-V — codes ARE glyph indices, so there is nothing
+        to decode them with.
+
+    The Identity arm used to be missing, and `enc` being the truthy string
+    'Identity-H' meant the `not enc` test skipped straight past it. Five fonts
+    in MCAC100N08Y-TP.pdf are exactly that shape, which is why its part number
+    extracted as '0&$&\\x14\\x13\\x131\\x13\\x1b<' — every byte a uniform 0x1D
+    below the real text — while the file was being reported as clean.
     """
-    if not enc:
-        obj = doc.xref_object(xref)
-        if not re.search(r'/ToUnicode\s+\d+\s+0\s+R', obj):
+    obj = doc.xref_object(xref)
+    if not re.search(r'/ToUnicode\s+\d+\s+0\s+R', obj):
+        if not enc:
             return True
+        if enc.startswith('Identity'):
+            # A registered collection is decodable without /ToUnicode; only
+            # Adobe-Identity-0 (or an ordering we cannot read, which we must
+            # not assume is a standard collection) is not.
+            ordering = _cid_ordering(doc, xref)
+            return ordering in (None, 'Identity')
+        return False
     return _is_identity_to_unicode(doc, xref)
 
 
@@ -663,6 +917,39 @@ def _cid_to_gid_lookup(font_bytes: bytes, is_type0: bool) -> Callable[[int], Opt
     return lookup
 
 
+def _embedded_advances(font_bytes: bytes, cid_to_gid: Callable[[int], Optional[int]],
+                       cids: Set[int]) -> Dict[int, float]:
+    """cid -> advance width in 1000ths of an em, from the embedded font's hmtx.
+
+    Read from the font binary rather than measured off the page: the on-page
+    spacing in `_actual_advances` is a per-occurrence Tm delta that includes
+    tracking and kerning, and it is absent for any CID the regex did not catch
+    (it came back NaN for every glyph of the display font that produced the
+    "OμtiMOS" mis-resolution). hmtx is the designed metric, present for every
+    glyph, and independent of how the text happens to be laid out.
+
+    CIDs whose advance cannot be read are OMITTED, never defaulted -- a
+    missing key means "no width evidence" and callers abstain on it.
+    """
+    try:
+        tt = TTFont(io.BytesIO(font_bytes), fontNumber=0, lazy=True)
+        upm = tt['head'].unitsPerEm or 1000
+        hmtx = tt['hmtx']
+        order = tt.getGlyphOrder()
+    except Exception:
+        return {}
+    out: Dict[int, float] = {}
+    for cid in cids:
+        gid = cid_to_gid(cid)
+        if gid is None or gid <= 0 or gid >= len(order):
+            continue
+        try:
+            out[cid] = hmtx[order[gid]][0] * 1000.0 / upm
+        except Exception:
+            continue
+    return out
+
+
 # ----- ToUnicode CMap ---------------------------------------------------
 
 def _build_to_unicode_cmap(mapping: Dict[int, str], two_byte: bool) -> bytes:
@@ -791,6 +1078,92 @@ def _actual_advances(doc: pymupdf.Document, font_xrefs: Set[int]
             for xref, cid_advs in advances.items()}
 
 
+# A measured advance may legitimately differ from the designed one through
+# tracking and kerning -- a few percent, tens of percent for loose display
+# setting. A factor of two is not a glyph advance any more.
+_MAX_MEASURED_WIDTH_RATIO = 2.0
+
+
+def _plausible_measured_widths(doc: pymupdf.Document, fi: _FontInfo,
+                               measured: Dict[int, float]) -> Dict[int, float]:
+    """Keep only measured advances the font's own `hmtx` corroborates.
+
+    `_actual_advances` reads the gap between consecutive `Tm` operators, which
+    equals the advance only when the glyphs are set as a run. Where a producer
+    positions each glyph independently, that gap is a jump to the next column
+    or line instead: in HY0910D.pdf the median measured advance is 54x the
+    glyph's designed width and the worst is 832x, and declaring those as `/W`
+    made every extractor split words apart ("H Y0 9 1", "P o w e r") -- text
+    that came out correct before the override touched it. On a normally-set
+    file (BSC190N15NS3_G.pdf) the same measurement lands at 1.01x, so the
+    measurement is not wrong in general, only unguarded.
+
+    `hmtx` is the authority here and the measurement is a proxy for it, so
+    where they disagree the proxy loses. A CID the font has no metric for is
+    dropped rather than trusted unchecked -- including every CID of a font
+    whose binary will not parse at all, which is why this returns {} in that
+    case instead of the measurements it could not check.
+    """
+    if not measured or fi.is_type3:
+        return {}
+    try:
+        _basefont, _ext, _typ, font_bytes = doc.extract_font(fi.xref)
+    except Exception:
+        return {}
+    if not font_bytes:
+        return {}
+    designed = _embedded_advances(font_bytes,
+                                  _cid_to_gid_lookup(font_bytes, fi.is_type0),
+                                  set(measured))
+    out = {}
+    for cid, w in measured.items():
+        d = designed.get(cid)
+        if not d or d <= 0 or w <= 0:
+            continue
+        if 1 / _MAX_MEASURED_WIDTH_RATIO <= w / d <= _MAX_MEASURED_WIDTH_RATIO:
+            out[cid] = w
+    return out
+
+
+def _has_pdf_array(obj: str, key: str) -> bool:
+    """Whether `/key` in this dict-string is followed by an array at all.
+
+    Exists so a caller can tell `_replace_pdf_array`'s two None outcomes apart. They mean
+    opposite things: 'the key is absent, add it' versus 'the key is there but malformed,
+    do not touch it'. Conflating them made the Type0 branch append a SECOND /W next to the
+    broken one, and the PDF spec does not define which of two duplicate keys wins -- mupdf
+    takes the last, so the intended widths happened to survive here, but a first-wins
+    consumer would keep the broken table with nothing reported.
+    """
+    return bool(re.search(r'/' + re.escape(key) + r'\s*\[', obj))
+
+
+def _replace_pdf_array(obj: str, key: str, new_array: str) -> Optional[str]:
+    """Replace the array following `/key` in a PDF dict-string, or None if
+    `/key` is not followed by an array.
+
+    Scans with a bracket counter instead of matching `\\[[^\\]]*\\]`: a CIDFont
+    `/W` array nests, e.g. `/W [ 9 [ 722 ] 11 12 333 16 [ 333 278 ] ]`, and the
+    lazy form terminates at the first INNER `]`. That left the tail
+    (`11 12 333 …`) stranded at dict level, and mupdf rejected the object with
+    'invalid key in dict' -- aborting the entire repair, /ToUnicode included,
+    for every Type0 font whose widths happen to be written in ranged form.
+    """
+    m = re.search(r'/' + re.escape(key) + r'\s*\[', obj)
+    if not m:
+        return None
+    depth = 0
+    for i in range(m.end() - 1, len(obj)):
+        c = obj[i]
+        if c == '[':
+            depth += 1
+        elif c == ']':
+            depth -= 1
+            if depth == 0:
+                return obj[:m.start()] + '/' + key + ' ' + new_array + obj[i + 1:]
+    return None  # unbalanced — leave the object alone rather than corrupt it
+
+
 def _override_widths(doc: pymupdf.Document, font_xref: int,
                      cid_to_width: Dict[int, float], is_type0: bool) -> None:
     """Replace the font's declared widths with the measured advances.
@@ -813,9 +1186,15 @@ def _override_widths(doc: pymupdf.Document, font_xref: int,
         w_str = '[ ' + ' '.join(f'{cid} [{int(round(w))}]'
                                 for cid, w in items) + ' ]'
         desc_obj = doc.xref_object(desc_xref)
-        if re.search(r'/W\s*\[', desc_obj):
-            new_desc = re.sub(r'/W\s*\[[^\]]*\]', f'/W {w_str}', desc_obj)
-        else:
+        new_desc = _replace_pdf_array(desc_obj, 'W', w_str)
+        if new_desc is None:
+            if _has_pdf_array(desc_obj, 'W'):
+                # Present but unbalanced. Appending here would leave the broken array in
+                # place AND add a second /W, so leave the object exactly as it is; the
+                # /ToUnicode repair is already applied and is the part that matters.
+                warnings.warn('fix_encoding: malformed /W array on xref %d; '
+                              'leaving widths unchanged' % desc_xref)
+                return
             new_desc = desc_obj.rstrip()
             if new_desc.endswith('>>'):
                 new_desc = new_desc[:-2].rstrip() + f' /W {w_str}\n>>'
@@ -840,8 +1219,9 @@ def _override_widths(doc: pymupdf.Document, font_xref: int,
         if 0 <= idx < len(widths):
             widths[idx] = int(round(w))
     new_w_str = '[ ' + ' '.join(str(w) for w in widths) + ' ]'
-    new_obj = re.sub(r'/Widths\s*\[[^\]]*\]', f'/Widths {new_w_str}', obj)
-    doc.update_object(font_xref, new_obj)
+    new_obj = _replace_pdf_array(obj, 'Widths', new_w_str)
+    if new_obj is not None:
+        doc.update_object(font_xref, new_obj)
 
 
 def _set_font_to_unicode(doc: pymupdf.Document, font_xref: int, cmap_bytes: bytes) -> None:
@@ -880,6 +1260,9 @@ def _build_font_mapping(
     matching reference char. Returns {cid: unicode_str} or None on failure.
     Unrenderable / sub-threshold CIDs map to space.
     """
+    font_bytes: Optional[bytes] = None
+    cid_to_gid: Optional[Callable[[int], Optional[int]]] = None
+
     if fi.is_type3:
         res = _gather_type3_resources(doc, fi.xref)
         if res is None:
@@ -906,21 +1289,137 @@ def _build_font_mapping(
                 return None
             return _render_glyph(pil_font, _PUA_BASE + gid)
 
-    mapping: Dict[int, str] = {}
+    # Rank every candidate per CID, keeping the runners-up: a near-tie is not
+    # visible from the winner alone, and the tie-break needs the rivals.
+    ranked: Dict[int, List[Tuple[float, str]]] = {}
+    holes: Dict[int, int] = {}
     for cid in sorted(fi.used_codes):
         glyph_arr = render(cid)
         if glyph_arr is None:
+            continue
+        scores = sorted(
+            ((max(_similarity(glyph_arr, v) for v in variants), ref_ch)
+             for ref_ch, variants in ref_items),
+            reverse=True)
+        if not scores:
+            continue
+        ranked[cid] = scores[:_TIE_CANDIDATES]
+        try:
+            holes[cid] = _hole_count(glyph_arr)
+        except Exception:
+            pass  # no topology evidence for this CID; width/vision still apply
+
+    # Type3 glyphs are drawing procedures with no hmtx, so width abstains for
+    # them and topology alone does the arbitration.
+    emb_adv = (_embedded_advances(font_bytes, cid_to_gid, set(ranked))
+               if font_bytes and cid_to_gid else {})
+    scale = _calibrate_width_scale(ranked, emb_adv)
+
+    mapping: Dict[int, str] = {}
+    for cid in sorted(fi.used_codes):
+        scores = ranked.get(cid)
+        if not scores:
             mapping[cid] = ' '
             continue
-        best_ch, best_score = None, -1.0
-        for ref_ch, variants in ref_items:
-            for v in variants:
-                s = _similarity(glyph_arr, v)
-                if s > best_score:
-                    best_score, best_ch = s, ref_ch
-        mapping[cid] = best_ch if (best_ch is not None
-                                   and best_score >= min_similarity) else ' '
+        best_score, best_ch = scores[0]
+        if best_score < min_similarity:
+            mapping[cid] = ' '
+            continue
+        mapping[cid] = _break_tie(scores, holes.get(cid),
+                                  emb_adv.get(cid), scale)
     return mapping or None
+
+
+def _calibrate_width_scale(ranked: Dict[int, List[Tuple[float, str]]],
+                           emb_adv: Dict[int, float]) -> Optional[float]:
+    """Ratio between this font's advance widths and the reference font's.
+
+    Subset display faces are routinely 5-15% wider or narrower than the
+    reference, which is more than the gap between some confusable pairs, so
+    raw widths cannot be compared directly. The scale is fitted only on glyphs
+    vision resolved decisively (margin >= `_CONFIDENT_MARGIN`) -- an ambiguous
+    glyph must not vote on the scale that will then arbitrate it.
+
+    Returns None when fewer than `_MIN_WIDTH_SAMPLES` glyphs qualify. That is
+    deliberately not a fallback of 1.0: assuming reference metrics for an
+    unmeasured font would decide 3%-separated pairs on an assumption, and the
+    caller abstains instead.
+    """
+    ref_adv = _reference_advances()
+    ratios: List[float] = []
+    for cid, scores in ranked.items():
+        if len(scores) < 2 or scores[0][0] - scores[1][0] < _CONFIDENT_MARGIN:
+            continue
+        w = emb_adv.get(cid)
+        refs = ref_adv.get(scores[0][1])
+        if not w or w <= 0 or not refs:
+            continue
+        # Nearest weight variant: bold and regular differ enough (Arial 'I' is
+        # 278 vs 333) to bias the fit if the wrong one is assumed.
+        ratios.append(min(refs, key=lambda r: abs(r - w)) / w)
+    if len(ratios) < _MIN_WIDTH_SAMPLES:
+        return None
+    return float(np.median(ratios))
+
+
+def _break_tie(scores: List[Tuple[float, str]], hole_count: Optional[int],
+               emb_width: Optional[float], scale: Optional[float]) -> str:
+    """Choose among visual candidates that are within `_TIE_MARGIN` of the top.
+
+    Returns the visual winner unchanged whenever the extra features are absent
+    or do not clearly disagree with it. Only candidates vision already placed
+    in the tie band can win, so a feature can reorder the shortlist but never
+    introduce a character that did not look like the glyph.
+    """
+    best_score, best_ch = scores[0]
+    tied = [(s, c) for s, c in scores if best_score - s <= _TIE_MARGIN]
+    if len(tied) < 2:
+        return best_ch
+
+    # --- topology first: discrete, and invariant to weight and width.
+    if hole_count is not None:
+        ref_glyphs = _reference_glyphs()
+        agreeing = []
+        for s, c in tied:
+            variants = ref_glyphs.get(c) or []
+            counts = {_hole_count(v) for v in variants}
+            # ANY weight matching is enough. Arial's '6' encloses two regions
+            # regular and one bold, so requiring every variant to agree would
+            # discard the feature on exactly the glyphs it is meant to judge.
+            if hole_count in counts:
+                agreeing.append((s, c))
+        if agreeing and len(agreeing) < len(tied):
+            tied = agreeing
+            if tied[0][1] != best_ch:
+                best_score, best_ch = tied[0]
+
+    if len(tied) < 2:
+        return best_ch
+
+    # --- then width, for same-topology pairs such as l/I and O/Q.
+    if scale is None or not emb_width or emb_width <= 0:
+        return best_ch
+    ref_adv = _reference_advances()
+    scaled = emb_width * scale
+
+    def rel_err(ch: str) -> Optional[float]:
+        refs = ref_adv.get(ch)
+        if not refs:
+            return None
+        return min(abs(r - scaled) / r for r in refs)
+
+    incumbent = rel_err(best_ch)
+    if incumbent is None:
+        return best_ch
+    challengers = [(e, c) for _s, c in tied
+                   if c != best_ch and (e := rel_err(c)) is not None]
+    if not challengers:
+        return best_ch
+    err, ch = min(challengers)
+    # Require a clear margin, not merely a smaller number: two candidates a
+    # few percent apart are within the calibration's own uncertainty, and
+    # flipping on that would trade one coin-toss for another.
+    return ch if err * _WIDTH_EDGE < incumbent else best_ch
 
 
 def fix_pdf_font_encoding(
@@ -969,8 +1468,18 @@ def fix_pdf_font_encoding(
     for xref, (fi, m) in mappings.items():
         _set_font_to_unicode(
             doc, xref, _build_to_unicode_cmap(m, two_byte=fi.is_type0))
-        if xref in widths:
-            _override_widths(doc, xref, widths[xref], fi.is_type0)
+        trusted = _plausible_measured_widths(doc, fi, widths.get(xref, {}))
+        if trusted:
+            # Width override is a copy-and-paste nicety; the /ToUnicode above is
+            # the actual repair and is already applied. Letting a malformed
+            # width object abort the run threw away a working text fix for
+            # every font in the file, so contain it -- but say so, because a
+            # silently skipped override is a real (if cosmetic) degradation.
+            try:
+                _override_widths(doc, xref, trusted, fi.is_type0)
+            except Exception as e:
+                warnings.warn('fix_encoding: width override failed for font '
+                              'xref %d (%s): %s' % (xref, fi.short_name, e))
         fixed_any = True
 
     if not fixed_any:
