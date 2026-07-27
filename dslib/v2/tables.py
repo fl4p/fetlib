@@ -1022,6 +1022,15 @@ def _cond_from_cell(page: Page, scan: List[dict], idx: int,
     # the wrong direction.
     from dslib.v2 import rules as _rules
 
+    if not page.backend:
+        # Unknown provenance refuses outright, as Page.backend's own docstring
+        # says it must. frame_matches would be the wrong question here: it
+        # checks that FITZ's geometry is ordinary, which says nothing about the
+        # frame an unidentified producer put these baselines in. Letting "" fall
+        # through to it would answer a question nobody asked and call the answer
+        # evidence. No production constructor omits backend today, so this is
+        # the latent case -- kept explicit so the claim and the code agree.
+        return None
     if page.backend != "fitz":
         mb = page.mediabox
         if not _rules.frame_matches(page.pdf_path, page.page_num,

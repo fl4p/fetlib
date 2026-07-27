@@ -206,10 +206,21 @@ def frame_matches(pdf_path: str, page_num: int,
 
     ``page_rules`` reads rulings through fitz and flips them with the fitz page
     height, so a consumer whose text came from ANOTHER library is only safe
-    when the two frames coincide. They do when the page is unrotated, its
-    cropbox equals its mediabox, and that box starts at the origin; any of
-    those failing puts bands and baselines in different spaces, which attaches
-    silently wrong conditions rather than none.
+    when the two frames coincide. They do when the page is unrotated and its
+    cropbox equals its mediabox; either failing puts bands and baselines in
+    different spaces, which attaches silently wrong conditions rather than none.
+
+    An origin-shifted MediaBox is NOT one of the failing cases, contrary to
+    what this docstring first claimed. pdfminer's PDFPageInterpreter subtracts
+    (x0, y0) and PDFLayoutAnalyzer.begin_page always emits an LTPage whose bbox
+    is (0, 0, width, height); fitz normalises the same page, so the two agree
+    and the shift is invisible to both. The original claim came from calling
+    this function with a raw shifted box that ``_pages_pdfminer`` never
+    supplies -- a calibration against an input the production path cannot
+    produce, which proves nothing about the production path. Measured on a
+    shifted-MediaBox PDF: baselines 671.923 (pdfminer) vs 672.0 (fitz), rule at
+    652. The origin test below is kept as a cheap assertion of that invariant,
+    not as a live defence; if it ever fires, the assumption has changed.
 
     Checking the geometry is deliberate. Refusing every pdfminer page instead
     would be the safe-looking choice and it is measurably wrong: over 126
