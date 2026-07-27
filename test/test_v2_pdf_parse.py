@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import os
 import sys
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -226,11 +226,18 @@ NEGATIVE_SAMPLES = [
 ]
 
 
-def run_negative(pdf_path, symbol, stat, forbidden) -> bool:
-    """True if the forbidden value is absent (i.e. the check passes)."""
+def run_negative(pdf_path, symbol, stat, forbidden) -> Optional[bool]:
+    """True if the forbidden value is absent, None if it could not be checked.
+
+    The absent fixture must NOT read as a pass. Returning True there made a
+    partial checkout print "3 / 3 negative checks passed" while running none of
+    them -- absence of the PDF encoding absence of the bug. Unlike the positive
+    SAMPLES, nothing else in this file opens these three files, so a rename or
+    a shallow datasheets clone would retire all three guards silently.
+    """
     if not os.path.exists(pdf_path):
-        print(f"    SKIP: {pdf_path} missing")
-        return True
+        print(f"    UNVERIFIED: {pdf_path} missing -- guard did not run")
+        return None
     ds = parse_datasheet(pdf_path)
     f = (ds.fields_filled or {}).get(symbol) if ds else None
     got = getattr(f, stat, math.nan) if f is not None else math.nan
@@ -324,19 +331,26 @@ def main() -> int:
             misses_summary.append((pdf, miss))
 
     neg_ok = 0
+    neg_unverified = 0
     print("\n>>> negative checks (values v2 must NOT produce)")
     for pdf, sym, stat, bad in NEGATIVE_SAMPLES:
-        neg_ok += run_negative(pdf, sym, stat, bad)
+        verdict = run_negative(pdf, sym, stat, bad)
+        if verdict is None:
+            neg_unverified += 1
+        elif verdict:
+            neg_ok += 1
 
     print("\n" + "=" * 60)
     print(f"TOTAL  {total_ok} / {total_exp} reference values matched")
-    print(f"       {neg_ok} / {len(NEGATIVE_SAMPLES)} negative checks passed")
+    print(f"       {neg_ok} / {len(NEGATIVE_SAMPLES)} negative checks passed"
+          + (f"  ({neg_unverified} UNVERIFIED)" if neg_unverified else ""))
     if misses_summary:
         print(f"\nMissing symbols:")
         for pdf, ms in misses_summary:
             print(f"  {pdf}: {ms}")
     return 0 if (total_ok == total_exp
-                 and neg_ok == len(NEGATIVE_SAMPLES)) else 1
+                 and neg_ok == len(NEGATIVE_SAMPLES)
+                 and neg_unverified == 0) else 1
 
 
 def test_v2_reference_values():

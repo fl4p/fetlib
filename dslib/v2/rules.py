@@ -200,6 +200,62 @@ def band_is_credible(rules: Tuple[Rule, ...], band: Tuple[float, float],
     return False
 
 
+def frame_matches(pdf_path: str, page_num: int,
+                  mediabox: Tuple[float, float, float, float]) -> bool:
+    """Do fitz's ruling coordinates live in the same space as these baselines?
+
+    ``page_rules`` reads rulings through fitz and flips them with the fitz page
+    height, so a consumer whose text came from ANOTHER library is only safe
+    when the two frames coincide. They do when the page is unrotated, its
+    cropbox equals its mediabox, and that box starts at the origin; any of
+    those failing puts bands and baselines in different spaces, which attaches
+    silently wrong conditions rather than none.
+
+    Checking the geometry is deliberate. Refusing every pdfminer page instead
+    would be the safe-looking choice and it is measurably wrong: over 126
+    pdfminer-resolved parts a blanket refusal dropped 474 conditions, and the
+    ones inspected were CORRECT (Ciss at "Vds=40 V, Vgs=0, f=1 MHz", Qg at
+    "Vgs=10 V, Vds=50 V, Id=20 A"). A guard that fires is not thereby a guard
+    that fires in the right direction; this one tests the actual precondition,
+    so it costs those parts nothing and still refuses the case it exists for.
+
+    Returns False when the page cannot be read -- unknown geometry is not
+    matching geometry.
+    """
+    try:
+        import fitz
+    except Exception:
+        return False
+    if not os.path.exists(pdf_path):
+        return False
+    try:
+        doc = fitz.open(pdf_path)
+    except Exception:
+        return False
+    try:
+        if page_num >= len(doc):
+            return False
+        page = doc[page_num]
+        if getattr(page, "rotation", 0):
+            return False
+        rect, crop = page.rect, page.cropbox
+        mx1, my1, mx2, my2 = mediabox
+        eps = 1.0
+        if abs(mx1) > eps or abs(my1) > eps:
+            return False          # origin-shifted box: the flip assumes 0
+        if abs(crop.width - rect.width) > eps or abs(crop.height - rect.height) > eps:
+            return False
+        return (abs(rect.width - (mx2 - mx1)) <= eps
+                and abs(rect.height - (my2 - my1)) <= eps)
+    except Exception:
+        return False
+    finally:
+        try:
+            doc.close()
+        except Exception:
+            pass
+
+
 def rows_in_band(row_ys: List[float], band: Tuple[float, float]) -> List[int]:
     """Indices of baselines falling inside a band (exclusive of its edges)."""
     top, bottom = band

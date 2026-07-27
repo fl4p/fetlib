@@ -618,15 +618,20 @@ def _cond_from_column(row: TextRow,
 # A bare voltage parenthesised in the symbol cell, as in "Qg(4.5V)".
 _LABEL_VOLTAGE_RE = re.compile(r'\(\s*(\d+(?:\.\d+)?)\s*V\s*\)', re.I)
 
-# Symbols where that voltage is the GATE DRIVE. Charge only, deliberately.
+# Symbols where that voltage is the GATE DRIVE. Qg alone, deliberately.
 # For Qg the parenthesised voltage is the VGS the charge was measured at --
-# that is the whole point of printing two of them. Extending this to, say,
-# resistance would need its own evidence: "RDS(on)" already parenthesises a
-# word, and while "(on)" cannot match a number, some other vendor's
-# "R(4.5V)" might mean something else entirely.
-_LABEL_VOLTAGE_SYMBOLS = frozenset({
-    "Qg", "Qgs", "Qgd", "Qsw", "Qoss", "Qg_th", "Qgs2",
-})
+# that is the whole point of printing two of them.
+#
+# The first version listed every gate-charge symbol, which was wrong on
+# physics, not merely broad: Qoss is OUTPUT charge versus DRAIN voltage, so
+# "Qoss(100V)" names VDS and calling it VGS = 100 V invents a gate drive no
+# part has. That is the failure this whole function exists to prevent, so
+# guessing the key from the symbol's family is not good enough -- each symbol
+# has to earn its entry with grounded semantics. Extending to resistance would
+# likewise need its own evidence: "RDS(on)" already parenthesises a word, and
+# while "(on)" cannot match a number, some vendor's "R(4.5V)" might mean
+# something else entirely.
+_LABEL_VOLTAGE_SYMBOLS = frozenset({"Qg"})
 
 
 def _cond_from_symbol_label(row: TextRow,
@@ -1001,10 +1006,27 @@ def _cond_from_cell(page: Page, scan: List[dict], idx: int,
     # baselines in different spaces and attach silently wrong conditions.
     # No datasheet in a 1000-PDF sample trips it, so this costs nothing today
     # and is not worth guessing a transform for -- refuse instead.
-    from dslib.v2.chars import DEFAULT_BACKEND
-    if DEFAULT_BACKEND == "pdfminer":
-        return None
+    #
+    # The first version tested chars.DEFAULT_BACKEND, which is "auto" in every
+    # normal run: auto resolves per FILE and hands back pdfminer pages whenever
+    # fitz lost a glyph (~20% of the corpus), and an explicit
+    # extract_pages_with_rows(backend="pdfminer") never consults the default at
+    # all. So the guard read "pdfminer" almost never, and the case it exists to
+    # refuse walked straight through it -- a precondition checked against the
+    # wrong variable is not checked. The page now carries its resolved backend.
+    #
+    # Non-fitz pages are then tested on the thing that actually matters rather
+    # than turned away: whether fitz's frame coincides with theirs. Refusing
+    # them outright measured as 474 lost conditions over 126 pdfminer parts,
+    # all the inspected ones correct -- the guard would have fired hard and in
+    # the wrong direction.
     from dslib.v2 import rules as _rules
+
+    if page.backend != "fitz":
+        mb = page.mediabox
+        if not _rules.frame_matches(page.pdf_path, page.page_num,
+                                    (mb.x1, mb.y1, mb.x2, mb.y2)):
+            return None
 
     rs = _rules.page_rules(page.pdf_path, page.page_num)
     if not rs:

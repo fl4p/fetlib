@@ -191,6 +191,14 @@ class Page:
     # because that extraction is lazy: vector operators are expensive and most
     # pages never need them.
     pdf_path: str = ""
+    # The backend that ACTUALLY produced these rows: "fitz" or "pdfminer",
+    # never "auto". Consumers that mix in geometry from another library (the
+    # ruling lines in dslib.v2.rules are read via fitz) must agree with the
+    # frame these baselines are in, and the process-wide DEFAULT_BACKEND does
+    # not tell them: it is normally "auto", which resolves per file, and an
+    # explicit backend= argument bypasses it entirely. Default "" means
+    # unknown, which every such consumer must treat as "refuse", not as fitz.
+    backend: str = ""
 
 
 # ---------- low-level char extraction ----------
@@ -788,7 +796,8 @@ def extract_pages_with_rows(pdf_path: str,
                           rows=rows,
                           char_count=len(chars),
                           n_undecoded=lost,
-                          pdf_path=pdf_path))
+                          pdf_path=pdf_path,
+                          backend=backend))
     return pages
 
 
