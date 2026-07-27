@@ -139,28 +139,31 @@ def test_selector_is_used_and_not_reimplemented():
     """Guards the point of the change. If a call site grows its own precedence again, the two
     can drift apart silently -- which is exactly what happened between main.py and field.py.
     """
-    import inspect
+    import os
     import dslib.field
-    import main
 
     needle = "get_resistance_milliohm('Rds_on_10v'"
 
-    # Read each file ONCE, up front. This is a source-scanning check, so it is only as stable
-    # as the files under it -- and in a worktree several agents edit concurrently, three
-    # separate getsource() calls can straddle someone else's save and disagree with each
-    # other. An earlier version did exactly that and failed in the full suite while passing in
-    # isolation, twice, for no reason in this module. A consistent snapshot cannot do that.
-    field_src = inspect.getsource(dslib.field)
-    main_src = inspect.getsource(main)
-    # The selector is the ONE legitimate occurrence, so subtract its own body rather than
-    # matching it -- the first version of this test flagged the selector as the violation.
-    own_src = inspect.getsource(dslib.field.DatasheetFields.select_rds_on_milliohm)
+    # PURE TEXT, deliberately. This used inspect.getsource on the bound method, which
+    # resolves the body via the code object's co_firstlineno -- a line number fixed at IMPORT
+    # -- while reading the file as it is NOW. In a worktree other agents edit during a 3
+    # minute suite, any line-count change makes it return a DIFFERENT method's source: it
+    # handed back get_resistance_milliohm and the test failed claiming the selector no longer
+    # reads Rds_on_10v. It failed that way three times in the full suite while passing in
+    # isolation, and a "consistent snapshot" fix did not help because the drift happens before
+    # every read. Reading the file once and locating the method by text has no such coupling.
+    field_path = os.path.abspath(dslib.field.__file__)
+    main_path = os.path.join(os.path.dirname(os.path.dirname(field_path)), 'main.py')
+    field_src = open(field_path, encoding='utf-8').read()
+    main_src = open(main_path, encoding='utf-8').read()
+
+    start = field_src.find('    def select_rds_on_milliohm(')
+    assert start != -1, 'select_rds_on_milliohm is gone; this test is measuring nothing'
+    end = field_src.find('\n    def ', start + 1)
+    own_src = field_src[start:end if end != -1 else len(field_src)]
 
     assert own_src.count(needle) == 1, \
         'selector no longer reads Rds_on_10v; this test is measuring nothing'
-    assert own_src in field_src, \
-        'inconsistent source snapshot (concurrent edit?); re-run before believing a failure'
-
     assert field_src.count(needle) == 1, \
         'dslib.field reimplements Rds precedence outside select_rds_on_milliohm'
     assert main_src.count(needle) == 0, \
