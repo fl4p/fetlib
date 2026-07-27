@@ -217,6 +217,28 @@ _PARSE_DERIVATION_SOURCES = (
     ('pdf', 'pdf2txt', '__init__.py'),
     ('pdf', 'fix_encoding.py'),
     ('pdf', 'pipeline.py'),
+
+    # dslib/v2 -- the spatial extraction stage parse_datasheet CALLS (see the
+    # `import dslib.v2` below). It was missing, and that is the same signature-vs-proxy hole
+    # as fix_encoding above, at the stage that produces MOST of the values: v2 supplies the
+    # geometry-derived fields, so a change to its header detection or row clustering rewrites
+    # the numbers this function returns, and none of the keys above could see it.
+    #
+    # Demonstrated rather than assumed: after the 2026-07-27 header-guard fix
+    # (v2/tables.py _header_match_is_incidental), seven ST parts still served Rds_on = 10000
+    # mOhm from cache -- a repaired extractor and a stale, plausible, wrong stored value.
+    # apps/reparse_parts.py only got the right answer because it calls disk_cache_disable().
+    #
+    # The FILES are hashed rather than composing dslib.v2.v2_code_salt(): v2/__init__.py
+    # imports detect_fields from this module, so calling into it while building this
+    # module's salt is a circular import. Content-hashing the same files sidesteps that.
+    # v2_code_salt additionally folds in the resolved backend and the `any` detect regex,
+    # which are covered here by expr.py plus v2's own key -- this entry exists to invalidate
+    # the OUTER cache, not to duplicate the inner one.
+    ('v2', '__init__.py'),
+    ('v2', 'chars.py'),
+    ('v2', 'tables.py'),
+    ('v2', 'rules.py'),
 )
 
 
