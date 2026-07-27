@@ -63,10 +63,23 @@ def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
         if cond:
             cond.setdefault('source', 'curated')
             specs.qrr_cond = cond
-    # Parsed conditions last, and only if nothing curated claimed the slot. They carry
-    # source='parsed' so a consumer can tell a hand-read operating point from one read by
-    # the table parser -- the two are not equally trustworthy and the loss number must not
-    # pretend they are.
+    # Then the LAYOUT registry: test points machine-read from the datasheet's table
+    # geometry (dslib/qrr_layout_conditions.py) for sheets whose condition cell spans the
+    # trr/Qrr rows, which the key-based parser cannot see. Below hand-curated because
+    # nobody has eyeballed them; above the keyed parse because they exist at all where it
+    # found nothing.
+    try:
+        from dslib.qrr_layout_conditions import qrr_layout_conditions_for
+    except ImportError:
+        qrr_layout_conditions_for = None
+    if qrr_layout_conditions_for is not None and not getattr(specs, 'qrr_cond', None):
+        lay = qrr_layout_conditions_for(mfr, mpn)
+        if lay:
+            specs.qrr_cond = lay
+    # Parsed conditions last, and only if nothing above claimed the slot. Every tier
+    # carries its own `source` so a consumer can tell a hand-read operating point from a
+    # layout-read one from a keyed parse -- they are not equally trustworthy and the loss
+    # number must not pretend they are.
     if parsed_qrr_cond and not getattr(specs, 'qrr_cond', None):
         specs.qrr_cond = dict(parsed_qrr_cond)
     try:

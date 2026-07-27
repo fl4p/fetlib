@@ -169,6 +169,64 @@ def test_out_of_band_values_are_refused():
         assert _ds([(154.0, cond)], GOOD_T).qrr_test_conditions() is None, what
 
 
+def test_layout_registry_sits_between_curated_and_parsed():
+    """Four tiers, and each must be distinguishable downstream: qrr_points > hand-read
+    conditions > layout-read conditions > keyed parse. The layout entries are MACHINE-read
+    from the datasheet's table geometry, so they must never displace a human's reading,
+    and must never be mistaken for one in the CSV."""
+    from dslib.mosfet import attach_qrr_registries
+    from types import SimpleNamespace
+    parsed = dict(IF=1.0, didt=1e6, VR=None, Tj=25.0, source='parsed')
+
+    # a die that IS hand-curated: the human entry wins over both lower tiers
+    s = SimpleNamespace(qrr_cond=None, qrr_points=None)
+    attach_qrr_registries(s, 'infineon', 'IPP019N08NF2S', parsed_qrr_cond=parsed)
+    assert s.qrr_cond['source'] == 'curated' and s.qrr_cond['IF'] == 100.0
+
+    # a die in the generated layout registry but NOT hand-curated: layout beats parsed
+    from dslib.qrr_layout_conditions import QRR_LAYOUT_CONDITIONS
+    from dslib.qrr_conditions import QRR_CONDITIONS
+    only_layout = next((k for k in QRR_LAYOUT_CONDITIONS if k not in QRR_CONDITIONS), None)
+    assert only_layout, 'the generated registry should hold non-curated dies'
+    s2 = SimpleNamespace(qrr_cond=None, qrr_points=None)
+    attach_qrr_registries(s2, only_layout[0], only_layout[1], parsed_qrr_cond=parsed)
+    assert s2.qrr_cond['source'] == 'layout'
+    assert s2.qrr_cond['IF'] == QRR_LAYOUT_CONDITIONS[only_layout]['IF']
+
+    # nothing curated and nothing in the layout registry -> the keyed parse fills it
+    s3 = SimpleNamespace(qrr_cond=None, qrr_points=None)
+    attach_qrr_registries(s3, 'nobody', 'NO-SUCH-PART', parsed_qrr_cond=parsed)
+    assert s3.qrr_cond['source'] == 'parsed'
+
+
+def test_generated_layout_entries_are_physically_bounded():
+    """Every generated entry passed a fit and an IRRM bound at emit time. Re-assert the
+    cheap invariants here so a hand-edit of the GENERATED file, or a regeneration with a
+    loosened extractor, cannot quietly ship a nonsense operating point."""
+    from dslib.qrr_layout_conditions import QRR_LAYOUT_CONDITIONS as Q
+    assert len(Q) > 100, 'registry looks truncated'
+    for (mfr, mpn), c in Q.items():
+        assert 0.05 <= c['IF'] <= 3000, (mpn, c['IF'])
+        assert 1e6 <= c['didt'] <= 1e11, (mpn, c['didt'])
+        assert -60 <= c['Tj'] <= 200, (mpn, c['Tj'])
+        assert c['VR'] is None or 0 < c['VR'] <= 2000, (mpn, c['VR'])
+    # di/dt must look like a TEST CONDITION rather than a number scraped off a table.
+    #
+    # Asserted as a distribution, not an allowlist. An enumerated set of "canonical"
+    # values ({100,300,500,1000}) was tried first and was simply wrong about the corpus:
+    # infineon IQEH50NE2LM7UCGSC really does quote "diF/dt=400 A/us" and the siliup
+    # SP75N65CTF/SP95N65CTO really do quote "di/dt=3000A/us" (and state an Irrm that
+    # corroborates the fit). Rejecting those would have been the test asserting its
+    # author's expectation over the datasheets. The concentration check still fails loudly
+    # if the extractor starts pulling arbitrary numbers, which is the actual risk.
+    didts = [c['didt'] / 1e6 for c in Q.values()]
+    assert all(10 <= d <= 20000 for d in didts), 'di/dt outside any real test range'
+    common = sum(1 for d in didts if round(d) in (100, 300, 500, 1000))
+    assert common / len(didts) > 0.9, (
+        'only %.0f%% of di/dt values are standard test points -- the extractor is '
+        'probably matching arbitrary table numbers' % (100 * common / len(didts)))
+
+
 def test_curated_entries_outrank_parsed_ones():
     """attach_qrr_registries owns the precedence: hand-read beats parsed, and the
     survivor must say which it is."""

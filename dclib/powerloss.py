@@ -385,12 +385,15 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             # `decontaminated` says which, and it is NOT a claim of correctness, only of
             # what was subtracted.
             Qrr_base = float(qrr_detail['qrr_diffusion'])
-            # 'op-1pt-parsed' vs 'op-1pt': a test point taken off the parsed Qrr row is
-            # weaker evidence than a hand-read one, and the CSV must let a reader sort on
-            # that. Only the 1pt path has a condition source; 2pt fits rows directly.
+            # Where the TEST POINT came from is part of the answer, not a footnote:
+            # 'op-1pt' (hand-read from the PDF) > 'op-1pt-layout' (machine-read from the
+            # table geometry) > 'op-1pt-parsed' (keyed parse). Descending evidence
+            # quality, and the CSV must let a reader sort on it. Only the 1pt path has a
+            # condition source; 2pt fits datasheet rows directly.
             qrr_src = 'op-' + (qrr_detail.get('method') or 'zero')
-            if qrr_detail.get('cond_source') == 'parsed':
-                qrr_src += '-parsed'
+            _cs = qrr_detail.get('cond_source')
+            if _cs in ('parsed', 'layout'):
+                qrr_src += '-' + _cs
         except LMFitError as e:
             # No curated test conditions / an LM-inconsistent datasheet pair. Keep the
             # flat value (that is what the caller had before asking), but never let it
