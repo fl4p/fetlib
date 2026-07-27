@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Iterator, List, NamedTuple, Optional, Sequence, Tuple
+from typing import Iterator, List, NamedTuple, Optional, Sequence, Set, Tuple
 
 from pdfminer.layout import LTChar, LTPage
 
@@ -619,7 +619,8 @@ def _pdfminer_baseline(c: LTChar) -> float:
     return c.bbox[1] - _DEFAULT_DESCENT * size
 
 
-def _pages_pdfminer(pdf_path: str, max_pages: int
+def _pages_pdfminer(pdf_path: str, max_pages: int,
+                    page_numbers: Optional[Set[int]] = None
                     ) -> Iterator[Tuple[List[RawChar], BBox, int]]:
     """Reference backend. Slow but battle-tested on odd embedded fonts.
 
@@ -627,10 +628,20 @@ def _pages_pdfminer(pdf_path: str, max_pages: int
     words and rows from raw glyph boxes itself and never looks at the
     LTTextLine/LTTextBox tree, so that analysis was pure waste — dropping it
     is up to 3x faster and yields byte-identical glyphs.
+
+    ``page_numbers`` (0-based) restricts the parse to those pages. This is the
+    lever the auto backend uses: measured at 134.7 ms per page against fitz's
+    9.7 ms, pdfminer is 14x the cost, and re-reading a whole document because
+    one page lost a glyph spends most of that on pages fitz already read
+    correctly. When given, ``maxpages`` is not also applied — the caller has
+    already chosen exact indices.
     """
     from pdfminer.high_level import extract_pages
 
-    for layout in extract_pages(pdf_path, maxpages=max_pages, laparams=None):
+    for layout in extract_pages(pdf_path,
+                                maxpages=0 if page_numbers else max_pages,
+                                page_numbers=page_numbers,
+                                laparams=None):
         chars = [RawChar(c.get_text(),
                          (c.bbox[0], c.bbox[1], c.bbox[2], c.bbox[3]),
                          getattr(c, "size", c.bbox[3] - c.bbox[1]),
@@ -745,6 +756,31 @@ def _scrub_undecodable(rows: List[TextRow]) -> int:
 # ---------- public API ----------
 
 
+def _pages_for_indices(pdf_path: str, indices: Sequence[int]) -> dict:
+    """{page_index: Page} for exactly ``indices``, read with pdfminer.
+
+    pdfminer yields only the requested pages, in document order, so the
+    original indices are restored by zipping against the sorted request rather
+    than by trusting the yield order to carry them.
+    """
+    want = sorted(set(indices))
+    out = {}
+    for pos, (chars, mb, n_bad) in enumerate(
+            _pages_pdfminer(pdf_path, 0, page_numbers=set(want))):
+        if pos >= len(want):
+            break
+        rows = _build_rows(chars)
+        lost = _scrub_undecodable(rows) if n_bad else 0
+        out[want[pos]] = Page(page_num=want[pos],
+                              mediabox=mb,
+                              rows=rows,
+                              char_count=len(chars),
+                              n_undecoded=lost,
+                              pdf_path=pdf_path,
+                              backend="pdfminer")
+    return out
+
+
 def extract_pages_with_rows(pdf_path: str,
                             max_pages: int = 0,
                             backend: Optional[str] = None) -> List[Page]:
@@ -770,20 +806,44 @@ def extract_pages_with_rows(pdf_path: str,
             return extract_pages_with_rows(pdf_path, max_pages, backend="pdfminer")
 
         readable = max((p.char_count for p in pages), default=0) >= MIN_CHARS_READABLE
-        if readable and not any(p.n_undecoded for p in pages):
+        bad = [i for i, p in enumerate(pages) if p.n_undecoded]
+        if readable and not bad:
             return pages
 
-        # Either fitz read nothing usable (possibly a genuine scan, which
-        # pdfminer will also fail) or it hit glyphs it cannot name. Prefer
-        # pdfminer, but only if it actually did better — so a scanned PDF
-        # still comes back empty and reports as needing OCR.
-        try:
-            alt = extract_pages_with_rows(pdf_path, max_pages, backend="pdfminer")
-        except Exception:  # noqa: BLE001
-            return pages
         if not readable:
+            # fitz read nothing usable — possibly a genuine scan, which pdfminer
+            # will also fail. Whole-document fallback, and only if it did
+            # better, so a scanned PDF still comes back empty and reports as
+            # needing OCR.
+            try:
+                alt = extract_pages_with_rows(pdf_path, max_pages, backend="pdfminer")
+            except Exception:  # noqa: BLE001
+                return pages
             return alt if sum(p.char_count for p in alt) > sum(p.char_count for p in pages) else pages
-        return alt if sum(p.char_count for p in alt) else pages
+
+        # Readable, but some pages carry glyphs fitz could not name. Only THOSE
+        # pages need the slow backend. Re-reading the whole document costs
+        # 134.7 ms per page against fitz's 9.7 ms and spends most of it on pages
+        # fitz already read correctly — measured, roughly half the pages of a
+        # typical fallback document are clean.
+        #
+        # The result is a document whose pages come from different backends.
+        # That is safe because every consumer that mixes a page's baselines with
+        # geometry from elsewhere already checks ``Page.backend`` per page
+        # (see dslib/v2/tables._cond_from_cell and rules.frame_matches); it is
+        # NOT safe to assume one backend per document anywhere new.
+        try:
+            repaired = _pages_for_indices(pdf_path, bad)
+        except Exception:  # noqa: BLE001
+            repaired = {}
+        if not repaired:
+            return pages
+        # Keep fitz's page unless pdfminer actually produced text for it: an
+        # empty replacement is a regression, not a repair.
+        for i, page in repaired.items():
+            if page.char_count:
+                pages[i] = page
+        return pages
 
     reader = _pages_fitz if backend == "fitz" else _pages_pdfminer
 
