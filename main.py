@@ -674,9 +674,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         #
         # Precedence also now matches dslib/field.py (Rds_on_10v first), which previously
         # disagreed with this file.
-        rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
-        if math.isnan(rds_on_max):
-            rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
+        rds_on_max = ds.select_rds_on_milliohm(stat='max')
 
         for i in range(1, args.controlFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
@@ -853,9 +851,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         #
         # Precedence also now matches dslib/field.py (Rds_on_10v first), which previously
         # disagreed with this file.
-        rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
-        if math.isnan(rds_on_max):
-            rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
+        rds_on_max = ds.select_rds_on_milliohm(stat='max')
 
         for i in range(1, args.syncFet.maxParallel + 1):
             ls = loss_spec.parallel(i)

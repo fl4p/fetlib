@@ -32,6 +32,13 @@ class FakeDS:
     def get_resistance_milliohm(self, sym, **kw):
         return self._rds
 
+    def select_rds_on_milliohm(self, **kw):
+        # The reader the checks go through now: precedence over Rds_on_10v / Rds_on lives in
+        # DatasheetFields, so the double has to expose it too. When only the old method was
+        # here, _rds_milliohm's `except Exception` turned the missing attribute into
+        # `unchecked` and these three tests were the only thing that noticed.
+        return self._rds
+
 
 def _status(ds, name):
     return next(r.status for r in run_checks(ds) if r.name == name)

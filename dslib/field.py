@@ -791,9 +791,7 @@ class DatasheetFields():
         # One reader, one scale. This used to take Rds_on_10v (ohm-scale) or fall back to
         # Rds_on (already mΩ) and then multiply BOTH by 1000 at the Rds_max= line, so the
         # fallback path reported 503 parts 1000x too big.
-        rds_on_max = ds.get_resistance_milliohm('Rds_on_10v', stat='max')
-        if math.isnan(rds_on_max):
-            rds_on_max = ds.get_resistance_milliohm('Rds_on', stat='max')
+        rds_on_max = ds.select_rds_on_milliohm(stat='max')
 
         Id = ds.get_typ_or_max_or_min('ID_25', False)
         if math.isnan(Id):
@@ -938,9 +936,7 @@ class DatasheetFields():
 
         # mΩ from a single reader; the *1e3 / bare-fallback pair this replaces assumed
         # Rds_on_10v was ohm-scale and Rds_on was mΩ without ever checking either.
-        rds_on = ds.get_resistance_milliohm('Rds_on_10v', cond=dict(Vgs=Vgs))
-        if math.isnan(rds_on):
-            rds_on = ds.get_resistance_milliohm('Rds_on', cond=dict(Vgs=Vgs))
+        rds_on = ds.select_rds_on_milliohm(cond=dict(Vgs=Vgs))
 
         Id = ds.get_typ_or_max_or_min('ID_25', False)
         if math.isnan(Id):
@@ -1092,6 +1088,35 @@ class DatasheetFields():
 
         default_mul = _RESISTANCE_UNITLESS_TO_MILLI.get(sym)
         return math.nan if default_mul is None else v * default_mul
+
+    def select_rds_on_milliohm(self, stat='max_or_typ', cond=None) -> float:
+        """On-resistance in mΩ, resolving Rds_on_10v / Rds_on PRECEDENCE in one place.
+
+        `get_resistance_milliohm` is the primitive: it resolves ONE symbol's scale from that
+        symbol's own unit. Which SYMBOL to prefer is a separate decision, and it was copied
+        into five call sites -- get_row, get_mosfet_specs, both CSV generators, and
+        validate.py -- which is how main.py and field.py came to hold OPPOSITE precedence for
+        a while without anything noticing.
+
+        `Rds_on_10v` first. It is the vendor's max-at-10V from parametric search, unitless by
+        construction (100% of ~5500 records) and 0% implausible across all 14 vendor sources,
+        whereas parsed `Rds_on` carries whatever the table cell held.
+
+        WHY THIS IS NOT COSMETIC. The two symbols have DIFFERENT unitless conventions -- mΩ
+        for `Rds_on`, ohm-scale for `Rds_on_10v` -- so a value stored raw under both reads
+        1000x apart. Six parts do exactly that, confirmed against the resistance encoded in
+        their MPNs: IPB50R140CPATMA1 and IPP50R140CPXKSA1 are 140 mΩ, IPP60R125CPXKSA1 is
+        125, IPP60R099CPXKSA1 is 99, and SUM85N15-19{,-E3} is 19 mΩ rather than an impossible
+        0.019. Reading `Rds_on` alone yields the 1000x-low number; going through precedence
+        yields the right one. Every real consumer already had precedence, so the ranking was
+        never wrong -- but `validate.py` read the bare symbol and reported all six as
+        "Rds_on may be 1000x low", a finding about a value nothing consumes. A check keyed on
+        a proxy for the consumed value rather than the value itself.
+        """
+        v = self.get_resistance_milliohm('Rds_on_10v', stat=stat, cond=cond)
+        if v is None or math.isnan(v):
+            v = self.get_resistance_milliohm('Rds_on', stat=stat, cond=cond)
+        return v
 
     def get_unit(self, sym):
         r = self.fields_filled.get(sym)

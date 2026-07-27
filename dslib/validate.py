@@ -104,9 +104,28 @@ def _get(ds, sym):
 
 
 def _rds_milliohm(ds):
+    """Via the SELECTOR, not the bare symbol.
+
+    Reading get_resistance_milliohm('Rds_on') directly made this validator disagree with
+    every consumer: `Rds_on` unitless defaults to mΩ while `Rds_on_10v` defaults to
+    ohm-scale, so six parts that store the same raw value under both read 1000x apart, and
+    this reported all six as "Rds_on may be 1000x low" while get_mosfet_specs and the CSV --
+    which go through precedence -- had the correct value all along. A check must be keyed on
+    the value the pipeline actually consumes, not a proxy for it.
+
+    A MISSING READER IS NOT MISSING DATA. This used to swallow every Exception and return
+    None, which the caller reports as `unchecked` -- so when the reader was renamed during a
+    refactor, the check silently switched itself off for the entire corpus and only three
+    calibration tests noticed. AttributeError/TypeError mean the CONTRACT is broken and must
+    raise; only genuine data problems degrade to `unchecked`.
+    """
+    if not hasattr(ds, 'select_rds_on_milliohm'):
+        raise AttributeError(
+            '%r has no select_rds_on_milliohm; the resistance reader contract changed and '
+            'this check would otherwise report `unchecked` for everything' % type(ds).__name__)
     try:
-        v = ds.get_resistance_milliohm('Rds_on')
-    except Exception:
+        v = ds.select_rds_on_milliohm()
+    except (ArithmeticError, ValueError, KeyError):
         return None
     return None if (v is None or math.isnan(v)) else v
 
