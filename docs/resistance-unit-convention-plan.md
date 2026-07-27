@@ -323,6 +323,62 @@ With one reader and explicit producer units, re-derive which entries are actuall
 - Verify by **reloading from disk** and diffing against the backup: assert that only the
   intended symbols changed and no parts were added or removed.
 
+#### Phase 3 — DONE 2026-07-27, PARTIALLY
+
+Run with `apps/repair_merged_fields.py` (dry run by default, `--apply` to write). The repair
+is a **replay**: `fields_filled` is a pure function of `fields_lists` — `DatasheetFields.add`
+is the only writer of it anywhere in the codebase, verified by grep — so re-running the
+stored candidates through the now dimension-aware `add()` re-selects a better candidate per
+stat. Re-selection only, never magnitude, no re-parsing.
+
+Backup at `data/datasheets-lib.pkl.pre-phase3`; the script refuses to run if that already
+exists, so a second invocation cannot destroy the original. 6040 parts written, then
+**verified by reloading from disk**: 20000 intended stat changes confirmed present, part
+count unchanged, candidate lists untouched.
+
+**Calibration first, and it invalidated two of the three entries above:**
+
+| part | before | after | verdict |
+|---|---|---|---|
+| `littelfuse/IXTX46N50L` `Rds_on` | 160.0 mΩ | 160.0 mΩ | **entry above is STALE** — already fixed by the dropped-ohm-unit recovery, it is not 0.16 mΩ |
+| `nxp/BUK965R8-100E,118` `Rg` | NaN (reader refuses `'ns'`) | field gone entirely | already safe, now no bogus field to select |
+| `diotec/DIT120N08` `Rg` | 64000 mΩ | **64000 mΩ** | **NOT FIXED** |
+
+`DIT120N08` is why this phase is only partially done. Its `Rg` has ONE candidate, unitless,
+`typ=64` from `tabula_cli_guess`/`iter_table`. There is no unit to contradict and no sibling
+to disagree, so by this phase's **own** detection rule it is not identifiable as wrong.
+Catching it needs the step 2 provenance policy, which is not implemented. Do not describe
+the DB as repaired for this class.
+
+**Effect, measured both ways.** Raw stats: 322 dropped, 18879 gained across the corpus. The
+gains are mostly a blockage clearing — `vishay/SIR576DP-T1-RE3` had `tRise` stored with unit
+`'Ω'`, a *resistance* seeding a *time* field, which locked out the genuine `'ns'` candidate;
+same for `Qg` (`'pF'`) and `Qoss` (`'Ω'`). Raw diffs are the wrong yardstick on their own,
+since `Rg typ 1.4 → 1400.0` with `None → 'mΩ'` reads identically through
+`get_resistance_milliohm`. So the deciding measurement was at READER level, A/B against the
+backup on the same metric:
+
+| | specs build ok | err | rate |
+|---|---|---|---|
+| pre-repair | 5760 | 280 | 4.64% |
+| post-repair | 5806 | 234 | 3.87% |
+
+46 parts that could not build specs now can, and no part lost the ability. `AssertionError`
+fell 276 → 230. **`ZeroDivisionError` stayed at 4** — those are the `typ == 0` ratio divisions
+that the stranded `stash@{0}` guard would turn into a loud `AssertionError` caught by the
+parse retry; a measured reason to restore that piece.
+
+One value moved at reader level: `infineon/FF1MR12MM1HPB11BPSA1` `Rds_on` 1.75 → 1.91 mΩ.
+Stored had `typ=1.75, max=NaN` so the reader fell back to typ; the replay picks up a real
+`max=1.91`. But the typ is at `Vgs=15V` and the max at `Vgs=18V` — **condition mixing**, the
+gap step 2 was meant to close. Pre-existing, surfaced rather than caused, and a genuine
+datasheet max instead of a typ-fallback is the conservative direction for a loss ranking.
+
+**This is a stopgap, not a source-of-truth fix.** The DB is derived, and `field_repr_salt`
+has already invalidated the parse caches, so the next full run re-parses and rebuilds it
+regardless. The repair exists for consumers of the shipped `.pkl` (`apps/ddb.py`,
+`apps/method_audit.py`, the CSV run) that cannot absorb a multi-hour re-parse first.
+
 ## Guard checklist for each phase
 
 1. What does it return when it cannot evaluate the unit? → **NaN/refuse**, never a
