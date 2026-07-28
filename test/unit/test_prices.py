@@ -411,6 +411,19 @@ def test_batch_parse_invalid_pricing_entries_skip_detail():
     assert parse_digikey_batch('infineon', 'X1', _batch_raw([bad])) is None
 
 
+def test_batch_parse_anomalous_sibling_fails_whole_part():
+    # [GOOD, BAD] must NOT persist just GOOD: the partial offer set may omit the
+    # cheapest variation, and the fresh 'ok' record would block keyword fallback
+    # for max_age days -- any anomaly bails the whole part to keyword
+    from dslib.prices.digikey_api import parse_digikey_batch
+    good = _batch_detail(sku='GOOD')
+    bad = _batch_detail(sku='BAD', pricing=[{'quantity': 1, 'price': 0.1}])
+    assert parse_digikey_batch('infineon', 'X1', _batch_raw([good, bad])) is None
+    missing = _batch_detail(sku='M')
+    missing['standard_pricing'] = None
+    assert parse_digikey_batch('infineon', 'X1', _batch_raw([good, missing])) is None
+
+
 def test_mixed_pricing_arrays_never_persist_partial_ladders():
     # round 4: [valid, malformed] must not store just the valid subset -- a dropped
     # break silently mis-prices at some qty. Keyword parser raises (writes nothing);

@@ -429,16 +429,22 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
         pkg = _pidvid_name(d.get('packaging'))
         if 'digi-reel' in pkg.lower():
             continue
-        pricing = d.get('standard_pricing') or []
+        pricing = d.get('standard_pricing')
+        if pricing is None:
+            # missing/None pricing on an accepted detail is a SCHEMA anomaly, same as
+            # the keyword parser -- and one anomalous sibling must fail the WHOLE part
+            # (returning the good subset would persist a partial offer set, possibly
+            # omitting the cheapest variation, and the fresh record would then block
+            # the keyword fallback for max_age days)
+            print('digikey batch %s: detail %r lacks standard_pricing -- part falls '
+                  'back to keyword search' % (mpn, d.get('digi_key_part_number')))
+            return None
         try:
-            # all-or-error (see _parse_ladder): a mixed valid/malformed array must not
-            # persist a partial ladder. In the batch parser the detail is skipped so
-            # the part falls through to the keyword path, which raises loudly.
             ladder = _parse_ladder(pricing, 'digikey batch %s detail %r'
                                    % (mpn, d.get('digi_key_part_number')))
         except ValueError as e:
-            print('%s -- skipping detail' % e)
-            continue
+            print('%s -- part falls back to keyword search' % e)
+            return None
         if not ladder:
             continue
         # search_locale_used is PER DETAIL: the record's currency is locked by the
