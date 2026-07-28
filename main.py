@@ -665,6 +665,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         rds_on_max = ds.select_rds_on_milliohm(stat='max')
 
         pr = price_lookup.get(ds.part.mfr, ds.part.mpn)
+        stocks = price_lookup.stocks(ds.part.mfr, ds.part.mpn)
 
         for i in range(1, args.controlFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
@@ -684,6 +685,9 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 price_usd=pr.price * i if pr else None,
                 price_src=f'{pr.distributor}@{pr.qty}' if pr else '',
                 price_date=pr.fetched_at.strftime('%Y-%m-%d') if pr else '',
+                # informational (never gates a price); empty = no fresh stock report
+                stock_dk=stocks.get('digikey'),
+                stock_lcsc=stocks.get('lcsc'),
 
                 date=ds.date_from_text.strftime('%Y-%m') if ds.date_from_text else '',
                 dateC=ds.date_from_meta.strftime('%Y-%m') if ds.date_from_meta else '',
@@ -819,6 +823,10 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                             price_usd=pr1.price + pr2.price * i if pair_priced else None,
                             price_src=f'{pr1.distributor}+{pr2.distributor}@{pr1.qty}' if pair_priced else '',
                             price_date=min(pr1.fetched_at, pr2.fetched_at).strftime('%Y-%m-%d') if pair_priced else '',
+                            # a staged row names TWO devices: one stock number would
+                            # be ambiguous, so the columns stay empty here
+                            stock_dk=None,
+                            stock_lcsc=None,
                             # A staged-switching row describes TWO devices, and its Rds_max
                             # comes from ds2 (above), so reporting only ds's errors drops a
                             # violation on the very part whose resistance this row states.
@@ -1003,6 +1011,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         rds_on_max = ds.select_rds_on_milliohm(stat='max')
 
         pr = price_lookup.get(ds.part.mfr, ds.part.mpn)
+        stocks = price_lookup.stocks(ds.part.mfr, ds.part.mpn)
 
         for i in range(1, args.syncFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
@@ -1018,6 +1027,9 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 price_usd=pr.price * i if pr else None,
                 price_src=f'{pr.distributor}@{pr.qty}' if pr else '',
                 price_date=pr.fetched_at.strftime('%Y-%m-%d') if pr else '',
+                # informational (never gates a price); empty = no fresh stock report
+                stock_dk=stocks.get('digikey'),
+                stock_lcsc=stocks.get('lcsc'),
 
                 # sync fet specific:
                 Qrr=fet_specs and (fet_specs.Qrr * 1e9) * i,
@@ -1103,7 +1115,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
 
 def show_summary(dss: List[DatasheetFields]):
-    print('totel num parts :    ', len(dss))
+    print('total num parts :    ', len(dss))
     dss = [d for d in dss if d != (None, None)]
     print('total num parsed DS: ', len(dss))
     print('total num fields:    ', sum(len(ds) for ds in dss))
@@ -1111,4 +1123,7 @@ def show_summary(dss: List[DatasheetFields]):
 
 
 if __name__ == '__main__':
-    main_yaml()
+    try:
+        main_yaml()
+    except KeyboardInterrupt:
+        print('interrupted')

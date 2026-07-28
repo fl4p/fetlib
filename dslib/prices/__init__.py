@@ -137,6 +137,12 @@ class PartOffers:
                 best = (p, o)
         return best
 
+    def total_stock(self) -> Optional[int]:
+        """Sum of offer stocks (DigiKey: per packaging variation; LCSC: per SKU).
+        None -- not 0 -- when no offer reports stock: unknown is not empty."""
+        stocks = [o.stock for o in self.offers if o.stock is not None]
+        return sum(stocks) if stocks else None
+
     def age(self, now: Optional[datetime.datetime] = None) -> datetime.timedelta:
         return (now or utc_now()) - self.fetched_at
 
@@ -248,6 +254,20 @@ class PriceLookup:
             else:
                 self._n['miss'] += 1
         return best
+
+    def stocks(self, mfr: str, mpn: str) -> Dict[str, int]:
+        """{distributor: total stock} from the same records get() would consider
+        (currency match, fresh, status ok). Informational -- stock never gates a
+        price. Distributors with no stock report are absent, never 0."""
+        out: Dict[str, int] = {}
+        for rec in self._by_part.get((mfr, norm_mpn(mpn)), ()):
+            if rec.currency != self.currency or rec.status != 'ok' \
+                    or rec.age(self._now) > self.max_age:
+                continue
+            s = rec.total_stock()
+            if s is not None:
+                out[rec.distributor] = out.get(rec.distributor, 0) + s
+        return out
 
     def stats(self) -> str:
         n = self._n

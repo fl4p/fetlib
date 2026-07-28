@@ -307,6 +307,20 @@ def test_dk_equality_tier_ignores_whitespace_and_case():
     assert rec.status == 'ok' and rec.best_price(1)[0] == 1.0
 
 
+def test_lookup_stocks_per_distributor(db):
+    old = NOW - datetime.timedelta(days=90)
+    db.add([_rec(offers=[_offer([(1, 1.0)], stock=300, sku='CT'),
+                         _offer([(1, 1.1)], stock=200, sku='TR')]),
+            _rec(distributor=LCSC, offers=[_offer([(1, 0.9)], stock=50, sku='C1')]),
+            _rec(mpn='OLD', offers=[_offer([(1, 1.0)], stock=99)], fetched_at=old),
+            _rec(mpn='NOSTOCK', offers=[_offer([(1, 1.0)], stock=None)])])
+    lu = PriceLookup(qty=1, max_age='30d')
+    assert lu.stocks('infineon', 'X1') == {DIGIKEY: 500, LCSC: 50}  # summed offers
+    assert lu.stocks('infineon', 'OLD') == {}      # stale: absent, never 0
+    assert lu.stocks('infineon', 'NOSTOCK') == {}  # unknown is not empty
+    assert lu.stocks('infineon', 'NEVER') == {}
+
+
 def test_lookup_picks_cheapest_across_distributors(db):
     db.add([_rec(offers=[_offer([(100, 0.5)])]),
             _rec(distributor=LCSC, offers=[_offer([(100, 0.3)], sku='C1')])])
