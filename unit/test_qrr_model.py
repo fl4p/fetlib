@@ -177,6 +177,11 @@ IPP022_PTS = [dict(IF=50.0, didt=300e6, VR=60.0, Tj=25.0, Qrr=155.2e-9, trr=46.3
               dict(IF=50.0, didt=1000e6, VR=60.0, Tj=25.0, Qrr=412.1e-9, trr=39.0e-9)]
 ISC320_PTS = [dict(IF=4.5, didt=300e6, Tj=25.0, Qrr=23.8e-9, trr=20.5e-9),
               dict(IF=4.5, didt=1000e6, Tj=25.0, Qrr=20.3e-9, trr=10.3e-9)]
+# ISC014N08NM6 (mirrors dslib/qrr_points.py): Qrr GROWS 5x over a 10x di/dt span, but
+# the low row is not LM-representable raw (implied ramp time exceeds its trr), so the
+# 2pt fit refuses with a plain LMFitError before the residual classifier can run.
+ISC014_PTS = [dict(IF=25, didt=100e6, VR=40, Tj=25.0, Qrr=65e-9, trr=25e-9),
+              dict(IF=25, didt=1000e6, VR=40, Tj=25.0, Qrr=327e-9, trr=29e-9)]
 
 
 def test_best_lm_fit_prefers_2pt_and_q0_contract():
@@ -240,6 +245,57 @@ def test_pick_2pt_rows_rejects_mixed_tj_and_vr():
         assert "contamination-dominated" in str(e)
     else:
         raise AssertionError("contamination-dominated points without cond must raise")
+
+
+def test_isc014_low_row_infeasible_served_by_1pt_row():
+    """The part the 1pt-row tier exists for: ISC014N08NM6's pair grows 5x over a 10x
+    di/dt span (diffusion is real), but the LOW row is not LM-representable raw, so
+    fit_lm_2pt refuses with a PLAIN LMFitError (not the contamination class) and the
+    rescue serves the highest-di/dt row — pinning the direction, not just the firing."""
+    try:
+        qrr_model.fit_lm_2pt(*qrr_model._pick_2pt_rows(ISC014_PTS))
+    except qrr_model.LMContaminationDominated:
+        raise AssertionError("a 5x-growing pair must never classify as contamination")
+    except qrr_model.LMFitError as e:
+        assert "low row not LM-representable" in str(e), e
+    else:
+        raise AssertionError("ISC014's raw pair must refuse the 2pt fit")
+    fit = qrr_model.best_lm_fit(65e-9, 25e-9, None, qrr_points=ISC014_PTS,
+                                part="infineon:ISC014N08NM6")
+    assert fit["method"] == "1pt-row", fit["method"]
+    assert fit["fit_row"]["didt"] == 1000e6      # served off the high row, not the low
+    assert "low row not LM-representable" in fit["fallback_from_2pt"]
+    assert not fit["decontaminated"]             # no qoss_vr passed -> raw, and says so
+
+
+def test_contamination_verdict_survives_infeasible_low_row():
+    """Guard-checklist regression (review 2026-07-28): a flat/falling pair whose low
+    row is ALSO not LM-representable raw used to skip the residual classifier (err(0)
+    raises first) and escape as plain LMFitError — the 1pt-row rescue then served a
+    contamination-dominated part, booking displacement charge as diffusion. The
+    verdict must come from the DATA (Qrr not growing with di/dt), which is always
+    evaluable — losing the classifier to an unevaluable input must not soften it."""
+    falling_infeasible = [
+        dict(IF=25, didt=100e6, Tj=25.0, Qrr=65e-9, trr=25e-9),   # infeasible raw
+        dict(IF=25, didt=1000e6, Tj=25.0, Qrr=50e-9, trr=12e-9),  # Qrr FELL, row fits alone
+    ]
+    # the high row alone admits a fit — the rescue WOULD serve it without the block
+    qrr_model.fit_lm(50e-9, 12e-9, 25, 1000e6)
+    try:
+        qrr_model.fit_lm_2pt(*qrr_model._pick_2pt_rows(falling_infeasible))
+    except qrr_model.LMContaminationDominated:
+        pass
+    else:
+        raise AssertionError("falling pair must classify contamination-dominated "
+                             "even when the low row is not LM-representable")
+    try:
+        qrr_model.best_lm_fit(65e-9, 25e-9, None, qrr_points=falling_infeasible)
+    except qrr_model.LMContaminationDominated:
+        raise AssertionError("contamination class must not escape best_lm_fit raw")
+    except qrr_model.LMFitError as e:
+        assert "contamination-dominated" in str(e)
+    else:
+        raise AssertionError("the 1pt-row rescue must stay blocked on a falling pair")
 
 
 def test_qrr_op_fugu2_operating_point():

@@ -270,9 +270,12 @@ def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
     the 3 parameters), so its prediction error is a free residual check.
 
     Raises LMFitError when the rows differ in IF, or when no q0 in
-    [0, ~min(Qrr)) makes the pair LM-consistent (contamination-dominated
-    pairs: Qrr ~flat or falling with di/dt, e.g. ISK057N04LM6/ISC320N12LM6 —
-    those cannot be diffusion-fitted; fail loud, never force a fit)."""
+    [0, ~min(Qrr)) makes the pair LM-consistent. Contamination-dominated
+    pairs (Qrr ~flat or falling with di/dt, e.g. ISK057N04LM6/ISC320N12LM6)
+    raise the LMContaminationDominated subclass — strictly non-growing pairs
+    directly on the data, before any fit machinery, so the verdict cannot be
+    lost to a low row that is not LM-representable raw; those pairs cannot be
+    diffusion-fitted at all — fail loud, never force a fit."""
     if p_lo["didt"] > p_hi["didt"]:
         p_lo, p_hi = p_hi, p_lo
     if p_lo["IF"] != p_hi["IF"]:
@@ -280,6 +283,21 @@ def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
                          f"(got {p_lo['IF']} A and {p_hi['IF']} A)")
     if p_lo["didt"] == p_hi["didt"]:
         raise LMFitError("two-point fit needs two DISTINCT di/dt rows")
+    # Contamination check on the DATA PROPERTY, before any fit machinery: stored
+    # (diffusion) charge strictly grows with di/dt, so a measured Qrr that does not
+    # is positive evidence the integral is dominated by Qoss displacement. Checked
+    # here — not only via the residual-sign classification below — because the
+    # residual search needs err(0) to be evaluable, and a pair whose low row is not
+    # LM-representable raw raises before the classifier runs; the permissive plain
+    # LMFitError then let best_lm_fit's 1pt-row rescue serve a flat/falling pair
+    # (review 2026-07-28, constructed known-bad: (65nC,25ns,100A/µs)/(50nC,12ns,
+    # 1000A/µs) was served). This test is always evaluable and monotone in the data.
+    if p_hi["Qrr"] <= p_lo["Qrr"]:
+        raise LMContaminationDominated(
+            "Qrr does not grow with di/dt "
+            f"({p_lo['Qrr']*1e9:.3g} nC @ {p_lo['didt']:.0e} A/s -> "
+            f"{p_hi['Qrr']*1e9:.3g} nC @ {p_hi['didt']:.0e} A/s) — the pair "
+            "is contamination-dominated (displacement charge, not stored charge)")
     IF = float(p_lo["IF"])
 
     def err(q0):
@@ -301,10 +319,13 @@ def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
             hi *= 0.85  # subtraction consumed the pair; walk back into range
     if f_hi is None or f_lo * f_hi > 0:
         # Classify by the residual's sign: err(q0) = predicted_hi - measured_hi.
-        # Positive everywhere -> the LM form OVER-produces the high row, i.e. the
-        # data's Qrr is ~flat/falling with di/dt -> capacitive share dominates.
-        # Negative everywhere -> the data GROWS faster than LM allows given trr_lo
-        # (super-LM growth, e.g. ISC014N08NM6) -> contamination is NOT the story.
+        # Positive everywhere -> the LM form OVER-produces the high row even though
+        # the pair grows (non-growing pairs were already refused on the data above)
+        # -> the growth is too slow to be diffusion -> capacitive share dominates. Negative everywhere -> the data GROWS faster than LM allows
+        # given trr_lo -> contamination is NOT the story. (NB a pair whose low row
+        # is not LM-representable raw never reaches this classifier — it raises at
+        # f_lo above; ISC014N08NM6 is that case, refused as plain LMFitError and
+        # legitimately eligible for the 1pt-row rescue since its pair grows 5x.)
         if f_lo > 0:
             raise LMContaminationDominated(
                 "no LM-consistent capacitive offset q0 in [0, min(Qrr)) — the pair "
