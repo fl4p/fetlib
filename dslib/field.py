@@ -546,7 +546,10 @@ class Field():
                 typ = max
                 max = math.nan
 
-        if symbol == 'Vsd' and max < typ and (typ / max) < 1.5:
+        # max != 0 short-circuits the division: typ/0 would be +inf, i.e. "not a swap",
+        # but it raised ZeroDivisionError instead of deciding. Chart-axis globs parsed as
+        # Vsd rows (VSD/ISD axis ticks ending in 0) hit this on every sweep.
+        if symbol == 'Vsd' and max < typ and max != 0 and (typ / max) < 1.5:
             # Vsd confusion
             a = max
             max = typ
@@ -557,7 +560,10 @@ class Field():
 
         if not math.isnan(max) and not math.isnan(typ):
             max_typ_ratio = 30 if symbol == 'Crss' else 5
-            assert 1 < max / typ < max_typ_ratio, (typ, max)
+            # typ != 0 first: a zero typ IS an implausible pair and must fail this assert;
+            # without the short-circuit it raised ZeroDivisionError instead -- same outcome
+            # in callers that catch Exception, a crash in any that catch AssertionError.
+            assert typ != 0 and 1 < max / typ < max_typ_ratio, (typ, max)
 
         self.min = min
         self.typ = typ
