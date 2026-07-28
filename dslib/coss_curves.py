@@ -137,6 +137,39 @@ COSS_CURVES = {
         (60, 492, 20.9), (70, 449, 18.7), (80, 415, 17.9), (90, 397, 17.5),
         (100, 384, 17.3),
     ],
+    # --- top-30 ranking coverage batch, dsdig auto pipeline (find -> digitize-capacitance
+    # -> export-coss-dslib), digitized 2026-07-29 from the orderable-suffix PDFs; adaptive
+    # knots (error-driven Vds points), all three table anchors within the 2% export gate,
+    # trace/axis/Qoss validation pass, overlays human-verified 2026-07-29. ---
+    # Infineon IPP052N08N5 Rev 2.0, Diagram 11 (VGS=0, f=1 MHz) -- 80 V OptiMOS5 fugu3
+    # candidate. PDF datasheets/infineon/IPP052N08N5AKSA1.pdf p.9. Anchors @40V:
+    # Coss=490pF (-1.3%), Crss=23pF (+0.9%), Ciss=2900pF (+1.1%). Qoss(0-80V)=50.8nC.
+    ("infineon", "IPP052N08N5"): [
+        (0, 3044, 675), (0.8457, 2827, 596.6), (1.882, 2437, 489.7), (5.879, 2000, 321.8),
+        (14.17, 1525, 167.3), (17.57, 1348, 119.9), (21.87, 1092, 75.92), (27.79, 773.2, 39.95),
+        (31.93, 582.1, 31.6), (34.74, 533.9, 27.59), (40, 483.7, 23.21), (53.54, 401.9, 18.36),
+        (65.09, 368.6, 17.47), (79.74, 350.9, 17.26),
+    ],
+    # Infineon IPA050N10NM5S Rev 2.1 (2019-08-28), Diagram 11 (VGS=0, f=1 MHz) -- 100 V
+    # OptiMOS5 fugu2 candidate. PDF datasheets/infineon/IPA050N10NM5SXKSA1.pdf p.7.
+    # Anchors @50V: Coss=560pF (+1.0%), Crss=25pF (+0.4%), Ciss=3600pF (-0.9%).
+    # Qoss(0-100V)=66.4nC.
+    ("infineon", "IPA050N10NM5S"): [
+        (0, 3143, 766.4), (0.6871, 2968, 675.6), (1.982, 2414, 441.9), (8.273, 1876, 254.8),
+        (18.27, 1441, 146.9), (31.59, 1094, 64.3), (37.88, 889.7, 42.06), (43.8, 723.7, 30.15),
+        (50, 565.5, 25.1), (50.46, 555.9, 24.81), (52.5, 537.1, 23.7), (73.04, 431.9, 18.2),
+        (100.1, 380.7, 17.19),
+    ],
+    # Infineon IPP083N10N5 Rev 2.1 (2016-10-03), Diagram 11 (VGS=0, f=1 MHz) -- 100 V
+    # OptiMOS5 fugu3 candidate. PDF datasheets/infineon/IPP083N10N5AKSA1.pdf p.8.
+    # Anchors @50V: Coss=337pF (+0.7%), Crss=16pF (-2.0%), Ciss=2100pF (+0.2%).
+    # Qoss(0-80V)=40.4nC.
+    ("infineon", "IPP083N10N5"): [
+        (0, 1941, 468), (0.5497, 1854, 426.9), (0.8457, 1771, 385), (2.03, 1474, 263.7),
+        (8.543, 1132, 148.6), (17.72, 889.7, 89.68), (32.52, 645.3, 37.07), (37.11, 555.9, 27.2),
+        (43.18, 447, 19.06), (50, 339.4, 15.68), (50.43, 335.5, 15.5), (63.61, 282.5, 12.46),
+        (79.74, 249, 11.37),
+    ],
 }
 
 # Structured conditions and source identity travel with the curve instead of being
@@ -179,6 +212,18 @@ COSS_CURVE_SOURCE = {
         datasheet_revision="2.1 (2022-06-15)", source_figure="Diagram 11",
         source_page=None, digitization_method="dcdc-tools-vector-first",
         validation_method="Coss/Crss/Ciss@50V + Qoss(0-50V) table anchors"),
+    ("infineon", "IPP052N08N5"): dict(
+        datasheet_revision="2.0", source_figure="Diagram 11", source_page=9,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@40V anchors <2% + human overlay"),
+    ("infineon", "IPA050N10NM5S"): dict(
+        datasheet_revision="2.1 (2019-08-28)", source_figure="Diagram 11", source_page=7,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <2% + human overlay"),
+    ("infineon", "IPP083N10N5"): dict(
+        datasheet_revision="2.1 (2016-10-03)", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <2% + human overlay"),
 }
 
 
@@ -272,6 +317,20 @@ CISS_CURVES = {
         (0, 4537), (5, 4187), (10, 4046), (15, 3931), (20, 3864), (25, 3798),
         (30, 3776), (35, 3776), (40, 3800), (45, 3776), (50, 3776), (55, 3776),
         (60, 3776), (65, 3776), (70, 3776), (75, 3776), (80, 3776),
+    ],
+    # --- top-30 batch 2026-07-29, same dsdig export gate as the Coss entries above. ---
+    # IPP052N08N5 Rev 2.0, 80 V -- Ciss 2900pF@40V (digitized +1.1%).
+    ("infineon", "IPP052N08N5"): [
+        (0, 3574), (1.142, 3487), (25.12, 2933), (40, 2933), (79.74, 2897),
+    ],
+    # IPA050N10NM5S Rev 2.1, 100 V -- Ciss 3600pF@50V (digitized -0.9%).
+    ("infineon", "IPA050N10NM5S"): [
+        (0, 4284), (0.502, 4284), (1.982, 3954), (5.128, 3820), (37.14, 3566),
+        (50, 3566), (100.1, 3566),
+    ],
+    # IPP083N10N5 Rev 2.1, 100 V -- Ciss 2100pF@50V (digitized +0.2%).
+    ("infineon", "IPP083N10N5"): [
+        (0, 2586), (3.51, 2306), (41.11, 2104), (50, 2104), (79.74, 2104),
     ],
 }
 
