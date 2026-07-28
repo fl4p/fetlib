@@ -1112,7 +1112,7 @@ def mosfet_hs_sw_timings_lcsi(dc: DcDcLoadParams, hs: MosfetSpecs, ls_Qoss, gd: 
 
 def capacitor_out():
     # https://fscdn.rohm.com/en/products/databook/applinote/ic/power/switching_regulator/buck_converter_efficiency_app-e.pdf
-    raise NotImplemented("see dcdc_buck_cout()")
+    raise NotImplementedError("see dcdc_buck_cout()")
 
 
 def tests():
