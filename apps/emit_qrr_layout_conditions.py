@@ -223,11 +223,13 @@ def harvest():
         # one corrupted source is not corroboration.
         #
         # So gate on the unit itself: nC (the canonical storage) or nothing, never a
-        # surviving 'C'/'uC'/'PC' that proves normalisation did NOT happen. 28 Qrr fields
-        # in the shipped DB carry such a unit. NB this only protects THIS registry -- the
-        # same corrupt scalar still feeds the flat P_rr path, which is a pre-existing bug
-        # with a wider blast radius (dslib/field.py's uC fix band misses these on both its
-        # unit test and its 0.1-0.9 magnitude window).
+        # surviving 'C'/'uC'/'PC' that proves normalisation did NOT happen. Since
+        # 2026-07-28 dslib/field.py converts the mangled micro spellings (PC/PSC/WC/mC,
+        # UC, µC/μC with whitespace) at parse time and refuses ambiguous bare-'C'
+        # values, and apps/repair_qrr_units.py repaired the records already in the DB —
+        # so this gate is now DEFENCE IN DEPTH rather than the only line: it stays
+        # because it is cheap and because it also catches any future mangle spelling
+        # that field.py has not met yet.
         unit = str(getattr(fq, 'unit', '') or '').strip().lower()
         if unit and unit not in ('nc',):
             stats['Qrr unit not normalised (%s)' % unit] += 1

@@ -432,7 +432,20 @@ class Field():
         if unit and symbol in {'tFall', 'tRise'} and unit.lower() == 'ms':
             unit = 'ns'  # ocr confusion
 
-        if unit in {'uC', 'μC', '∝C', 'uc'}:
+        # Mangled micro prefixes: extraction drops or transliterates the µ glyph ('uC',
+        # upper 'UC', micro sign U+00B5 'µC', greek mu U+03BC 'μC' — sometimes with stray
+        # whitespace — and OCR's '∝C'). The second set converts for Qrr only, each member
+        # verified against the printed PDF of the record that carried it: 'PC' (Infineon
+        # IRF*N20D/N15D, sheet prints "1.3 2.0 C" with the µ dropped), 'PSC'
+        # (IXYS/littelfuse IXFN150N10 et al., sheet prints 0.6 µC), 'WC' (Vishay
+        # SUM85N15-19, sheet prints 0.52/1.2 µC), and 'mC' (Symbol-font µ renders as
+        # 'm'; a genuine milli-coulomb Qrr does not exist). Kept Qrr-specific because
+        # the evidence is: 'PC' on another charge symbol could be a real picocoulomb.
+        # Bare 'C' (glyph fully dropped) is decided further down — by the magnitude
+        # band when possible, refused when not.
+        _u = re.sub(r'\s+', '', unit) if unit else unit
+        if (_u and _u.lower() in {'uc', 'µc', 'μc', '∝c'}) or \
+                (symbol == 'Qrr' and _u in {'PC', 'PSC', 'WC', 'mC'}):
             assert mul == 1
             mul = 1000
             unit = 'nC'
@@ -492,11 +505,34 @@ class Field():
         mtm = (min, typ, max)
 
         if symbol == 'Qrr' and (not unit or unit.lower() == 'c'):
-            # fix Qrr in uC -> nC
+            # fix Qrr in uC -> nC: the micro glyph was dropped entirely, leaving no unit
+            # or a bare 'C'. The 0.1-0.9 band is deliberately NARROW and deliberately NOT
+            # a general magnitude guess: a Qrr there is implausibly small as nC and
+            # plausible as uC. (Known micro spellings never reach this — they were
+            # converted on the unit above, band or no band.)
             if sum(math.isnan(v) or 0.1 < v < 0.9 for v in mtm) == 3:
                 min *= 1e3
                 typ *= 1e3
                 max *= 1e3
+            elif unit:
+                # Bare 'C' OUTSIDE the band: coulomb-scale Qrr is physically impossible,
+                # so the unit is provably mangled. Values >= 100 are numerically
+                # IDENTICAL under both readings — a lost 'n' keeps the number, and a
+                # lost 'µ' would mean >= 100 µC, beyond any MOSFET body diode — so they
+                # pass through as nC-scale (IXFN150N10 stores 600 this way). In the
+                # middle the readings diverge 1000x and cannot be told apart
+                # (IRFB38N20D prints "1.3 2.0 C"; 1.3 nC and 1300 nC are both plausible
+                # for SOME part): refuse rather than store a plausible wrong scale — a
+                # missing Qrr is recoverable, a silent 1000x one is not (the Rds_on
+                # corruption class). Absent unit out of band stays as-is (nC by
+                # convention) — refusing there would drop hundreds of good table reads
+                # whose unit sat in the header.
+                # NB the min/max BUILTINS are shadowed by the stat locals here
+                nn = [v for v in mtm if not math.isnan(v)]
+                if not (nn and all(v >= 100 for v in nn)):
+                    raise ValueError(
+                        'Qrr unit %r with ambiguous-scale values %s: mangled unit '
+                        'prefix, nC vs uC cannot be established' % (unit, mtm))
 
         if symbol in {'Qgd', 'Qgs', 'Qg', 'tRise', 'tFall'}:
             if not math.isnan(max) and math.isnan(min) and math.isnan(typ):
