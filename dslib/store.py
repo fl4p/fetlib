@@ -98,9 +98,14 @@ def _decode_key(k: str):
 
 def _key_columns(key):
     """The indexed projection. Derived from the KEY, never from the value -- that is what
-    keeps this container generic over T instead of knowing about DatasheetFields."""
-    if isinstance(key, tuple) and len(key) == 2 and all(isinstance(x, str) for x in key):
-        return key
+    keeps this container generic over T instead of knowing about DatasheetFields.
+
+    Any all-string tuple of len >= 2 projects its first two elements (mfr, mpn) -- longer
+    keys like prices-lib's (mfr, mpn, distributor, currency) stay filterable via
+    iter_items(mfr=...). Projecting only exactly-2 tuples would index them as NULL/NULL
+    and filtered iteration would silently return nothing."""
+    if isinstance(key, tuple) and len(key) >= 2 and all(isinstance(x, str) for x in key):
+        return key[0], key[1]
     return None, None
 
 

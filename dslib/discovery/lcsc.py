@@ -5,16 +5,13 @@ import math
 import os
 from typing import Union
 
-import aiohttp
 # from html.parser import HTMLParser
 from pyquery import PyQuery
 
 from dslib import mfr_tag
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, MosfetBasicSpecs
-from dslib.fetch import fetch_datasheet
-
-_session: aiohttp.ClientSession = None
+from dslib.fetch import fetch_datasheet, get_browser_page
 
 brands = {
     "Littelfuse": 110,
@@ -33,47 +30,49 @@ brands = {
 }
 
 
-async def _get_session():
-    global _session
-    if _session is None:
-        _session = aiohttp.ClientSession()
-    return _session
+async def fetch(url, body):
+    # LCSC's API sits behind an Akamai WAF that blocks aiohttp's request (403 Access Denied,
+    # served from errors.edgesuite.net) even with fully browser-like headers - it's a
+    # TLS/connection fingerprint check, not a header check. Routing the request through the
+    # real browser's own fetch() gives it a genuine Chrome network stack, which passes.
+    page = await get_browser_page()
+    if 'lcsc.com' not in (page.url or ''):
+        await page.goto('https://www.lcsc.com/', wait_until='commit')
 
+    result = await page.evaluate('''
+        async ({url, body}) => {
+            const resp = await fetch(url, {
+                method: 'POST',
+                headers: {'content-type': 'application/json;charset=UTF-8'},
+                body: JSON.stringify(body),
+                credentials: 'include',
+            });
+            return {status: resp.status, text: await resp.text()};
+        }
+    ''', {'url': url, 'body': body})
 
-async def fetch(url, options):
-    options['headers'] = options.get('headers', {})
-    if options.get('referrer'):
-        options['headers']['referer'] = options['referrer']
-    async with getattr(await _get_session(), options['method'].lower())(
-            url, headers=options['headers'], json=json.loads(options['body'])) as response:  # Simulating a delay
-        data = await response.json()
-        return data
+    if result['status'] != 200:
+        raise Exception(f'lcsc fetch {url} failed: {result["status"]} {result["text"][:300]}')
+
+    return json.loads(result['text'])
 
 
 async def fetch_list_page(brand_id: int, page: int):
     assert page >= 1
 
     return await fetch("https://wmsc.lcsc.com/ftps/wm/product/query/list", {
-        "headers": {
-            "accept": "application/json, text/plain, */*",
-            "accept-language": "de-DE,de;q=0.9,en-US;q=0.8,en;q=0.7,fr;q=0.6",
-            "cache-control": "no-cache",
-            "content-type": "application/json;charset=UTF-8",
-            "priority": "u=1, i",
-            "sec-ch-ua": "\"Not;A=Brand\";v=\"99\", \"Google Chrome\";v=\"139\", \"Chromium\";v=\"139\"",
-            "sec-ch-ua-mobile": "?0",
-            "sec-ch-ua-platform": "\"macOS\"",
-            "sec-fetch-dest": "empty",
-            "sec-fetch-mode": "cors",
-            "sec-fetch-site": "same-site",
-        },
-        "referrer": "https://www.lcsc.com/",
-        "body": "{\"keyword\":\"\",\"catalogIdList\":[1436],\"brandIdList\":[\"" + str(
-            brand_id) + "\"],\"encapValueList\":[],\"isStock\":false,\"isOtherSuppliers\":false,\"isAsianBrand\":false,\"isDeals\":false,\"isEnvironment\":false,\"paramNameValueMap\":{},\"currentPage\":" + str(
-            page) + ",\"pageSize\":100}",
-        "method": "POST",
-        "mode": "cors",
-        "credentials": "include"
+        "keyword": "",
+        "catalogIdList": [1436],
+        "brandIdList": [str(brand_id)],
+        "encapValueList": [],
+        "isStock": False,
+        "isOtherSuppliers": False,
+        "isAsianBrand": False,
+        "isDeals": False,
+        "isEnvironment": False,
+        "paramNameValueMap": {},
+        "currentPage": page,
+        "pageSize": 100,
     })
 
 
@@ -128,16 +127,33 @@ def read_lcsc_search_results(html_glob_path):
                 fetch_datasheet(ds_url, datasheet_path, mfr=mfr, mpn=mpn)
 
 
-@disk_cache(ttl='7d')
-async def discover_mosfets_brand(brand_id: Union[int, str]):
-    data = await fetch_list_all(brands[brand_id] if isinstance(brand_id, str) else brand_id)
-    if len(data) == 0:
+@disk_cache(ttl='7d', hash_func_code=True)
+async def fetch_brand_rows_raw(brand_id: int) -> dict:
+    """The UNPARSED catalog rows for one brand, with the ORIGIN fetch timestamp.
+
+    Split from discover_mosfets_brand so the raw rows (incl. the price/stock fields the
+    discovery parser ignores) survive caching -- the price harvester in
+    dslib/prices/lcsc.py re-parses the same envelope without another browser fetch, and
+    its records inherit `fetched_at` from here (never a cache-hit or DB-write time)."""
+    import datetime
+    rows = await fetch_list_all(brand_id)
+    if len(rows) == 0:
         raise Exception('no data for brand ' + str(brand_id))
+    return {'fetched_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            'rows': rows}
+
+
+async def discover_mosfets_brand(brand_id: Union[int, str]):
+    raw = await fetch_brand_rows_raw(brands[brand_id] if isinstance(brand_id, str) else brand_id)
+    data = raw['rows']
 
     print('lcsc brand', brand_id, 'fetched %d rows in total' % len(data))
 
     parts = []
     for r in data:
+        if not r.get('productModel'):
+            continue
+
         # spn = r['productCode']
         p_channel = 'p-channel' in (r.get('productNameEn') or '').lower()
         pm = {p['paramNameEn']: p['paramValueEnForSearch'] for p in r["paramVOList"] or []}

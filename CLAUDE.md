@@ -53,7 +53,7 @@ Per-manufacturer scrapers (`infineon.py`, `ti.py`, `toshiba.py`, `st.py`, `onsem
 
 `unique_parts` deduplicates by `(mfr, normalized_mpn)`. Infineon-specific suffix stripping (`AKMA1`, `AKSA1`, `XKSA1`, `XKMA1`) is applied. **Digikey rows are treated as untrustworthy** — if a duplicate already exists, a digikey-only entry is dropped rather than merged (comment: "digikey data is often wrong"). Otherwise `.specs.update(part.specs)` merges fields from later sources into earlier ones.
 
-Digikey input is CSVs under `parts-lists/digikey/*.csv` (downloaded manually from the Digikey parametric search, 500 results max per CSV). LCSC inputs are HTML DOM dumps under `parts-lists/lcsc/`.
+Digikey input is CSVs under `parts-lists/digikey/*.csv` (downloaded manually from the Digikey parametric search, 500 results max per CSV). LCSC discovery hits the live `wmsc.lcsc.com` JSON API per brand id, browser-proxied through Playwright because of an Akamai TLS-fingerprint WAF (`dslib/discovery/lcsc.py:fetch`); the raw catalog rows are cached 7d by `fetch_brand_rows_raw` and shared with the price harvester. (An older HTML-DOM-dump path, `read_lcsc_search_results`, is dead code — no dumps were ever committed.)
 
 Pre-selection by Vds/Id happens in `DcDcLoadParams.select_mosfets(parts, max_parallel=…)` — this is what filters down to candidates worth downloading datasheets for.
 
@@ -93,6 +93,51 @@ Why it changed: `compile_part_datasheet` calls `load_obj` **inside every joblib 
 - **Do NOT turn the blob into JSON.** A serializer would have to live in `dslib/field.py`, whose content hash *is* `field_repr_salt()` — editing it invalidates ~17 GB of parse cache and forces a full re-parse. It also cannot represent what the records hold (59 % of stat values are NaN; `Field.cond` keys are int 8:1). The long version is in the `dslib/store.py` module docstring.
 - The migration is `apps/migrate_store_to_sqlite.py` (dry-run by default; verifies every record structurally, NaN/numpy-aware, and calibrates its own comparator against known-bad inputs before trusting it).
 
+### 3c. Distributor prices — `dslib/prices/` (2026-07)
+
+`prices_db` (`data/prices-lib.sqlite3`, same `ObjectDatabase` machinery) holds one `PartOffers`
+record per **4-tuple key `(mfr, mpn, distributor, currency)`** — full qty ladders + MOQ/stock +
+`fetched_at` (always the ORIGIN fetch time, never a DB-write time). The store itself is
+latest-snapshot; **price history** is the append-only side table `data/prices-history.sqlite3`
+(`dslib/prices/history.py`): both fetchers call `record_history()` after `prices_db.add`, and a
+snapshot is appended only when its price CONTENT changed (hash over status/currency/sku/moq/
+ladder — deliberately not `stock`, which jitters every fetch; stock is sampled at change points).
+Negative statuses are datapoints (a part vanishing from the catalog gets a NULL-price row).
+Inspect with `python -m dslib.prices.history <mfr> <mpn>`. Guard semantics are load-bearing: absent key = never fetched;
+`status='catalog_miss'` = DigiKey said no such part (LCSC can never assert this — a brand-list
+harvest can't prove absence); fetch/parse errors write **nothing**. `PriceLookup(qty, max_age)`
+is the read side: it skips-and-counts foreign-currency and stale records (never mixes them into
+a column) and returns `None`, never 0, for unpriced parts.
+
+- **DigiKey** (`dslib/prices/digikey_api.py`): official v4 API via the **hurricaneJoef
+  digikey-api fork** pinned in requirements.txt (PyPI release is broken/v3-only; the old
+  vendored `digikey/` dir and `dslib/pricing.py` are gone). **Multi-key**: creds from env plus
+  every gitignored `data/.digikey-api*` file (one app each, 120/min + 1,000/day PER key); OAuth
+  token stores per key in `dslib/dk-cache*/`; jobs rotate across keys, a key retires on 2
+  consecutive post-backoff 429s (daily quota) or X-RateLimit-Remaining < 25, and un-fetched
+  parts wait for the next run. Calls `keyword_search_with_http_info` DIRECTLY — the SDK wrapper
+  swallows ApiException and drops the rate-limit headers. Per-MPN keyword search of the ranked
+  candidates only; no disk_cache (prices_db freshness gate, `max_age='7d'`, is the single
+  authority). Match tiers: exact / MPN equality / `base_product_number` / non-digit suffix
+  extension (`<mpn>T1G` etc.); all-candidates-rejected ⇒ `IndeterminateMatch`, writes nothing.
+  Offers with `moq > qty` do not price at qty (no MOQ-tier flattery). The ~3,073-candidate
+  fugu3 corpus needs the 50-MPN batch endpoint (DigiKey must enable it per app) or several
+  days of quota.
+- **LCSC** (`dslib/prices/lcsc.py`): re-parses the price ladders out of the same
+  `fetch_brand_rows_raw` envelopes discovery uses (`usdPrice` only — `currencyPrice` is
+  locale-dependent), for `dslib.discovery.lcsc.brands` ∪ `EXTRA_PRICE_BRANDS` (major brands,
+  ids probe-verified). Offers are aggregated by store key GLOBALLY across brands before ONE
+  `add()` — per-brand batches would last-write-wins on cross-brand duplicates. Price-only path:
+  it never feeds `DiscoveredPart`s into discovery. CLI: `python -m dslib.prices.lcsc
+  --probe|--harvest|--find-brand NAME` (probe before harvesting after any brand/schema change).
+- **main.py**: `--fetch-prices` runs both fetchers for the post-`select_mosfets` candidates;
+  the `price_usd`/`price_src`/`price_date` CSV columns fill from the store either way
+  (`priceQty` YAML knob, default 100; per-row price = price@priceQty × parallel count; staged
+  two-device rows price only when BOTH parts have prices). Fill-rate stats print next to each
+  CSV path. Note each `asyncio.run` phase closes the shared Playwright browser on exit
+  (`_discover_and_close_browser`) — `get_browser_page` asserts against contexts from dead
+  event loops.
+
 ### 4. Modelling — `dclib/powerloss.py`
 
 `SwitchPowerLoss(P_cl, P_gd, P_sw, P_coss, P_rr, P_dt, cond=…)` aggregates loss components. `dcdc_buck_hs(...)` / `dcdc_buck_ls(...)` are the per-slot entry points used by `main.py` to fill the CSV columns (`P_on`, `P_on_ls`, `P_sw`, `P_rr`, `P_dt_ls`, `P_hs`, `P_2hs`, `P_ls`, `P_2ls`). The HS/LS asymmetry — reverse-recovery loss `P_rr` is caused by LS but dissipated in HS — is built into the column semantics; preserve that when changing the model.
@@ -101,13 +146,11 @@ CCM is assumed (`DCMNotImplemented` exists as a placeholder).
 
 ### 5. `maglib/` — inductor design
 
-Largely independent of the FET pipeline; pulled in via `dclib.powerloss` for AC-resistance and core-loss factors (`MagneticCoreSpecs`, `acr_factor_micrometals`, `skin_depth`, `d2awg`, `MaterialResistivity`). Materials are loaded from `maglib/materials/micrometals.csv`.
+See `maglib/CLAUDE.md` (loads when working under that directory).
 
 ### Project apps — `apps/`
 
-- `apps/proj/*.yaml` — runnable project configs (consumed by `main.py --config-file`).
-- `apps/mppts/libresolar.py` — hard-coded buck designs (`Fugu2_tall`, `MPPT_Fheat2`, …) used by `power_loss_calc.py`.
-- Top-level scripts in `apps/` (`L`, `Ldc-turns.py`, `dcm.py`, `high-side.py`, `mag-dc-bias-curve.py`, `pv-coil-core-mat.py`, `Lmin.py`, `transfer_cache.py`) are one-off analysis tools.
+See `apps/CLAUDE.md` (loads when working under that directory).
 
 ## Conventions & gotchas
 

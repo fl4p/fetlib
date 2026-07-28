@@ -7,7 +7,7 @@ fontTools
 pympler
 
 pymupdf~=1.24.10
-pyppeteer
+playwright
 
 pyquery~=1.4.3
 
@@ -53,5 +53,9 @@ pdf2image
 matplotlib
 
 
-# digikey-api:
+# digikey-api: the PyPI release (peeter123) is broken/v3-only -- use the
+# hurricaneJoef fork, which carries the v4 Product Information API.
+# (The former gitignored vendored digikey/ copy at the repo root was byte-identical
+# to this commit and has been removed in favour of the pinned install.)
+digikey-api @ git+https://github.com/hurricaneJoef/digikey-api.git@e4418f4aeb1c49c1e9b6c11f07e0b14567a43099
 certauth

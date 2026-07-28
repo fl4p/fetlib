@@ -34,7 +34,7 @@ def get_datasheets_path(mfr=None, mpn=None):
 
 mfrs = dict(
     infineon=('infineon', 'international rectifier'),
-    ti='texas instruments', ao='alpha & omega', nxp=('nxp', 'nexperia'),
+    ti='texas instruments', ao=('alpha & omega', 'aos'), nxp=('nxp', 'nexperia'),
     st='stmicroelectronics', toshiba='toshiba', vishay='vishay', diodes='diodes inc',
     diotec='diotec', rohm='rohm',
     good_ark='good-ark',

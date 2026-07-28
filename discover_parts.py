@@ -21,6 +21,7 @@ import dslib.discovery.toshiba
 import dslib.discovery.tw
 import dslib.discovery.vishay
 from dslib import mfr_tag
+from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, benchmark_mpns
 from dslib.fetch import fetch_datasheet, close_browser, get_datasheet_url
 
@@ -56,7 +57,16 @@ def unique_parts(parts: List[DiscoveredPart]):
     return list(by.values())
 
 
+@disk_cache(ttl='1d', hash_func_code=True)
 async def discover_mosfets(no_obsolete=False):
+    # Whole-corpus cache on top of the per-scraper caches: a hit skips every scraper
+    # await, the browser launch AND the unique_parts merge (repeat runs go from minutes
+    # to ~a second). 1d ttl because the corpus drifts slowly. CAVEATS (all bounded by
+    # the 1d ttl): hash_func_code covers only THIS function's source, not the scrapers
+    # it calls or the parts-lists/*.csv inputs -- a scraper fix or a freshly exported
+    # digikey CSV is not picked up until the ttl expires. Run once with --no-cache
+    # (disables ALL disk caches, main_yaml calls disk_cache_disable before discovery)
+    # or delete this function's cache tree to ingest immediately.
     parts: List[DiscoveredPart] = []
 
     try:

@@ -74,7 +74,9 @@ test/test.md
 
 *.xls
 
-dslib/dk-cache/token_storage.json
+# the whole SDK runtime dirs: token_storage.json plus the cert/PEM cache files the
+# pinned digikey-api fork also writes there
+dslib/dk-cache*/
 
 .idea/webServers.xml
 
