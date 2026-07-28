@@ -328,6 +328,66 @@ def test_anchor_matches_the_separator_variants():
         assert gen.RE_QRR_ROW.search(line), line
 
 
+# --- OCR tier -------------------------------------------------------------------
+
+def test_ocr_normalize_repairs_the_observed_mangles_only():
+    fixes = {
+        "VR=50 V, /F=100 A, dir/dt=100 A/us": "VR=50 V, IF=100 A, dir/dt=100 A/us",
+        "Ie=/ 5,": "IF=IS,",                       # scrambled N3G 'I F=I S'
+        "Qi digldt=100 Alus": "Qi diF/dt=100 A/us",
+        "di-/dt=100 A/us": "diF/dt=100 A/us",
+        "Vp=40 V": "VR=40 V",
+        "- 316 |nC_ | VR=50 V": "- 316  nC_   VR=50 V",
+        # 2nd round, off the cached corpus (each shape quoted from a real sheet):
+        "Vr=50 V, /r=50A, die/df=100 A/us": "Vr=50 V, IF=50A, die/dt=100 A/us",
+        "Ir=20 A,": "IF=20 A,",                    # N5 italic I_F
+        "Isp=45A, dlsp/dt=100A/us": "ISD=45A, dIsp/dt=100A/us",     # huayi/xrt
+        "Isp>=40A,": "ISD=40A,",                   # '>=' is OCR junk on the same
+        "VR=75 V, Ic=Is, die/dt=100 A/us": "VR=75 V, IF=IS, die/dt=100 A/us",
+        "Qi di-fdt=100 A/us": "Qi diF/dt=100 A/us",
+        "diF/dt=100 Als": "diF/dt=100 A/us",       # 'A/us' collapsed to 'Als'
+        "VR=400 V, -=I5,": "VR=400 V, IF=IS,",     # CoolMOS CP: 'I F=I S' as '-=I5'
+        "VR=50 V, 1-=25 A,": "VR=50 V, IF=25 A,",  # 'I F=' as '1-='
+        "Vr=50 V, /-=40 A,": "Vr=50 V, IF=40 A,",  # ... as '/-='
+        "Is - - 43 JA": "Is - - 43 A",             # unit col border read as 'JA'
+    }
+    for src, want in fixes.items():
+        assert gen._ocr_normalize(src) == want, src
+    # ... and must NOT touch legitimate text: a numeric IF, a clean di/dt, a plateau
+    # voltage row, real onsemi 'dIS/dt'. 'IF=15 A' must never become 'IF=IS'.
+    for clean in ("IF=15 A", "diF/dt =100 A/µs", "V plateau 4.7 V", "IF=IS,",
+                  "dIS/dt = 100 A/µs", "IS = 50 A"):
+        assert gen._ocr_normalize(clean) == clean, clean
+
+
+def test_ocr_shaped_sheet_extracts_after_normalisation():
+    # the verbatim shape tesseract produced for IPT014N10N5 (values from the
+    # hand-read page: VR=50, IF=100, di/dt=100, trr 103/206, Qrr 316/632)
+    ocr = "\n".join([
+        "   Reverse recovery time”     ter   -  103   |206  |ns_  |VR=50 V, /F=100 A, di-/dt=100 A/us",
+        "   Reverse recovery charge”)  Qr    -  316   (632  |nC_  | VR=50 V, /F=100 A, dir/dt=100 A/us",
+    ])
+    assert gen.extract_all_blocks(ocr) == []          # raw: refused, as shipped
+    blocks = gen.extract_all_blocks(gen._ocr_normalize(ocr))
+    assert len(blocks) == 1
+    c = blocks[0][0]
+    assert c["IF"] == 100.0 and c["didt"] == 100e6 and c["VR"] == 50.0
+    # qrr_seen leads with the printed values; trailing condition numbers ride along
+    # on this layout (conditions follow the label on the same line) as they always
+    # have -- the value cross-check only needs the true value present.
+    assert c["qrr_seen"][:2] == [316.0, 632.0]
+    c2, why = gen.select_block(blocks, qrr=316, trr=103)
+    assert why is None and c2["IF"] == 100.0
+
+
+def test_ocr_gate_refuses_without_a_calibration_cache(tmp_path, monkeypatch):
+    # Guard direction: no cache -> the tier is OFF, never 'unverified but running'.
+    monkeypatch.setattr(gen, "OCR_CACHE", str(tmp_path))
+    monkeypatch.setattr(gen, "_OCR_GATE", None)
+    ok, why = gen._ocr_gate()
+    assert not ok and "no OCR cache" in why
+
+
 def test_marketing_bullet_still_never_becomes_a_block():
     # Bullets anchor (they always did) but carry no conditions, so no block may
     # survive -- for the Qrr-first form the bullet's '(Qrr)' trails 'recovery' and

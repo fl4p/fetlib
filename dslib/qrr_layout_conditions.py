@@ -8,8 +8,9 @@ dslib/conditions.py cannot see. See apps/emit_qrr_layout_conditions.py for the e
 rules, the value cross-check that gates every entry, and the calibration against the
 hand-read entries in dslib/qrr_conditions.py.
 
-These are MACHINE-read, not human-verified. They carry source='layout' and rank below the
-hand-curated dslib/qrr_conditions.py:
+These are MACHINE-read, not human-verified. They carry source='layout' (or
+'layout-ocr' for entries read from --force-ocr text of image-only / scrambled-font
+sheets, marked ocr=True) and rank below the hand-curated dslib/qrr_conditions.py:
 
     qrr_points (per-row) > qrr_conditions (hand-read) > THIS > parsed cond keys
 
@@ -75,6 +76,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("huayi", "HY1908MF"): dict(IF=45, didt=1e+08, VR=None, Tj=25),  # Qrr=125 nC trr=60 ns, IRRM/IF=0.10
     ("huayi", "HY1908P"): dict(IF=45, didt=1e+08, VR=None, Tj=25),  # Qrr=125 nC trr=60 ns, IRRM/IF=0.10
     ("huayi", "HY1915P"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=78 nC trr=48 ns, IRRM/IF=0.11
+    ("huayi", "HY1920W"): dict(IF=45, didt=1e+08, VR=None, Tj=25, ocr=True),  # Qrr=160 nC trr=80 ns, IRRM/IF=0.10
     ("huayi", "HY3008B"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=127 nC trr=62 ns, IRRM/IF=0.09
     ("huayi", "HY3008P"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=127 nC trr=62 ns, IRRM/IF=0.09
     ("huayi", "HY3008PL"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=127 nC trr=62 ns, IRRM/IF=0.09
@@ -95,6 +97,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("huayi", "HY3810NA2B6"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=128.9 nC trr=53.8 ns, IRRM/IF=0.10
     ("huayi", "HY3810NA2P"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=91.7 nC trr=45.9 ns, IRRM/IF=0.08
     ("huayi", "HY3810P"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=103 nC trr=65 ns, IRRM/IF=0.07
+    ("huayi", "HY3912W"): dict(IF=85, didt=1e+08, VR=None, Tj=25, ocr=True),  # Qrr=110 nC trr=70 ns, IRRM/IF=0.04
     ("huayi", "HY4008NA2B"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=67 nC trr=41 ns, IRRM/IF=0.04
     ("huayi", "HY4008NA2P"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=67 nC trr=41 ns, IRRM/IF=0.04
     ("huayi", "HY4008NA2W"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=73 nC trr=44 ns, IRRM/IF=0.04
@@ -181,6 +184,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("huayi", "HYG065N10LS1C2"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=43 ns, IRRM/IF=0.04
     ("huayi", "HYG065N10LS1D"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=43 ns, IRRM/IF=0.11
     ("huayi", "HYG065N10LS1P"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=53.4 nC trr=44.1 ns, IRRM/IF=0.13
+    ("huayi", "HYG072N08NR1P"): dict(IF=40, didt=1e+08, VR=None, Tj=25, ocr=True),  # Qrr=125 nC trr=60 ns, IRRM/IF=0.11
     ("huayi", "HYG080N10LS1P"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=47.6 nC trr=41.5 ns, IRRM/IF=0.12
     ("huayi", "HYG090N15NS1B"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=251 nC trr=87 ns, IRRM/IF=0.12
     ("huayi", "HYG090N15NS1C2"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=251 nC trr=87 ns, IRRM/IF=0.12
@@ -244,9 +248,23 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "AUIRFS4310ZTRL"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=58 nC trr=40 ns, IRRM/IF=0.04
     ("infineon", "AUIRFSL4010"): dict(IF=106, didt=1e+08, VR=85, Tj=25),  # Qrr=210 nC trr=72 ns, IRRM/IF=0.06
     ("infineon", "AUIRLR3110Z"): dict(IF=38, didt=1e+08, VR=50, Tj=25),  # Qrr=42 nC trr=34 ns, IRRM/IF=0.07
+    ("infineon", "BSC047N08NS3GATMA1"): dict(IF=25, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=109 nC trr=61 ns, IRRM/IF=0.15
+    ("infineon", "BSC050N10NS5"): dict(IF=50, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=68 nC trr=46 ns, IRRM/IF=0.06
+    ("infineon", "BSC050N10NS5ATMA1"): dict(IF=50, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=68 nC trr=46 ns, IRRM/IF=0.06
+    ("infineon", "BSC070N10NS3GATMA1"): dict(IF=25, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=112 nC trr=61 ns, IRRM/IF=0.15
+    ("infineon", "BSC0804LS"): dict(IF=20, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=26 nC trr=30 ns, IRRM/IF=0.09
+    ("infineon", "BSC0805LS"): dict(IF=40, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=12 nC trr=21 ns, IRRM/IF=0.03
+    ("infineon", "BSC100N10NSFGATMA1"): dict(IF=25, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=205 nC trr=88 ns, IRRM/IF=0.20
+    ("infineon", "BSC109N10NS3GATMA1"): dict(IF=25, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=99 nC trr=59 ns, IRRM/IF=0.14
+    ("infineon", "BSC123N08NS3GATMA1"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=54 nC trr=45 ns, IRRM/IF=0.13
     ("infineon", "BSC12DN20NS3GATMA1"): dict(IF=11.3, didt=1e+08, VR=100, Tj=25),  # Qrr=208 nC trr=74 ns, IRRM/IF=0.51
     ("infineon", "BSC900N20NS3GATMA1"): dict(IF=15.2, didt=1e+08, VR=100, Tj=25),  # Qrr=309 nC trr=86 ns, IRRM/IF=0.48
+    ("infineon", "BSZ084N08NS5"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=44 nC trr=38 ns, IRRM/IF=0.12
+    ("infineon", "BSZ097N10NS5"): dict(IF=20, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=60 nC trr=43 ns, IRRM/IF=0.15
+    ("infineon", "BSZ097N10NS5ATMA1"): dict(IF=20, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=60 nC trr=43 ns, IRRM/IF=0.15
+    ("infineon", "BSZ123N08NS3GATMA1"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=54 nC trr=45 ns, IRRM/IF=0.13
     ("infineon", "BSZ12DN20NS3GATMA1"): dict(IF=11.3, didt=1e+08, VR=100, Tj=25),  # Qrr=212 nC trr=74 ns, IRRM/IF=0.52
+    ("infineon", "BSZ146N10LS5"): dict(IF=20, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=19 nC trr=26 ns, IRRM/IF=0.08
     ("infineon", "BSZ900N20NS3GATMA1"): dict(IF=15.2, didt=1e+08, VR=100, Tj=25),  # Qrr=309 nC trr=86 ns, IRRM/IF=0.48
     ("infineon", "IAUCN08S7L013"): dict(IF=50, didt=1e+08, VR=40, Tj=25),  # Qrr=32 nC trr=44 ns, IRRM/IF=0.03
     ("infineon", "IAUCN08S7L018"): dict(IF=50, didt=1e+08, VR=40, Tj=25),  # Qrr=22 nC trr=36 ns, IRRM/IF=0.03
@@ -290,10 +308,13 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IAUZN10S7N078"): dict(IF=50, didt=1e+08, VR=50, Tj=25),  # Qrr=19 nC trr=31 ns, IRRM/IF=0.03
     ("infineon", "IPA037N08N3GXKSA1"): dict(IF=75, didt=1e+08, VR=40, Tj=25),  # Qrr=130 nC trr=62 ns, IRRM/IF=0.06
     ("infineon", "IPA057N08N3GXKSA1"): dict(IF=60, didt=1e+08, VR=40, Tj=25),  # Qrr=121 nC trr=64 ns, IRRM/IF=0.07
+    ("infineon", "IPA075N15N3GXKSA1"): dict(IF=43, didt=1e+08, VR=75, Tj=25, ocr=True),  # Qrr=496 nC trr=144 ns, IRRM/IF=0.17
+    ("infineon", "IPA105N15N3GXKSA1"): dict(IF=37, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=380 nC trr=115 ns, IRRM/IF=0.19
     ("infineon", "IPB019N08N3GATMA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=317 nC trr=113 ns, IRRM/IF=0.06
     ("infineon", "IPB020N10N5"): dict(IF=176, didt=1e+08, VR=50, Tj=25),  # Qrr=287 nC trr=99 ns, IRRM/IF=0.04
     ("infineon", "IPB020N10N5ATMA1"): dict(IF=176, didt=1e+08, VR=50, Tj=25),  # Qrr=287 nC trr=99 ns, IRRM/IF=0.04
     ("infineon", "IPB035N08N3GATMA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=136 nC trr=73 ns, IRRM/IF=0.04
+    ("infineon", "IPB065N15N3GATMA1"): dict(IF=130, didt=1e+08, VR=75, Tj=25, ocr=True),  # Qrr=478 nC trr=146 ns, IRRM/IF=0.05
     ("infineon", "IPB085N15NM6"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
     ("infineon", "IPB085N15NM6ATMA1"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
     ("infineon", "IPB108N15N3GATMA1"): dict(IF=83, didt=1e+08, VR=75, Tj=25),  # Qrr=415 nC trr=132 ns, IRRM/IF=0.08
@@ -311,22 +332,33 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IPDQ60T010S7XTMA1"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPF019N10NM8"): dict(IF=25, didt=1e+08, VR=50, Tj=25),  # Qrr=68 nC trr=40 ns, IRRM/IF=0.14
     ("infineon", "IPF019N10NM8ATMA1"): dict(IF=25, didt=1e+08, VR=50, Tj=25),  # Qrr=68 nC trr=40 ns, IRRM/IF=0.14
+    ("infineon", "IPI072N10N3G"): dict(IF=80, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=139 nC trr=73 ns, IRRM/IF=0.05
+    ("infineon", "IPI072N10N3GXKSA1"): dict(IF=80, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=139 nC trr=73 ns, IRRM/IF=0.05
     ("infineon", "IPI111N15N3GAKSA1"): dict(IF=83, didt=1e+08, VR=75, Tj=25),  # Qrr=415 nC trr=132 ns, IRRM/IF=0.08
+    ("infineon", "IPP028N08N3GXKSA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=317 nC trr=113 ns, IRRM/IF=0.06
     ("infineon", "IPP030N10N3GXKSA1"): dict(IF=100, didt=1e+08, VR=50, Tj=25),  # Qrr=232 nC trr=86 ns, IRRM/IF=0.06
     ("infineon", "IPP037N08N3GXKSA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=136 nC trr=73 ns, IRRM/IF=0.04
     ("infineon", "IPP041N12N3GXKSA1"): dict(IF=120, didt=1e+08, VR=60, Tj=25),  # Qrr=356 nC trr=123 ns, IRRM/IF=0.05
+    ("infineon", "IPP06CN10LG"): dict(IF=100, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=307 nC trr=98 ns, IRRM/IF=0.07
+    ("infineon", "IPP072N10N3GXKSA1"): dict(IF=80, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=139 nC trr=73 ns, IRRM/IF=0.05
     ("infineon", "IPP076N12N3GXKSA1"): dict(IF=100, didt=1e+08, VR=60, Tj=25),  # Qrr=291 nC trr=122 ns, IRRM/IF=0.05
     ("infineon", "IPP089N15NM6"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
     ("infineon", "IPP089N15NM6AKSA1"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
     ("infineon", "IPP111N15N3GXKSA1"): dict(IF=83, didt=1e+08, VR=75, Tj=25),  # Qrr=415 nC trr=132 ns, IRRM/IF=0.08
     ("infineon", "IPP114N12N3GXKSA1"): dict(IF=75, didt=1e+08, VR=60, Tj=25),  # Qrr=232 nC trr=116 ns, IRRM/IF=0.06
+    ("infineon", "IPP180N10N3GXKSA1"): dict(IF=33, didt=1e+08, VR=15, Tj=25, ocr=True),  # Qrr=92 nC trr=55 ns, IRRM/IF=0.11
     ("infineon", "IPP200N15N3GXKSA1"): dict(IF=50, didt=1e+08, VR=75, Tj=25),  # Qrr=332 nC trr=106 ns, IRRM/IF=0.13
     ("infineon", "IPQC60R010S7A"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPQC60R010S7AXTMA1"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPQC60T010S7"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPQC60T010S7XTMA1"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
+    ("infineon", "IPT014N10N5"): dict(IF=100, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=316 nC trr=103 ns, IRRM/IF=0.07
     ("infineon", "IPT60R024CM8"): dict(IF=21.1, didt=1e+08, VR=400, Tj=25),  # Qrr=1110 nC trr=149.8 ns, IRRM/IF=0.70
     ("infineon", "IPT60R024CM8XTMA1"): dict(IF=21.1, didt=1e+08, VR=400, Tj=25),  # Qrr=1110 nC trr=149.8 ns, IRRM/IF=0.70
+    ("infineon", "IQE050N08NM5"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=30 nC trr=37 ns, IRRM/IF=0.09
+    ("infineon", "IQE050N08NM5ATMA1"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=30 nC trr=37 ns, IRRM/IF=0.09
+    ("infineon", "IQE050N08NM5CG"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=30 nC trr=37 ns, IRRM/IF=0.09
+    ("infineon", "IQE050N08NM5CGATMA1"): dict(IF=20, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=30 nC trr=37 ns, IRRM/IF=0.09
     ("infineon", "IRF100B201"): dict(IF=115, didt=1e+08, VR=85, Tj=25),  # Qrr=90 nC trr=47 ns, IRRM/IF=0.03
     ("infineon", "IRF100B202"): dict(IF=58, didt=1e+08, VR=85, Tj=25),  # Qrr=105 nC trr=51 ns, IRRM/IF=0.07
     ("infineon", "IRF100S201"): dict(IF=115, didt=1e+08, VR=85, Tj=25),  # Qrr=90 nC trr=47 ns, IRRM/IF=0.03
@@ -568,7 +600,13 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRLSL4030"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
     ("infineon", "IRLSL4030PBF"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
     ("infineon", "IRLU3110Z"): dict(IF=38, didt=1e+08, VR=50, Tj=25),  # Qrr=42 nC trr=34 ns, IRRM/IF=0.07
+    ("infineon", "ISC0805NLS"): dict(IF=50, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=28 nC trr=33 ns, IRRM/IF=0.04
+    ("infineon", "IST019N08NM5"): dict(IF=100, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=66 nC trr=49 ns, IRRM/IF=0.03
+    ("infineon", "IST019N08NM5AUMA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25, ocr=True),  # Qrr=66 nC trr=49 ns, IRRM/IF=0.03
+    ("infineon", "IST026N10NM5"): dict(IF=100, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=75 nC trr=51 ns, IRRM/IF=0.03
+    ("infineon", "IST026N10NM5AUMA1"): dict(IF=100, didt=1e+08, VR=50, Tj=25, ocr=True),  # Qrr=75 nC trr=51 ns, IRRM/IF=0.03
     ("infineon", "SPP15N60CFD"): dict(IF=13.4, didt=1e+08, VR=480, Tj=25),  # Qrr=1000 nC trr=147 ns, IRRM/IF=1.02
+    ("mcc", "MCB70N10YA-TP"): dict(IF=35, didt=1e+08, VR=None, Tj=25, ocr=True),  # Qrr=53 nC trr=49 ns, IRRM/IF=0.07
     ("nce", "NCE0240F"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=66 nC trr=42 ns, IRRM/IF=0.08
     ("nce", "NCEP0135A"): dict(IF=20, didt=5e+08, VR=None, Tj=25),  # Qrr=98 nC trr=26 ns, IRRM/IF=0.40
     ("nce", "NCEP0135AK"): dict(IF=20, didt=5e+08, VR=None, Tj=25),  # Qrr=98 nC trr=26 ns, IRRM/IF=0.40
@@ -885,25 +923,109 @@ QRR_LAYOUT_CONDITIONS = {
     ("st", "STHU65N110DM9AG"): dict(IF=26, didt=1e+08, VR=150, Tj=25),  # Qrr=740 nC trr=130 ns, IRRM/IF=0.44
     ("st", "STI33N60M2"): dict(IF=26, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=375 ns, IRRM/IF=1.18
     ("st", "STI47N60DM6AG"): dict(IF=36, didt=1e+08, VR=60, Tj=25),  # Qrr=540 nC trr=115 ns, IRRM/IF=0.27
+    ("st", "STL100N8F7"): dict(IF=20, didt=1e+08, VR=60, Tj=25),  # Qrr=58.6 nC trr=48.6 ns, IRRM/IF=0.13
+    ("st", "STL105N8F7AG"): dict(IF=50, didt=1e+08, VR=64, Tj=25),  # Qrr=37 nC trr=37 ns, IRRM/IF=0.04
+    ("st", "STL110N10F7"): dict(IF=21, didt=1e+08, VR=80, Tj=150),  # Qrr=150 nC trr=77 ns, IRRM/IF=0.20
+    ("st", "STL125N8F7AG"): dict(IF=100, didt=1e+08, VR=64, Tj=25),  # Qrr=66 nC trr=49 ns, IRRM/IF=0.03
+    ("st", "STL130N8F7"): dict(IF=26, didt=1e+08, VR=60, Tj=150),  # Qrr=92 nC trr=58 ns, IRRM/IF=0.13
     ("st", "STL33N60DM6"): dict(IF=25, didt=1e+08, VR=60, Tj=25),  # Qrr=470 nC trr=105 ns, IRRM/IF=0.36
+    ("st", "STL33N60M6"): dict(IF=25, didt=1e+08, VR=60, Tj=25),  # Qrr=3070 nC trr=265 ns, IRRM/IF=0.94
+    ("st", "STL36N55M5"): dict(IF=22.5, didt=1e+08, VR=100, Tj=25),  # Qrr=4200 nC trr=292 ns, IRRM/IF=1.28
+    ("st", "STL45N60DM6"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=480 nC trr=105 ns, IRRM/IF=0.31
+    ("st", "STL52N60DM6"): dict(IF=40, didt=1e+08, VR=100, Tj=25),  # Qrr=780 nC trr=134 ns, IRRM/IF=0.30
+    ("st", "STL57N65M5"): dict(IF=22.5, didt=1e+08, VR=100, Tj=25),  # Qrr=7000 nC trr=378 ns, IRRM/IF=1.65
+    ("st", "STL90N10F7"): dict(IF=16, didt=1e+08, VR=80, Tj=150),  # Qrr=125 nC trr=70 ns, IRRM/IF=0.24
+    ("st", "STO67N60DM6"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=600 nC trr=130 ns, IRRM/IF=0.17
+    ("st", "STO67N60M6"): dict(IF=57, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=340 ns, IRRM/IF=0.58
     ("st", "STP100N10F7"): dict(IF=80, didt=1e+08, VR=80, Tj=150),  # Qrr=146 nC trr=77 ns, IRRM/IF=0.05
     ("st", "STP150N10F7"): dict(IF=110, didt=1e+08, VR=80, Tj=150),  # Qrr=165 nC trr=70 ns, IRRM/IF=0.04
     ("st", "STP150N10F7AG"): dict(IF=110, didt=1e+08, VR=80, Tj=25),  # Qrr=83 nC trr=60 ns, IRRM/IF=0.03
     ("st", "STP20NF20"): dict(IF=20, didt=1e+08, VR=50, Tj=25),  # Qrr=775 nC trr=155 ns, IRRM/IF=0.52
     ("st", "STP240N10F7"): dict(IF=110, didt=1e+08, VR=80, Tj=150),  # Qrr=315 nC trr=108 ns, IRRM/IF=0.06
     ("st", "STP25N018M9"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=900 nC trr=151 ns, IRRM/IF=0.22
-    ("st", "STP30NF20"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=960 nC trr=155 ns, IRRM/IF=0.42
+    ("st", "STP270N8F7"): dict(IF=180, didt=1e+08, VR=64, Tj=150),  # Qrr=182 nC trr=78 ns, IRRM/IF=0.03
     ("st", "STP310N10F7"): dict(IF=180, didt=1e+08, VR=80, Tj=150),  # Qrr=200 nC trr=85 ns, IRRM/IF=0.03
     ("st", "STP33N60DM6"): dict(IF=25, didt=1e+08, VR=60, Tj=25),  # Qrr=470 nC trr=105 ns, IRRM/IF=0.36
+    ("st", "STP33N60M2"): dict(IF=26, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=375 ns, IRRM/IF=1.18
+    ("st", "STP34N65M5"): dict(IF=28, didt=1e+08, VR=100, Tj=25),  # Qrr=5600 nC trr=350 ns, IRRM/IF=1.15
+    ("st", "STP34NM60ND"): dict(IF=29, didt=1e+08, VR=60, Tj=25),  # Qrr=1400 nC trr=175 ns, IRRM/IF=0.56
+    ("st", "STP35N60DM2"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=570 nC trr=120 ns, IRRM/IF=0.35
+    ("st", "STP36N60M6"): dict(IF=30, didt=1e+08, VR=60, Tj=25),  # Qrr=5300 nC trr=340 ns, IRRM/IF=1.05
+    ("st", "STP38N65M5"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=6600 nC trr=382 ns, IRRM/IF=1.17
+    ("st", "STP42N65M5"): dict(IF=33, didt=1e+08, VR=100, Tj=25),  # Qrr=7000 nC trr=400 ns, IRRM/IF=1.08
+    ("st", "STP43N60DM2"): dict(IF=34, didt=1e+08, VR=60, Tj=25),  # Qrr=600 nC trr=120 ns, IRRM/IF=0.30
+    ("st", "STP45N60DM2AG"): dict(IF=34, didt=1e+08, VR=60, Tj=25),  # Qrr=600 nC trr=120 ns, IRRM/IF=0.30
+    ("st", "STP45N65M5"): dict(IF=35, didt=1e+08, VR=100, Tj=25),  # Qrr=7400 nC trr=392 ns, IRRM/IF=1.08
+    ("st", "STP46N60M6"): dict(IF=36, didt=1e+08, VR=60, Tj=25),  # Qrr=2800 nC trr=267 ns, IRRM/IF=0.60
+    ("st", "STP50N60DM6"): dict(IF=36, didt=1e+08, VR=60, Tj=25),  # Qrr=540 nC trr=115 ns, IRRM/IF=0.27
     ("st", "STP50NF25"): dict(IF=45, didt=1e+08, VR=60, Tj=25),  # Qrr=1500 nC trr=198 ns, IRRM/IF=0.35
+    ("st", "STP57N65M5"): dict(IF=42, didt=1e+08, VR=100, Tj=25),  # Qrr=8000 nC trr=418 ns, IRRM/IF=0.92
+    ("st", "STP65N045M9"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=4000 nC trr=288 ns, IRRM/IF=0.51
     ("st", "STP75NF20"): dict(IF=75, didt=1e+08, VR=100, Tj=25),  # Qrr=2180 nC trr=222 ns, IRRM/IF=0.27
     ("st", "STP80NF10"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=450 nC trr=106 ns, IRRM/IF=0.11
     ("st", "STP80NF10FP"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=850 nC trr=155 ns, IRRM/IF=0.14
     ("st", "STS1NK60Z"): dict(IF=0.8, didt=1e+08, VR=20, Tj=150),  # Qrr=224 nC trr=140 ns, IRRM/IF=4.43
+    ("st", "STW33N60M2"): dict(IF=26, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=375 ns, IRRM/IF=1.18
+    ("st", "STW34NM60ND"): dict(IF=29, didt=1e+08, VR=60, Tj=25),  # Qrr=1400 nC trr=175 ns, IRRM/IF=0.56
+    ("st", "STW35N60DM2"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=570 nC trr=120 ns, IRRM/IF=0.35
+    ("st", "STW36N60M6"): dict(IF=30, didt=1e+08, VR=60, Tj=25),  # Qrr=5300 nC trr=340 ns, IRRM/IF=1.05
+    ("st", "STW38N65M5"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=6600 nC trr=382 ns, IRRM/IF=1.17
+    ("st", "STW42N65M5"): dict(IF=33, didt=1e+08, VR=100, Tj=25),  # Qrr=7000 nC trr=400 ns, IRRM/IF=1.08
+    ("st", "STW43N60DM2"): dict(IF=34, didt=1e+08, VR=60, Tj=25),  # Qrr=600 nC trr=120 ns, IRRM/IF=0.30
+    ("st", "STW45N60DM2AG"): dict(IF=34, didt=1e+08, VR=60, Tj=25),  # Qrr=600 nC trr=120 ns, IRRM/IF=0.30
+    ("st", "STW45N65M5"): dict(IF=35, didt=1e+08, VR=100, Tj=25),  # Qrr=7400 nC trr=392 ns, IRRM/IF=1.08
+    ("st", "STW45NM60"): dict(IF=45, didt=1e+08, VR=100, Tj=25),  # Qrr=10000 nC trr=508 ns, IRRM/IF=0.90
+    ("st", "STW48N60DM2"): dict(IF=40, didt=1e+08, VR=60, Tj=25),  # Qrr=700 nC trr=140 ns, IRRM/IF=0.26
+    ("st", "STW48N60M6"): dict(IF=39, didt=1e+08, VR=60, Tj=25),  # Qrr=4400 nC trr=317 ns, IRRM/IF=0.72
+    ("st", "STW48N60M6-4"): dict(IF=39, didt=1e+08, VR=60, Tj=25),  # Qrr=4400 nC trr=317 ns, IRRM/IF=0.72
+    ("st", "STW50N65DM2AG"): dict(IF=38, didt=1e+08, VR=60, Tj=25),  # Qrr=960 nC trr=150 ns, IRRM/IF=0.34
+    ("st", "STW52N60DM6"): dict(IF=40, didt=1e+08, VR=60, Tj=25),  # Qrr=780 nC trr=134 ns, IRRM/IF=0.30
     ("st", "STW52NK25Z"): dict(IF=52, didt=1e+08, VR=100, Tj=25),  # Qrr=285 nC trr=285 ns, IRRM/IF=0.04
+    ("st", "STW55NM60ND"): dict(IF=51, didt=1e+08, VR=60, Tj=25),  # Qrr=1800 nC trr=200 ns, IRRM/IF=0.36
+    ("st", "STW56N60DM2"): dict(IF=50, didt=1e+08, VR=60, Tj=25),  # Qrr=700 nC trr=140 ns, IRRM/IF=0.21
+    ("st", "STW56N60M2"): dict(IF=52, didt=1e+08, VR=60, Tj=25),  # Qrr=10000 nC trr=496 ns, IRRM/IF=0.79
+    ("st", "STW56N60M2-4"): dict(IF=52, didt=1e+08, VR=60, Tj=25),  # Qrr=10000 nC trr=496 ns, IRRM/IF=0.79
+    ("st", "STW57N65M5"): dict(IF=42, didt=1e+08, VR=100, Tj=25),  # Qrr=8000 nC trr=418 ns, IRRM/IF=0.92
+    ("st", "STW58N60DM2AG"): dict(IF=50, didt=1e+08, VR=60, Tj=25),  # Qrr=700 nC trr=140 ns, IRRM/IF=0.21
+    ("st", "STW58N65DM2AG"): dict(IF=48, didt=1e+08, VR=100, Tj=25),  # Qrr=680 nC trr=135 ns, IRRM/IF=0.22
+    ("st", "STW65N040M9-4"): dict(IF=58, didt=1e+08, VR=60, Tj=25),  # Qrr=3300 nC trr=270 ns, IRRM/IF=0.43
+    ("st", "STW65N045M9-4"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=4000 nC trr=288 ns, IRRM/IF=0.51
+    ("st", "STW65N60DM6"): dict(IF=38, didt=1e+08, VR=60, Tj=25),  # Qrr=580 nC trr=116 ns, IRRM/IF=0.27
+    ("st", "STW68N60M6"): dict(IF=63, didt=1e+08, VR=60, Tj=25),  # Qrr=4300 nC trr=308 ns, IRRM/IF=0.45
+    ("st", "STW68N60M6-4"): dict(IF=63, didt=1e+08, VR=60, Tj=25),  # Qrr=4300 nC trr=308 ns, IRRM/IF=0.45
+    ("st", "STW68N65DM6"): dict(IF=48, didt=1e+08, VR=60, Tj=25),  # Qrr=641 nC trr=135 ns, IRRM/IF=0.20
+    ("st", "STW69N65M5"): dict(IF=58, didt=1e+08, VR=100, Tj=25),  # Qrr=11000 nC trr=480 ns, IRRM/IF=0.79
+    ("st", "STW70N60DM2"): dict(IF=66, didt=1e+08, VR=60, Tj=25),  # Qrr=750 nC trr=150 ns, IRRM/IF=0.16
+    ("st", "STW70N60DM6"): dict(IF=62, didt=1e+08, VR=60, Tj=25),  # Qrr=690 nC trr=138 ns, IRRM/IF=0.17
+    ("st", "STW70N60DM6-4"): dict(IF=62, didt=1e+08, VR=60, Tj=25),  # Qrr=690 nC trr=138 ns, IRRM/IF=0.17
+    ("st", "STW72N60DM6AG"): dict(IF=56, didt=1e+08, VR=60, Tj=25),  # Qrr=900 nC trr=153 ns, IRRM/IF=0.22
+    ("st", "STW75N60M6"): dict(IF=72, didt=1e+08, VR=60, Tj=25),  # Qrr=6400 nC trr=367 ns, IRRM/IF=0.49
+    ("st", "STW75N60M6-4"): dict(IF=72, didt=1e+08, VR=60, Tj=25),  # Qrr=6400 nC trr=367 ns, IRRM/IF=0.49
     ("st", "STW75NF20"): dict(IF=75, didt=1e+08, VR=100, Tj=25),  # Qrr=2180 nC trr=222 ns, IRRM/IF=0.27
-    ("st", "STY60NK30Z"): dict(IF=60, didt=1e+08, VR=100, Tj=150),  # Qrr=6400 nC trr=475 ns, IRRM/IF=0.47
-    ("st", "STY60NM60"): dict(IF=60, didt=1e+08, VR=30, Tj=150),  # Qrr=14000 nC trr=600 ns, IRRM/IF=0.80
+    ("st", "STW88N65M5"): dict(IF=84, didt=1e+08, VR=100, Tj=25),  # Qrr=14000 nC trr=544 ns, IRRM/IF=0.62
+    ("st", "STWA30N65DM6AG"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=630 nC trr=126 ns, IRRM/IF=0.37
+    ("st", "STWA32N65DM6AG"): dict(IF=37, didt=1e+08, VR=60, Tj=25),  # Qrr=620 nC trr=122 ns, IRRM/IF=0.28
+    ("st", "STWA40N60M2"): dict(IF=34, didt=1e+08, VR=60, Tj=25),  # Qrr=8200 nC trr=440 ns, IRRM/IF=1.12
+    ("st", "STWA46N65DM6AG"): dict(IF=50, didt=1e+08, VR=60, Tj=25),  # Qrr=780 nC trr=140 ns, IRRM/IF=0.23
+    ("st", "STWA50N65DM2AG"): dict(IF=38, didt=1e+08, VR=60, Tj=25),  # Qrr=960 nC trr=150 ns, IRRM/IF=0.34
+    ("st", "STWA57N65M5"): dict(IF=42, didt=1e+08, VR=100, Tj=25),  # Qrr=8000 nC trr=418 ns, IRRM/IF=0.92
+    ("st", "STWA60N028T"): dict(IF=84, didt=1e+08, VR=60, Tj=25),  # Qrr=13900 nC trr=534 ns, IRRM/IF=0.62
+    ("st", "STWA60N035M9"): dict(IF=62, didt=1e+08, VR=60, Tj=25),  # Qrr=3100 nC trr=277 ns, IRRM/IF=0.37
+    ("st", "STWA65N045M9"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=4000 nC trr=288 ns, IRRM/IF=0.51
+    ("st", "STWA65N60DM6"): dict(IF=38, didt=1e+08, VR=60, Tj=25),  # Qrr=580 nC trr=116 ns, IRRM/IF=0.27
+    ("st", "STWA65N65DM2AG"): dict(IF=60, didt=1e+08, VR=60, Tj=25),  # Qrr=940 nC trr=154 ns, IRRM/IF=0.21
+    ("st", "STWA67N60DM6"): dict(IF=47.5, didt=1e+08, VR=60, Tj=25),  # Qrr=600 nC trr=125 ns, IRRM/IF=0.21
+    ("st", "STWA67N60M6"): dict(IF=52, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=348 ns, IRRM/IF=0.62
+    ("st", "STWA68N60M6"): dict(IF=63, didt=1e+08, VR=60, Tj=25),  # Qrr=4300 nC trr=308 ns, IRRM/IF=0.45
+    ("st", "STWA68N65DM6"): dict(IF=48, didt=1e+08, VR=60, Tj=25),  # Qrr=641 nC trr=135 ns, IRRM/IF=0.20
+    ("st", "STWA70N60DM2"): dict(IF=66, didt=1e+08, VR=60, Tj=25),  # Qrr=750 nC trr=150 ns, IRRM/IF=0.16
+    ("st", "STWA70N60DM6"): dict(IF=62, didt=1e+08, VR=60, Tj=25),  # Qrr=690 nC trr=138 ns, IRRM/IF=0.17
+    ("st", "STWA72N60DM2AG"): dict(IF=66, didt=1e+08, VR=480, Tj=25),  # Qrr=750 nC trr=150 ns, IRRM/IF=0.16
+    ("st", "STWA72N60DM6AG"): dict(IF=56, didt=1e+08, VR=60, Tj=25),  # Qrr=900 nC trr=153 ns, IRRM/IF=0.22
+    ("st", "STWA75N60M6"): dict(IF=72, didt=1e+08, VR=60, Tj=25),  # Qrr=6400 nC trr=367 ns, IRRM/IF=0.49
+    ("st", "STWA88N65M5"): dict(IF=84, didt=1e+08, VR=100, Tj=25),  # Qrr=14000 nC trr=544 ns, IRRM/IF=0.62
+    ("st", "STY139N65M5"): dict(IF=130, didt=1e+08, VR=100, Tj=25),  # Qrr=15000 nC trr=570 ns, IRRM/IF=0.41
+    ("st", "STY145N65M5"): dict(IF=138, didt=1e+08, VR=100, Tj=25),  # Qrr=14500 nC trr=568 ns, IRRM/IF=0.37
     ("toshiba", "TK090A65Z"): dict(IF=15, didt=1e+08, VR=400, Tj=25),  # Qrr=5100 nC trr=330 ns, IRRM/IF=2.08
     ("toshiba", "TK090Z65Z"): dict(IF=15, didt=1e+08, VR=400, Tj=25),  # Qrr=5100 nC trr=330 ns, IRRM/IF=2.08
     ("toshiba", "TK100A10N1"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=220 nC trr=93 ns, IRRM/IF=0.05
@@ -983,10 +1105,13 @@ QRR_LAYOUT_CONDITIONS = {
 
 
 def qrr_layout_conditions_for(mfr, mpn):
-    """(mfr, mpn) -> dict(IF, didt, VR, Tj, source='layout') or None.
+    """(mfr, mpn) -> dict(IF, didt, VR, Tj, source='layout'|'layout-ocr') or None.
 
     Same orderable-suffix fallback as dslib/qrr_conditions.py, so a family variant
-    resolves to its base die without a separate entry."""
+    resolves to its base die without a separate entry. Entries read from OCR text
+    (image-only / scrambled-font sheets; ocr=True) carry source='layout-ocr' -- the
+    value cross-check was attribution-only there, since the DB's own values came
+    through the same OCR."""
     from dslib.mpn_match import lookup_base_variant
     hit = lookup_base_variant(QRR_LAYOUT_CONDITIONS, mfr, mpn)
-    return dict(hit, source='layout') if hit else None
+    return dict(hit, source='layout-ocr' if hit.get('ocr') else 'layout') if hit else None

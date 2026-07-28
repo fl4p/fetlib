@@ -107,6 +107,107 @@ CALIBRATION = {
 }
 CALIBRATION_MUST_MISS = [('infineon', 'IPT014N10N5')]
 
+# ---- OCR tier -------------------------------------------------------------------
+#
+# Two sheet classes have NO usable text layer: true image-only PDFs (23 in the
+# 2026-07-28 census; IPT014N10N5) and scrambled-font sheets whose layer decodes to a
+# glyph cipher ('?HXHTLZLX' = 'Parameter'; 82, mostly Infineon N3G). For those --
+# and ONLY when the raw pass finds no recovery block at all -- harvest() consults a
+# pre-built OCR text cache (data/ocr-layout-cache/<mfr>/<mpn>.txt, content-keyed on
+# the source PDF, populated by a --force-ocr batch; never OCR'd inline).
+#
+# Independence caveat, on the record: the DB's Qrr/trr for these parts came through
+# the parse pipeline's own ocrmypdf fallback -- the SAME tesseract. The value
+# cross-check is therefore pure attribution here (which row/block the value sits
+# in), not independent corroboration of the digits. The IRRM band and the Qrr/IF
+# floor below still gate acceptance, and every OCR-served entry carries ocr=True /
+# source='layout-ocr' so downstream can see which tier it stands on.
+#
+# The whole tier is gated by CALIBRATION_OCR: hand-read entries (values verified
+# against rendered pages) that must extract EXACTLY from the cached OCR text before
+# any OCR result is harvested. No cache, or a wrong extraction -> the tier disables
+# itself and says so in the stats; parts stay refused rather than OCR-guessed.
+OCR_CACHE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                         'data', 'ocr-layout-cache')
+CALIBRATION_OCR = {
+    # print-to-PDF, no text layer; Table 7 read off the rendered page 5
+    ('infineon', 'IPT014N10N5'): (100.0, 100e6),
+    # scrambled font (cipher text layer); Reverse Diode table read off page 3:
+    # IS=100 A rating row, VR=40 V, IF=IS, diF/dt=100 A/us, trr 113 ns, Qrr 317 nC
+    ('infineon', 'IPP028N08N3GXKSA1'): (100.0, 100e6),
+}
+
+# Token repairs for OCR confusions OBSERVED in the calibration sheets -- applied to
+# OCR text only, never to a real text layer. Values are untouched; only condition
+# tokens are repaired, and every acceptance still has to print the DB's value.
+_OCR_FIXES = [
+    (re.compile(r'\|'), ' '),                              # table borders read as pipes
+    (re.compile(r'(?<![\w/])/\s*[Fr]\s*='), 'IF='),        # italic I_F read as '/F', '/r'
+    (re.compile(r'\bI\s*[er]\s*=\s*(?=[\dI/l])'), 'IF='),  # I_F read as 'Ie' / 'Ir'
+    (re.compile(r'\bIF\s*=\s*[/l]\s*[S5s]\b'), 'IF=IS'),   # I_S read as '/S' / '/ 5'
+    (re.compile(r'\bI\s*c\s*=\s*I\s*s\b'), 'IF=IS'),       # I_F=I_S read as 'Ic=Is'
+    (re.compile(r'\bI\s*s\s*p\s*>?='), 'ISD='),            # I_SD read as 'Isp' ('>=' junk)
+    (re.compile(r'\bd\s*l(?=\s*[A-Za-z]{0,3}\s*/\s*[dA]\s*[tf])'), 'dI'),  # 'dlsp/dt'
+    (re.compile(r'\b(d\s*i\s*[A-Za-z]?\s*/\s*d)\s*f\b'), r'\1t'),  # 'dir/df', 'die/df'
+    (re.compile(r'\bd\s*i\s*[A-Za-z]?\s*[l]\s*d\s*t\s*='), 'diF/dt='),   # 'digldt='
+    (re.compile(r'\bd\s*i\s*[-–—]\s*[/f]\s*d\s*t'), 'diF/dt'),           # 'di-/dt', 'di-fdt'
+    (re.compile(r'\bA\s*[l1]\s*([uµμ])\s*s\b'), r'A/\1s'), # 'A/us' read as 'Alus'
+    (re.compile(r'(?<=\d)\s*A\s*l\s*s\b'), ' A/us'),       # ... or 'Als' after a number
+    (re.compile(r'(?<![\w])[-–—]\s*=\s*I\s*[5Ss]\b'), 'IF=IS'),  # 'I F=I S' as '-=I5'
+    (re.compile(r'\b1\s*[-–—]\s*=\s*(?=\d+\s*A)'), 'IF='),       # 'I F=' as '1-='
+    (re.compile(r'(?<![\w/])/\s*[-–—]?\s*=\s*(?=\d+\s*A)'), 'IF='),  # ... as '/-=' / '/='
+    (re.compile(r'(?<=\d)\s*J\s*A\b'), ' A'),              # unit 'A' behind a '|' as 'JA'
+    (re.compile(r'\bV\s*p\s*=\s*(?=\d+\s*V)'), 'VR='),     # V_R read as 'Vp'
+]
+
+
+def _ocr_normalize(body):
+    for rx, rep in _OCR_FIXES:
+        body = rx.sub(rep, body)
+    return body
+
+
+def _ocr_cached_text(mfr, mpn, pdf):
+    """Cached --force-ocr text for this part, or '' (never OCRs inline). The sha256
+    sidecar ties the cache to the PDF's content; a mismatch reads as no cache."""
+    txt = os.path.join(OCR_CACHE, mfr, mpn + '.txt')
+    sig = os.path.join(OCR_CACHE, mfr, mpn + '.sha256')
+    if not (os.path.exists(txt) and os.path.exists(sig)):
+        return ''
+    import hashlib
+    h = hashlib.sha256()
+    with open(pdf, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    if open(sig).read().strip() != h.hexdigest():
+        return ''
+    return open(txt, encoding='utf8', errors='ignore').read()
+
+
+_OCR_GATE = None
+
+
+def _ocr_gate():
+    """(enabled, reason). The OCR tier runs only after every CALIBRATION_OCR part
+    extracts its hand-read (IF, didt) from the CACHED text -- a missing cache or a
+    wrong extraction disables the tier (visibly, via the harvest stats), it never
+    'passes' by not being checkable."""
+    global _OCR_GATE
+    if _OCR_GATE is not None:
+        return _OCR_GATE
+    for (mfr, mpn), (IF, didt) in sorted(CALIBRATION_OCR.items()):
+        pdf = os.path.join(REPO, 'datasheets', mfr, mpn + '.pdf')
+        body = _ocr_cached_text(mfr, mpn, pdf) if os.path.exists(pdf) else ''
+        if not body:
+            _OCR_GATE = (False, 'no OCR cache for calibration part %s' % mpn)
+            return _OCR_GATE
+        c = extract(_ocr_normalize(body))
+        if not c or abs(c['IF'] - IF) > 1e-6 or abs(c['didt'] - didt) > 1e-3 * didt:
+            _OCR_GATE = (False, 'OCR calibration WRONG for %s: %s' % (mpn, c))
+            return _OCR_GATE
+    _OCR_GATE = (True, 'calibrated %d/%d' % (len(CALIBRATION_OCR), len(CALIBRATION_OCR)))
+    return _OCR_GATE
+
 
 def _f(s):
     return float(s.replace(',', '.'))
@@ -343,6 +444,12 @@ def calibrate():
         print('  %-22s %s (no text layer -- must extract nothing)'
               % (mpn, 'OK   ' if c is None else 'WRONG: extracted %s' % c))
         bad += (c is not None)
+    # The OCR leg is informational here: a missing cache disables the OCR tier in
+    # harvest() (visibly) but must not fail the RAW calibration -- a fresh clone has
+    # no cache and the raw pass is independent of it. A present-but-WRONG OCR
+    # extraction does fail, via _ocr_gate's own comparison at harvest time.
+    ocr_ok, ocr_why = _ocr_gate()
+    print('  OCR tier: %s (%s)' % ('ENABLED' if ocr_ok else 'disabled', ocr_why))
     print('\n  matched %d, wrong %d, missed %d' % (ok, bad, miss))
     return bad == 0 and miss == 0
 
@@ -439,7 +546,23 @@ def harvest():
         if not os.path.exists(pdf):
             stats['no pdf'] += 1
             continue
+        ocr = False
         c, why = select_block(extract_all_blocks(layout_text(pdf)), qrr, trr)
+        if c is None and why == 'no recovery block in layout text':
+            # OCR tier: only for sheets whose raw text has no recovery block at all,
+            # only from the pre-built cache, only with the OCR calibration green.
+            body = _ocr_cached_text(key[0], key[1], pdf)
+            if body:
+                ok, gate_why = _ocr_gate()
+                if not ok:
+                    stats['ocr tier disabled: %s' % gate_why] += 1
+                else:
+                    c2, why2 = select_block(
+                        extract_all_blocks(_ocr_normalize(body)), qrr, trr)
+                    if c2 is not None:
+                        c, why, ocr = c2, None, True
+                    else:
+                        why = 'ocr: %s' % why2
         if c is None:
             stats[why] += 1
             continue
@@ -468,9 +591,12 @@ def harvest():
             stats['Qrr/IF below any physical recovery (lost unit prefix?)'] += 1
             continue
         stats['ACCEPTED'] += 1
+        if ocr:
+            stats['ACCEPTED via ocr'] += 1
         out.append(dict(mfr=key[0], mpn=key[1], IF=c['IF'], didt=c['didt'],
                         VR=c['VR'], Tj=c['Tj'], qrr=qrr, trr=trr,
-                        irrm_ratio=round(f['irrm'] / c['IF'], 3)))
+                        irrm_ratio=round(f['irrm'] / c['IF'], 3),
+                        **(dict(ocr=True) if ocr else {})))
     out.sort(key=lambda r: (r['mfr'], r['mpn']))
     return out, stats
 
@@ -485,8 +611,9 @@ dslib/conditions.py cannot see. See apps/emit_qrr_layout_conditions.py for the e
 rules, the value cross-check that gates every entry, and the calibration against the
 hand-read entries in dslib/qrr_conditions.py.
 
-These are MACHINE-read, not human-verified. They carry source='layout' and rank below the
-hand-curated dslib/qrr_conditions.py:
+These are MACHINE-read, not human-verified. They carry source='layout' (or
+'layout-ocr' for entries read from --force-ocr text of image-only / scrambled-font
+sheets, marked ocr=True) and rank below the hand-curated dslib/qrr_conditions.py:
 
     qrr_points (per-row) > qrr_conditions (hand-read) > THIS > parsed cond keys
 
@@ -505,13 +632,16 @@ FOOTER = '''}
 
 
 def qrr_layout_conditions_for(mfr, mpn):
-    """(mfr, mpn) -> dict(IF, didt, VR, Tj, source='layout') or None.
+    """(mfr, mpn) -> dict(IF, didt, VR, Tj, source='layout'|'layout-ocr') or None.
 
     Same orderable-suffix fallback as dslib/qrr_conditions.py, so a family variant
-    resolves to its base die without a separate entry."""
+    resolves to its base die without a separate entry. Entries read from OCR text
+    (image-only / scrambled-font sheets; ocr=True) carry source='layout-ocr' -- the
+    value cross-check was attribution-only there, since the DB's own values came
+    through the same OCR."""
     from dslib.mpn_match import lookup_base_variant
     hit = lookup_base_variant(QRR_LAYOUT_CONDITIONS, mfr, mpn)
-    return dict(hit, source='layout') if hit else None
+    return dict(hit, source='layout-ocr' if hit.get('ocr') else 'layout') if hit else None
 '''
 
 
@@ -520,12 +650,14 @@ def emit(cands):
         fh.write(HEADER)
         for r in cands:
             vr = 'None' if r['VR'] is None else '%g' % r['VR']
-            fh.write('    ("%s", "%s"): dict(IF=%g, didt=%g, VR=%s, Tj=%g),'
+            fh.write('    ("%s", "%s"): dict(IF=%g, didt=%g, VR=%s, Tj=%g%s),'
                      '  # Qrr=%g nC trr=%g ns, IRRM/IF=%.2f\n'
                      % (r['mfr'], r['mpn'], r['IF'], r['didt'], vr, r['Tj'],
+                        ', ocr=True' if r.get('ocr') else '',
                         r['qrr'], r['trr'], r['irrm_ratio']))
         fh.write(FOOTER)
-    print('wrote %s (%d entries)' % (OUT, len(cands)))
+    print('wrote %s (%d entries, %d via ocr)'
+          % (OUT, len(cands), sum(1 for r in cands if r.get('ocr'))))
 
 
 if __name__ == '__main__':
