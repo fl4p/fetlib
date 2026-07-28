@@ -17,6 +17,7 @@ async def aosmd_medium_voltage_mosfets():
     )
 
     df = pd.read_csv(fn)
+    df.columns = df.columns.str.replace('\xa0', '', regex=False)
 
     #     # https://www.onsemi.com/download/data-sheet/pdf/ech8667-d.pdf
 
@@ -31,18 +32,24 @@ async def aosmd_medium_voltage_mosfets():
         if mpn == 'AOK60N30L':
             rds_on *= .1  # mistake
 
-        parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
-            Vds_max=parse_field_value(row['VDS (V)']),
-            Rds_on_10v_max=rds_on,
-            Qg_max=math.nan,
-            Qg_typ=parse_field_value(row['Qg (10V)(nC)']),
-            ID_25=parse_field_value(row['ID @ 25°C (A)']),
-            Vgs_th_min=math.nan,
-            Vgs_th_typ=math.nan,
-            Vgs_th_max=parse_field_value(row['VGS(th) max (V)']),
-            # qgs, qgd, ciss, coss, weight, qrr
-            source=['aosmd.com'],
-        ), package=row['Package']))  # Package Name
+        vds = row['VDS (V)']
+
+        try:
+            parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+                Vds_max=parse_field_value(vds),
+                Rds_on_10v_max=rds_on,
+                Qg_max=math.nan,
+                Qg_typ=parse_field_value(row['Qg (10V)(nC)']),
+                ID_25=parse_field_value(row['ID @ 25°C (A)']),
+                Vgs_th_min=math.nan,
+                Vgs_th_typ=math.nan,
+                Vgs_th_max=parse_field_value(row['VGS(th) max (V)']),
+                # qgs, qgd, ciss, coss, weight, qrr
+                source=['aosmd.com'],
+            ), package=row['Package']))  # Package Name
+        except:
+            print(row)
+            raise
 
     # df = pd.read_csv(fn)
 

@@ -1,16 +1,15 @@
 import asyncio
-import glob
 import math
 import os.path
 import re
-import time
 import traceback
 from functools import partial
 from os.path import expanduser
 from typing import Union, List, Dict
 
 import requests
-from pyppeteer.page import Page
+from playwright.async_api import async_playwright, Page, BrowserContext, Error as PlaywrightError, \
+    TimeoutError as PlaywrightTimeoutError
 
 import dslib.discovery.onsemi
 from dslib.cache import acquire_file_lock
@@ -142,51 +141,59 @@ def download(url, filename):
             fh.write(chunk)
 
 
-browser_pages:Dict[int, Page] = {}
-browsers = {}
+_playwrights: Dict[int, object] = {}
+browser_contexts: Dict[int, BrowserContext] = {}
+browser_pages: Dict[int, Page] = {}
 
 
 async def get_browser_page():
-    import pyppeteer
-
     evl_id = id(asyncio.get_event_loop())
 
-    if evl_id not in browsers:
-        assert not browsers
+    if evl_id not in browser_contexts:
+        assert not browser_contexts
         userDataDir = os.path.realpath(os.path.dirname(__file__) + '/chromium-user-data-dir')
         os.path.exists(userDataDir) or os.makedirs(userDataDir)
-        browsers[evl_id] = await pyppeteer.launch(dict(
-            ignoreHTTPSErrors=True,
+
+        pw = await async_playwright().start()
+        _playwrights[evl_id] = pw
+
+        browser_contexts[evl_id] = await pw.chromium.launch_persistent_context(
+            userDataDir,
+            channel='chrome',  # use the real, up-to-date installed Chrome instead of Playwright's bundled Chromium
             headless=False,
-            userDataDir=userDataDir, # this is important for PDF downloads (to disable internal pdf viewer)
-            #autoClose=True,
-            timeout=60000,
-        ))
+            ignore_https_errors=True,
+            accept_downloads=True,
+            timeout=120000,
+        )
 
         def on_close(evl_id):
-            browsers.pop(evl_id, None)
+            browser_contexts.pop(evl_id, None)
             browser_pages.pop(evl_id, None)
 
-        browsers[evl_id].on('close', partial(on_close, evl_id))
+        browser_contexts[evl_id].on('close', partial(on_close, evl_id))
 
-    if evl_id not in browser_pages  or browser_pages[evl_id].isClosed():
-        browser_pages[evl_id] = await browsers[evl_id].newPage()
+    ctx = browser_contexts[evl_id]
+
+    if evl_id not in browser_pages or browser_pages[evl_id].is_closed():
+        browser_pages[evl_id] = ctx.pages[0] if ctx.pages else await ctx.new_page()
 
     return browser_pages[evl_id]
 
+
 async def close_browser():
-    for k in list(browser_pages.keys()):
-        pg = browser_pages.pop(k)
+    browser_pages.clear()
+
+    for k in list(browser_contexts.keys()):
+        ctx = browser_contexts.pop(k)
         try:
-            pg.isClosed() or await pg.close()
+            await ctx.close()
         except:
             pass
 
-    for k in list(browsers.keys()):
-        from pyppeteer.browser import Browser
-        bw: Browser = browsers.pop(k)
+    for k in list(_playwrights.keys()):
+        pw = _playwrights.pop(k)
         try:
-            await bw.close()
+            await pw.stop()
         except:
             pass
 
@@ -201,109 +208,105 @@ _chromium_lock = asyncio.Lock()
 
 
 async def download_with_chromium(url, filename, click: Union[str, List[str]] = '#open-button', eval=None, close=False,
-                                 nav_timeout=30000):
-    from pyppeteer.errors import PageError
-
+                                 nav_timeout=90000):
     with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
-        file_ext_glob = ''.join(map(lambda c: f'[{c.lower()}{c.upper()}]', filename.split('.')[-1]))
-
         if isinstance(click, str):
             click = [click]
 
-        def _check_dl():
-            dl_files = glob.glob(dl_path + '/*.' + file_ext_glob)
-            if len(dl_files) > 0:
-                print('got download', dl_files[0])
-                os.rename(dl_files[0], filename)
-                return True
-            return False
+        print(url, 'downloading to', filename)
 
-        dl_path = os.path.realpath(filename + '_downloads')
-        if os.path.exists(dl_path):
-            import shutil
-            shutil.rmtree(dl_path)
-        assert not os.path.exists(dl_path), dl_path
-        page = None
+        page = await get_browser_page()
+
+        # a direct link straight to a file (e.g. a PDF datasheet) - page.goto() would hand it to
+        # Chrome's built-in PDF viewer, which renders it inline instead of downloading it, so no
+        # 'download' event ever fires and there's no button to click. page.request is a plain
+        # HTTP client bound to the browser context (same TLS fingerprint, bypasses some WAFs that
+        # block requests/aiohttp) with no rendering involved, so it isn't affected by that at all.
         try:
-            os.path.isdir(dl_path) or os.makedirs(dl_path)
+            direct_resp = await page.request.get(url, timeout=nav_timeout)
+            content_type = (direct_resp.headers.get('content-type') or '').lower()
+            if direct_resp.ok and ('pdf' in content_type or 'octet-stream' in content_type):
+                body = await direct_resp.body()
+                dp = os.path.dirname(filename)
+                os.path.isdir(dp) or os.makedirs(dp)
+                with open(filename, 'wb') as f:
+                    f.write(body)
+                print('got direct response body', filename)
+                return
+        except PlaywrightError:
+            pass  # not directly fetchable this way; fall through to the normal page-based flow
 
-            print(url, 'download folder', dl_path)
+        downloads = []
+        page.on('download', lambda d: downloads.append(d))
 
-            page = await get_browser_page()
-
-            await page._client.send('Page.setDownloadBehavior', {
-                'behavior': 'allow',
-                'downloadPath': dl_path,
-            })
-
+        try:
             try:
-                resp = await page.goto(url, timeout=nav_timeout)
-                if resp.status in {404}:
-                    print(url, 'NOT FOUND')
-                    return
-
-                if eval:
-                    await page.evaluate(eval)
-
-                for c in click:
-
-                    for i in range(1, 200):
-                        if _check_dl():
-                            return
-
-                        try:
-                            await page.waitFor(c, timeout=100)
-                            break
-                        except Exception as e:
-                            # print(e)
-                            pass
-
-                        # await page.evaluate(""" document.querySelector('a[data-track-name="downloadLink"]').click() """)
-
-                    await page.waitForSelector(c, timeout=300)
-
-                    await asyncio.sleep(1)
-
-                    sel = c + ' a' if await page.querySelector(c + ' a') else c
-
-                    # el = await page.querySelector(c + ' a') or await page.querySelector(c)
-
-                    try:
-                        await page.click(sel)
-                    except:
-                        sel = sel.replace("'", "\\'")
-                        await page.evaluate(f""" document.querySelector('{sel}').click() """)
-
-                    if len(click) > 1:
-                        await asyncio.sleep(2)
-
-            except PageError as e:
-                # print('page error, probably direct download')
+                # 'commit' (just the response starting), not the default 'load': some sites
+                # never fire 'load' or even 'domcontentloaded' promptly (slow trackers/ads/fonts
+                # keep them pending) even though the page is visually ready and interactive well
+                # before that. We always separately wait_for_selector() below anyway, so goto()
+                # itself doesn't need any particular load state.
+                await page.goto(url, timeout=nav_timeout, wait_until='commit')
+            except PlaywrightTimeoutError:
+                raise
+            except PlaywrightError:
+                # navigation aborted, probably because it's a direct download (caught via the 'download' event above)
                 pass
 
+            if eval:
+                await page.evaluate(eval)
+
+            for c in click:
+                if downloads:
+                    break
+
+                try:
+                    await page.wait_for_selector(c, timeout=60000)
+                except PlaywrightTimeoutError:
+                    raise TimeoutError(f'selector {c!r} never appeared on {url}')
+
+                await asyncio.sleep(1)
+
+                sel = c + ' a' if await page.query_selector(c + ' a') else c
+
+                try:
+                    await page.click(sel)
+                except PlaywrightError:
+                    sel_js = sel.replace("'", "\\'")
+                    await page.evaluate(f""" document.querySelector('{sel_js}').click() """)
+
+                if len(click) > 1:
+                    await asyncio.sleep(2)
+
             for i in range(1, 100):
-                if _check_dl():
-                    return
-                time.sleep(.3)
-            print('no downloaded file found')
+                if downloads:
+                    break
+                await asyncio.sleep(.3)
+
+            if not downloads:
+                raise TimeoutError(f'no downloaded file found for {url}')
+
+            dp = os.path.dirname(filename)
+            os.path.isdir(dp) or os.makedirs(dp)
+            await downloads[0].save_as(filename)
+            print('got download', filename)
         finally:
-            os.rmdir(dl_path)
             if close and page:
                 if close == 'page':
                     await page.close()
                 else:
-                    await page.browser.close()
-                # await page.close()
+                    await page.context.close()
 
 
 
 async def get_text_with_chromium(url, close=False):
     with acquire_file_lock(os.path.dirname(__file__) + '/chromium.lock', kill_holder=False, max_time=120):
 
+        page = None
         try:
             page = await get_browser_page()
-            resp = await page.goto(url)
-            if resp.status in {404}:
+            resp = await page.goto(url, wait_until='commit')
+            if resp is not None and resp.status in {404}:
                 print(url, 'NOT FOUND')
                 return
 
@@ -314,7 +317,7 @@ async def get_text_with_chromium(url, close=False):
                 if close == 'page':
                     await page.close()
                 else:
-                    await page.browser.close()
+                    await page.context.close()
 
 if __name__ == '__main__':
     asyncio.get_event_loop().run_until_complete(

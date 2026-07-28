@@ -1,0 +1,31 @@
+topology: buck
+
+substrates: []
+packages: []
+vdsRange: [ 150, 250 ]
+
+gateDrive:
+  voltage: 11
+  voltageGaN: 5
+  rgTotal: 6
+  rgTotalOff: 3
+  vplFallback: 4.5
+  deadTime: 100e-9
+
+controlFet:
+  maxParallel: 6
+  stagedSwitching: true # sequenced-gate / hybrid switch
+
+syncFet:
+  maxParallel: 6
+  reverseRecoveryFactor: 1
+
+inductor:
+  rippleFactor: 0.33
+
+loadPoints:
+  - pointWeight: 1
+    vIn: 150
+    vOut: 54
+    pIn: 3750
+    f: 40e3

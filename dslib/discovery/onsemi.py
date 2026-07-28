@@ -1,7 +1,6 @@
 import math
-import re
-
 import pandas as pd
+import re
 
 from dslib import mfr_tag
 from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
@@ -61,6 +60,7 @@ async def onsemi_mosfets():
     urls = {
         'small-signal-mosfets': 'https://www.onsemi.com/products/discrete-power-modules/mosfets/small-signal-mosfets',
         'low-medium-voltage-mosfets': 'https://www.onsemi.com/products/discrete-power-modules/mosfets/low-medium-voltage-mosfets',
+        # 300~1000V:
         'high-voltage-mosfets': 'https://www.onsemi.com/products/discrete-power-modules/mosfets/high-voltage-mosfets',
     }
 
@@ -109,4 +109,3 @@ async def onsemi_mosfets():
             ), package=row['Package Type']))  # Package Name
 
     return parts
-
