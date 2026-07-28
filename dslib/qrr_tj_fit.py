@@ -114,6 +114,78 @@ def solve_tau_tm(qrr_c, irm_a, if_a, didt_a_per_s):
     return tau, tm, resid, tm_edge_pinned
 
 
+def fit_n_tau_2rows(qrr_cold, trr_cold, qrr_hot, trr_hot, IF, didt,
+                    tj_cold=25.0, tj_hot=125.0, q0=0.0):
+    """n_tau from ONE matched datasheet TABLE pair — (Qrr, trr) printed at two
+    temperatures for the same (IF, di/dt). The IR/AUIR recovery sections quote
+    exactly this (fetlib#41: paired 25/125 C rows), so no chart digitisation is
+    needed for those dies.
+
+    Method, mirroring :func:`fit_n_tau` where the data allows:
+
+    * ``(tau_cold, TM)`` from the cold row via the SAME 1pt fit the consumer
+      uses (:func:`dslib.qrr_model.fit_lm`).
+    * TM is HELD — the N_TAU law scales only tau, in lock-step with
+      :func:`dslib.qrr_model.tau_at_tj`.
+    * ``tau_hot`` inverted so the forward model reproduces the hot charge
+      (Qrr is monotone increasing in tau at fixed TM).
+    * ``n_tau = log(tau_hot/tau_cold) / log(T_hot_K/T_cold_K)``.
+    * The printed HOT trr is a fit-free HOLDOUT: never consumed, its relative
+      residual rides along in the result. One matched pair pins the exponent
+      exactly (zero degrees of freedom), so the holdout is the only
+      model-form check this data affords — report it, never drop it.
+
+    ``q0`` is the constant capacitive share inside BOTH integrals (Qoss barely
+    moves with temperature); subtracting it from both charges mirrors the AO
+    headline fits at f=0.10. Fitting a contaminated pair raw biases n_tau LOW
+    (the constant inflates the cold charge relatively more), i.e. toward
+    under-predicting hot losses — the non-conservative direction — so callers
+    should pass the best q0 they have and label the raw case.
+
+    Raises LMFitError when: any input is non-positive; the hot charge does not
+    exceed the cold one (diffusion charge strictly grows with Tj — a flat or
+    falling pair is positive evidence the integral is displacement-dominated,
+    same argument as LMContaminationDominated); q0 consumes either charge; or
+    the cold row is not LM-representable.
+    """
+    from dslib.qrr_model import fit_lm
+    if not (tj_hot > tj_cold):
+        raise LMFitError(f"need tj_hot > tj_cold (got {tj_cold}..{tj_hot})")
+    qc, qh = qrr_cold - q0, qrr_hot - q0
+    if not (qc > 0 and qh > 0):
+        raise LMFitError(
+            f"q0={q0*1e9:.0f}nC consumes the datasheet charge "
+            f"({qrr_cold*1e9:.0f}/{qrr_hot*1e9:.0f}nC)")
+    if qh <= qc:
+        raise LMFitError(
+            f"hot Qrr ({qrr_hot*1e9:.0f}nC @{tj_hot:g}C) does not exceed cold "
+            f"({qrr_cold*1e9:.0f}nC @{tj_cold:g}C) — displacement-dominated "
+            f"pair, not diffusion-fittable")
+    f = fit_lm(qc, trr_cold, IF, didt, tj_fit=tj_cold)
+    tau_cold, tm = f["tau"], f["TM"]
+
+    def qrr_of_tau(t):
+        return predict(t, tm, IF, didt)["Qrr"]
+
+    hi, n = tau_cold, 0
+    while qrr_of_tau(hi) < qh:
+        hi *= 4.0
+        n += 1
+        if n > 60:
+            raise LMFitError("tau_hot bracket diverged")
+    tau_hot = _bisect_increasing(qrr_of_tau, tau_cold, hi, qh)
+    n_tau = (math.log(tau_hot / tau_cold)
+             / math.log((tj_hot + T0_K) / (tj_cold + T0_K)))
+    pred_hot = predict(tau_hot, tm, IF, didt)
+    return dict(
+        n_tau=n_tau, tau_cold_s=tau_cold, tau_hot_s=tau_hot, tm_s=tm,
+        qrr_ratio=qh / qc, q0_c=q0,
+        # fit-free holdout: the printed hot trr vs the model's
+        trr_hot_resid=pred_hot["trr"] / trr_hot - 1.0,
+        irrm_cold_a=f["irrm"], irrm_hot_a=pred_hot["irrm"],
+    )
+
+
 def _interp(xs, ys, x):
     """Linear interpolation, refusing extrapolation (endpoint float noise
     within 1e-9 relative is clamped, not refused)."""
