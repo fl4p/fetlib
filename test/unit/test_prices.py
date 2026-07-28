@@ -270,9 +270,11 @@ def test_lookup_absent_negative_priced_and_never_zero(db):
     assert lu.get('infineon', 'NEVER') is None
     assert all(r is None or r.price > 0
                for r in [lu.get('infineon', m) for m in ('X1', 'MISS', 'NEVER')])
-    # stats count per get() call (one call per CSV row): X1 hit twice, 6 calls total
+    # stats count DISTINCT parts (get is memoized): X1 queried twice counts once,
+    # 3 distinct parts total -- per-call counting inflated the staged-HS loop's
+    # fill-rate combinatorially (final review pass)
     s = lu.stats()
-    assert '2/6' in s and 'digikey 2' in s
+    assert '1/3' in s and 'digikey 1' in s
 
 
 def test_lookup_excludes_and_counts_foreign_currency_and_stale(db):

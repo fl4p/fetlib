@@ -178,8 +178,19 @@ class PriceLookup:
                        under_ladder=0)
         self._skipped = dict(negative=0, stale=0, other_currency=0, under_ladder=0)
         self._n_dist: Dict[str, int] = {}
+        self._memo: Dict[Tuple[str, str], Optional[PriceResult]] = {}
 
     def get(self, mfr: str, mpn: str) -> Optional[PriceResult]:
+        # memoized per DISTINCT part: stats() reports PART fill-rate, and callers like
+        # the staged-HS loop query the same device O(n^2) times -- per-call counting
+        # inflated 'parts priced' combinatorially (final review pass)
+        if (mfr, mpn) in self._memo:
+            return self._memo[(mfr, mpn)]
+        result = self._get_uncounted(mfr, mpn)
+        self._memo[(mfr, mpn)] = result
+        return result
+
+    def _get_uncounted(self, mfr: str, mpn: str) -> Optional[PriceResult]:
         recs = self._by_part.get((mfr, mpn))
         if not recs:
             self._n['miss'] += 1
