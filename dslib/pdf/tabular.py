@@ -2,6 +2,7 @@ import json
 import logging
 import random
 import re
+import socket
 import sys
 import threading
 import time
@@ -31,8 +32,11 @@ class NoTextInPdfError(ValueError):
 
 def tabula_is_running():
     try:
-        return requests.get('http://127.0.0.1:8080/').status_code == 200
-    except requests.exceptions.ConnectionError:
+        # Test whether the local service is listening without waiting for a
+        # cold/busy Jetty instance to produce an HTTP response.
+        with socket.create_connection(('127.0.0.1', 8080), timeout=0.5):
+            return True
+    except OSError:
         return False
 
 
@@ -131,7 +135,7 @@ def tabula_browser(pdf_path, pad=2) -> List[pd.DataFrame]:
                     res = s.post(f"http://127.0.0.1:8080/pdf/{fid}/data",
                                  data=dict(coords=json.dumps(chunk)), headers=headers)
                     if res.status_code != 200:
-                        txt = re.sub('\s+', ' ', res.text)
+                        txt = re.sub(r'\s+', ' ', res.text)
                         txt = re.sub('<[^<]+?>', '', txt)
                         print(pdf_path, 'tabula web error posting', len(chunk), 'coords', txt)
 

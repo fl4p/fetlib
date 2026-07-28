@@ -1,5 +1,6 @@
 import datetime
 import math
+import warnings
 
 import pytest
 import timeout_decorator
@@ -749,7 +750,7 @@ ns
 
 from math import nan
 
-from dslib.pdf.parse import extract_fields_from_text, extract_dates
+from dslib.pdf.parse import extract_fields_from_text, extract_dates, parse_field_multiline
 
 
 def test_fields_from_text():
@@ -782,6 +783,46 @@ gate-drain charge
  QG(tot)
  """, mfr, '')
     assert d.Qgd.typ == 28
+
+
+@pytest.mark.parametrize(('field_sym', 'expected', 'text'), [
+    ('Qgd', 26, '''Qgd
+Gate-to-Drain ("Miller") Charge
+---
+26
+---
+Qsync
+'''),
+    # fetlib#44: Qgd is the next parameter label, not part of the Qgs row.
+    ('Qgs', 31, '''Qgs
+Gate-Source Charge
+-
+31
+-
+Qgd
+'''),
+])
+def test_next_parameter_boundary_stop_word_does_not_warn(field_sym, expected, text):
+    """A consumed next parameter label is not content in the current row."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter('always')
+        field = parse_field_multiline(text, 'Q', field_sym, mfr='any')
+
+    assert field.typ == expected
+    assert not [w for w in caught if 'stop word' in str(w.message)]
+
+
+def test_qgd_sync_in_match_head_remains_blocked():
+    """Suppressing the next-label warning must not weaken attribution."""
+    text = '''Qgd
+Gate-to-Drain sync Charge
+---
+26
+---
+Qgs
+'''
+    field = parse_field_multiline(text, 'Q', 'Qgd', mfr='any')
+    assert field is None
 
 
 def test_extract_dates():

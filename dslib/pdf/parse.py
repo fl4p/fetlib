@@ -483,6 +483,42 @@ def validate_datasheet_text(mfr, mpn, text, return_reason=False):
     return True
 
 
+_MPN_LIKE_TOKEN_RE = re.compile(
+    r'(?<![A-Za-z0-9])'
+    r'([A-Za-z]{2,6}[A-Za-z0-9]*(?:[-./][A-Za-z0-9]+)*)'
+    r'(?![A-Za-z0-9])')
+
+
+def _identity_stem(value):
+    normalized = whitespaces_remove(
+        strip_no_print_latin(
+            str(value).lower().replace('o', '0').replace('_', '').replace('-', '')))
+    normalized = normalized.split(',')[0][:7]
+    return re.sub('[a-z]$', '', normalized)
+
+
+def _conflicting_mpn_token(expected_mpn, text):
+    """Return an explicit one-character near-neighbor MPN from *text*."""
+    expected_stem = _identity_stem(expected_mpn)
+    prefix_match = re.match(r'[A-Za-z]{2,}', str(expected_mpn))
+    if not expected_stem or prefix_match is None:
+        return None
+    expected_prefix = prefix_match.group(0).lower()
+
+    for match in _MPN_LIKE_TOKEN_RE.finditer(text):
+        token = match.group(1)
+        if not any(ch.isdigit() for ch in token):
+            continue
+        token_prefix = re.match(r'[A-Za-z]{2,}', token)
+        if token_prefix is None or token_prefix.group(0).lower() != expected_prefix:
+            continue
+        candidate_stem = _identity_stem(token)
+        if (len(candidate_stem) == len(expected_stem)
+                and sum(a != b for a, b in zip(candidate_stem, expected_stem)) == 1):
+            return token
+    return None
+
+
 # Symbols whose ABSENCE from a datasheet can be proven, mapped to the sibling symbols
 # that must already have been parsed for that proof to count.
 #
@@ -647,12 +683,49 @@ def extract_dates(pdf_text: str):
     return [x[1] for x in sorted(dates, key=lambda x: x[0])]
 
 
+_CHART_REPAIR_SUFFIXES = (
+    'r600_ocrmypdf',
+    'r400_ocrmypdf',
+    'ocrmypdf_r600',
+    'ocrmypdf_r400',
+    'ocrmypdf_redo',
+    'r600',
+    'gs',
+    'fix_font_enc',
+)
+
+
+def _chart_source_pdf(pdf_path):
+    """Prefer the pristine PDF over a generated text-repair derivative."""
+
+    path = os.fspath(pdf_path)
+    for method in _CHART_REPAIR_SUFFIXES:
+        marker = '.' + method + '.pdf'
+        if path.endswith(marker):
+            original = path[:-len(marker)]
+            if os.path.isfile(original):
+                return original
+    return path
+
+
 def read_charts(pdf_path):
+    chart_pdf_path = _chart_source_pdf(pdf_path)
+    if os.path.basename(os.path.dirname(chart_pdf_path)).casefold() == 'hxy':
+        # The collection audit found exact shared chart bodies across unrelated
+        # HXY part numbers. Never spend OCR work on, or serve, those templates.
+        return []
     from dslib.viz import find_vpl_package_results
-    results = find_vpl_package_results(pdf_path)
+    results = find_vpl_package_results(chart_pdf_path)
     served = next((r for r in results if r.status == 'ok' and r.vpl is not None), None)
     vpl = None if served is None else served.vpl
     src = 'viz'
+    diagnostics = {d for r in results for d in r.diagnostics}
+
+    if 'shared_curve_template_provenance_untrusted' in diagnostics:
+        # HXY's chart bodies are reused verbatim across unrelated part
+        # numbers.  This is an intentional data-quality exclusion, not a
+        # digitizer failure and not a reason to try the legacy estimator.
+        return []
 
     if vpl is None and any(r.vpl is not None for r in results):
         # The digitizer READ a plateau here and rejected it -- an implausible value, an
@@ -664,7 +737,7 @@ def read_charts(pdf_path):
         # carrying no diagnostic to say so. A refusal must stay a refusal.
         warnings.warn('%s: gate-charge chart refused by the digitizer (%s); no Vpl'
                       % (os.path.basename(pdf_path),
-                         ', '.join(sorted({d for r in results for d in r.diagnostics}))
+                         ', '.join(sorted(diagnostics))
                          or 'no diagnostic'))
         return []
 
@@ -672,7 +745,7 @@ def read_charts(pdf_path):
         # Nothing to digitize at all (no gate-charge panel found). The legacy estimator
         # is a genuine second opinion here, not a retry of a rejected one.
         from apps.vpl_from_chart import _pick_best, vpl_from_pdf
-        vpl = _pick_best(vpl_from_pdf(pdf_path))
+        vpl = _pick_best(vpl_from_pdf(chart_pdf_path))
         if vpl is not None:
             vpl = vpl['vpl']
         src = 'vpc'
@@ -732,30 +805,69 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
         methods = ['gs', 'fix_font_enc']  # 'qpdf_decrypt']  # 'r400_ocrmypdf'
         if not no_ocr:
             methods += ['r600_ocrmypdf', ]  # 'ocrmypdf_redo', 'ocrmypdf_r400',
+        best_pdf_text, best_pdf_path = pdf_text, pdf_path
+        conflicts = []
+        initial_conflict = _conflicting_mpn_token(mpn, pdf_text)
+        if initial_conflict:
+            conflicts.append(_identity_stem(initial_conflict))
+        repaired = False
 
-            # if not pdf_text:
-            #    methods.remove('ocrmypdf_redo')
-            #    methods.append('ocrmypdf_redo')  # move to end, because its intense
+        # if not pdf_text:
+        #    methods.remove('ocrmypdf_redo')
+        #    methods.append('ocrmypdf_redo')  # move to end, because its intense
 
         for method in methods:
+            out_path = pdf_path + '.' + method + '.pdf'
             try:
-                out_path = pdf_path + '.' + method + '.pdf'
                 pdf2pdf(pdf_path, out_path, method)
-
-                pdf_text, _ = extract_text(out_path, try_ocr=False)
-
-                if not validate_datasheet_text(mfr, mpn, pdf_text):
-                    print(pdf_path, 'text extraction error using', method)
-                    continue
-
-                pdf_path = out_path
-                print(pdf_path, 'extracted', len(pdf_text), 'characters using', method)
-
-                break
-
             except TooManyPages as e:
                 print(e)
                 raise
+            except (AssertionError, ValueError) as e:
+                # fix_font_enc is one best-effort rung in a repair ladder. A
+                # healthy PDF legitimately reports "no bad fonts", and a
+                # malformed embedded cmap can make fontTools reject only this
+                # repair method. Neither means the following raster/OCR rung
+                # cannot recover the document, so keep climbing.
+                if method != 'fix_font_enc':
+                    raise
+                print(pdf_path, method, 'failed:', type(e).__name__, e)
+                continue
+
+            # Keep extraction and validation outside the fix_font_enc exception
+            # handler. AssertionError/ValueError are expected from that repair
+            # operation, but the same exceptions here indicate parser bugs and
+            # must not be hidden by advancing to the next repair rung.
+            candidate_text, _ = extract_text(out_path, try_ocr=False)
+            if len(candidate_text) > len(best_pdf_text):
+                best_pdf_text, best_pdf_path = candidate_text, out_path
+            conflict = _conflicting_mpn_token(mpn, candidate_text)
+            if conflict:
+                conflicts.append(_identity_stem(conflict))
+
+            if not validate_datasheet_text(mfr, mpn, candidate_text):
+                print(pdf_path, 'text extraction error using', method)
+                continue
+
+            pdf_text, pdf_path = candidate_text, out_path
+            print(pdf_path, 'extracted', len(pdf_text), 'characters using', method)
+            repaired = True
+            break
+
+        if not repaired:
+            pdf_text, pdf_path = best_pdf_text, best_pdf_path
+
+            # The normal identity validator is deliberately loose and family or
+            # package filenames can remain false negatives after good OCR.
+            # Reject only repeated explicit evidence for the same one-character
+            # near-neighbor MPN (IRF540 vs IRF640), not a missing filename stem.
+            repeated_conflicts = {
+                token for token in conflicts if conflicts.count(token) >= 2
+            }
+            if repeated_conflicts:
+                raise NoTabularData(
+                    f'{pdf_path}: conflicting datasheet MPN(s): '
+                    f'{", ".join(sorted(repeated_conflicts))}')
 
     if len(pdf_text) < 40:
         print(pdf_path, 'no/little text extracted')
@@ -908,31 +1020,33 @@ def tabula_pdf_dataframes(pdf_path=None):
 
     dfs = []
 
-    from dslib.pdf.tabular import tabula_browser, NoTextInPdfError
+    from dslib.pdf.tabular import tabula_browser, NoTextInPdfError, tabula_is_running
 
     last_e = None
 
-    try:
-        dfs += tabula_browser(pdf_path)
-    except TimeoutError:
-        raise
-    except NoTextInPdfError as e:
-        print(pdf_path, e)
-    # except TimeoutError:
-    #    raise  # these are fatal, should not happen
-    except Exception as e:
-        last_e = e
-        print(traceback.format_exc())
-        print('tabula_browser error', e)
-        # '/Users/fab/dev/pv/pwr-mosfet-lib/datasheets/nxp/PSMN3R9-100YSFX.pdf'
-        #
+    if tabula_is_running():
+        try:
+            dfs += tabula_browser(pdf_path)
+        except TimeoutError:
+            raise
+        except NoTextInPdfError as e:
+            print(pdf_path, e)
+        # except TimeoutError:
+        #    raise  # these are fatal, should not happen
+        except Exception as e:
+            last_e = e
+            print(traceback.format_exc())
+            print('tabula_browser error', e)
+            # '/Users/fab/dev/pv/pwr-mosfet-lib/datasheets/nxp/PSMN3R9-100YSFX.pdf'
+            #
 
     try:
-        dfs += tabula_read_pdf_cached(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True,
-                                      # force_subprocess=_force_subprocess
-                                      )
-        for df in dfs:
+        cli_dfs = tabula_read_pdf_cached(pdf_path, pages='all', pandas_options={'header': None}, multiple_tables=True,
+                                         # force_subprocess=_force_subprocess
+                                         )
+        for df in cli_dfs:
             df.index.name = 'tabula_cli_guess'
+        dfs += cli_dfs
     except Exception as e:
         last_e = e
         print('tabula.read_pdf error', e)
@@ -1013,12 +1127,34 @@ def find_iter(r: re.Pattern, s: str) -> re.Match:
 
 import re
 
-RE_D = re.compile('\d')
+RE_D = re.compile(r'\d')
 
 
 def has_digits(string):
     res = RE_D.search(string)
     return res is not None
+
+
+def _matched_group_line_span(m: re.Match, group: str) -> Optional[Tuple[int, int]]:
+    """Return the containing line of a named group, relative to ``m[0]``.
+
+    Some multiline value regexes deliberately consume the next parameter
+    label as ``any_head`` to prove where the current row ends.  Stop words in
+    that structural boundary belong to the next field and must not be reported
+    as suspicious content in the current field's match.
+    """
+    if group not in m.re.groupindex:
+        return None
+    group_start, group_end = m.span(group)
+    if group_start < 0:
+        return None
+
+    match_start, match_end = m.span()
+    line_start = m.string.rfind('\n', match_start, group_start)
+    line_start = match_start if line_start < 0 else line_start + 1
+    line_end = m.string.find('\n', group_end, match_end)
+    line_end = match_end if line_end < 0 else line_end
+    return line_start - match_start, line_end - match_start
 
 
 def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None, mfr=None, mpn=None, ) \
@@ -1053,15 +1189,20 @@ def parse_field(s, regs, field_sym, cond=None, capture_match=False, source=None,
 
         val_g = m.re.groupindex.get('typ') or m.re.groupindex.get('max') or m.re.groupindex.get('min')
         head = vd.get('head') or s[:m.start(val_g)]
+        next_head_line = _matched_group_line_span(m, 'any_head')
         stop = False
         for sw in stop_words:
             if sw in head:
                 print(mpn, 'parsing', field_sym, 'in', s, 'but found stop word', sw, 'in match head:', head)
                 stop = True
                 break
-            if sw in m[0]:
+            stop_in_match = sw in m[0]
+            if stop_in_match and next_head_line is not None:
+                start, end = next_head_line
+                stop_in_match = sw in m[0][:start] or sw in m[0][end:]
+            if stop_in_match:
                 warnings.warn(
-                    f'parsing {field_sym}: stop word `{sw}` in match `{m[0]}` but not in head `{head}`, ignoring')
+                    f'{mpn} parsing {field_sym}: stop word `{sw}` in match `{m[0]}` but not in head `{head}`, ignoring')
 
         if stop:
             continue
