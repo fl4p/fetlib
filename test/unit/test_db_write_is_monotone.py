@@ -166,3 +166,33 @@ def test_main_passes_the_merge_at_the_call_site():
         assert 'merge=' in arglist, (
             'datasheets_db.add(%s) writes without merge= and will delete symbols the '
             'stored record has' % arglist)
+
+
+def test_merge_keeps_the_stored_discovered_part():
+    """Identity metadata follows the same rule as symbols: what fresh lacks is kept.
+
+    The 2026-07-28 sweep merged parse_datasheet-built records (bare MpnMfr part) over
+    stored records carrying a DiscoveredPart, and 5641 records silently lost catalog
+    specs/package/provenance. The symbol-level check missed it by construction, so the
+    guarantee lives in the merge itself.
+    """
+    class _Specs:
+        Rds_on_10v_max = 0.016
+
+    class _Discovered:
+        mfr, mpn = 'mfr', 'X'
+        specs = _Specs()
+
+    stored = _ds('X', Rds_on=(16.0, 'mOhm'))
+    stored.part = _Discovered()
+    fresh = _ds('X', Rds_on=(15.0, 'mOhm'))  # bare MpnMfr part
+
+    merged = merge_keeping_absent_symbols(stored, fresh)
+    assert merged.part is stored.part, 'bare fresh part replaced the stored DiscoveredPart'
+    assert _max_of(merged, 'Rds_on') == 15.0  # fresh values still win
+
+    # and when FRESH carries the real part, it wins -- newer identity is not discarded
+    fresh2 = _ds('X', Rds_on=(15.0, 'mOhm'))
+    fresh2.part = _Discovered()
+    plain = _ds('X', Rds_on=(16.0, 'mOhm'))
+    assert merge_keeping_absent_symbols(plain, fresh2).part is fresh2.part

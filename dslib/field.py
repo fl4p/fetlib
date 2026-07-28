@@ -1355,8 +1355,13 @@ class DatasheetFields():
             return math.nan
 
         from dslib.mosfet import MosfetSpecs, attach_qrr_registries
+        basic_specs = getattr(self.part, 'specs', None)
         return attach_qrr_registries(MosfetSpecs(
             Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
+            # Discovery can know channel type even when its parametric table
+            # omitted Vds. Preserve that explicit evidence; otherwise the full
+            # model infers polarity from the parsed signed Vds rating.
+            polarity=getattr(basic_specs, 'polarity', None),
             Rds_on=rds_on * 1e-3,
             Id=Id,
             Qg=ds.get_typ_or_max_or_min('Qg', cond=dict(Vgs=Vgs)) * 1e-9,
@@ -1721,6 +1726,17 @@ def merge_keeping_absent_symbols(stored: 'DatasheetFields',
     merged = copy(fresh)
     merged.fields_filled = dict(fresh.fields_filled)
     merged.fields_lists = {sym: list(lst) for sym, lst in fresh.fields_lists.items()}
+
+    # The record's IDENTITY metadata follows the same keep-what-fresh-lacks rule as its
+    # symbols. A parse_datasheet-built record carries a bare MpnMfr part; taking it
+    # wholesale silently swapped out the stored DiscoveredPart -- catalog specs, package,
+    # discovery provenance -- on 5641 records in the 2026-07-28 sweep, and the audit's
+    # catalog-witnessed population collapsed 5562 -> 1442 before anything noticed. The
+    # symbol-level integrity check was blind to it by construction, so this cannot be
+    # left to the caller.
+    if (getattr(getattr(fresh, 'part', None), 'specs', None) is None
+            and getattr(getattr(stored, 'part', None), 'specs', None) is not None):
+        merged.part = stored.part
 
     for sym, lst in stored.fields_lists.items():
         if sym in fresh.fields_lists:
