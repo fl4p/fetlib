@@ -86,6 +86,9 @@ def main():
 
     db = datasheets_db.load()
     before_fields = _n_fields(db)
+    # Symbol sets, not field counts: the property merge= guarantees. Snapshotted BEFORE any
+    # write so the final check compares against what this run actually started from.
+    before_syms = {k: set(ds.fields_lists) for k, ds in db.items()}
     print('corpus: %d records, %d fields' % (len(db), before_fields))
 
     done = set()
@@ -157,18 +160,43 @@ def main():
               % (n_done, len(todo), ok, empty, failed, rate,
                  rate * (len(todo) - n_done) / 60.0), flush=True)
 
-    after = _n_fields(datasheets_db.load(reload=True)) if args.apply else before_fields
     print()
     print('parsed ok %d | empty %d | failed %d' % (ok, empty, failed))
-    print('fields %d -> %d  (%+d)' % (before_fields, after, after - before_fields))
     if failed:
         print('\nfirst failures:')
         for k, e in list(errors.items())[:10]:
             print('   %s  %s' % ('/'.join(k), e[:110]))
-    # merge= makes a net loss structurally impossible; if it happens, something else wrote.
-    if args.apply and after < before_fields:
-        print('\nWARNING: field count DROPPED despite merge=. Another writer was active.')
-        return 1
+
+    if args.apply:
+        after_db = datasheets_db.load(reload=True)
+        after = _n_fields(after_db)
+        # The field count DROPPING is EXPECTED and is not the alarm. A fresh parse replaces
+        # every stored candidate for each symbol it produced, so a record that held 7
+        # near-duplicate tabula candidates and re-parses to 1 loses 6 fields while losing
+        # nothing meaningful. The first version of this check compared field counts and, on
+        # a fully healthy sweep (-36103 fields, 0 symbols lost, 2511 records GAINING a
+        # symbol), reported "another writer was active" -- a false alarm with a confident
+        # wrong diagnosis baked into its message. Field count is a proxy; the property
+        # merge= actually guarantees is at SYMBOL level, so that is what is checked.
+        print('fields %d -> %d  (%+d; candidate churn, informational)'
+              % (before_fields, after, after - before_fields))
+        sym_lost = {}
+        for k, syms in before_syms.items():
+            c = after_db.get(k)
+            if c is None:
+                sym_lost[k] = 'RECORD GONE'
+            else:
+                miss = syms - set(c.fields_lists)
+                if miss:
+                    sym_lost[k] = sorted(miss)
+        if sym_lost:
+            print('\nWARNING: %d records lost a SYMBOL across the sweep -- merge= cannot '
+                  'do that, so either another writer was active or the merge is broken. '
+                  'Examples:' % len(sym_lost))
+            for k, v in list(sym_lost.items())[:10]:
+                print('   %s  %s' % ('/'.join(k), v))
+            return 1
+        print('symbol-level check: no record lost a symbol')
     return 0
 
 
