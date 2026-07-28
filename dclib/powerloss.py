@@ -48,6 +48,15 @@ from maglib.wire import d2awg, MaterialResistivity, acr_factor_micrometals, skin
 
 Qrr_temp_rise_default = 1.2
 
+# Junction temperature the measured Qrr(Tj) law books when the caller does not pass
+# a finite Tj (main.py never does). 80 C is the operating point the legacy flat
+# x1.2 factor itself encodes (its comment derives ~75 C junction; the fetlib#41
+# quantification used 80 C: measured law x1.24 median vs flat x1.20 there — the
+# flat scalar was accidentally almost right at this temperature, which is exactly
+# why the law only replaces it where the exponent is MEASURED, never for
+# conservative-bound parts, whose law at 80 C (x1.50) would over-book instead).
+QRR_TJ_LAW_C = 80.0
+
 
 def qrr_rankable_at_operating_point(op_requested, qrr_src) -> bool:
     """May a part with this `Qrr_src` sit in a ranking built AT the operating point?
@@ -450,13 +459,15 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     # Base charge, then the temperature factor. The (IF, di/dt) axes and the Tj axis are
     # deliberately handled by DIFFERENT mechanisms here:
     #   * (IF, di/dt) — `qrr_didt` selects the Lauritzen-Ma operating-point charge.
-    #   * Tj          — always the flat `Qrr_temp_rise` scalar, on either path.
-    # qrr_model CAN extrapolate Tj (tau ~ T^N_TAU), but its own module docstring records
-    # that N_TAU=1.2 is a deliberately conservative bound, ~2x steeper than the five
-    # measured AO dies. Stacking that guess on top of the existing 1.2 factor would
-    # double-count the temperature rise AND confound the thing this flag exists to
-    # measure. So the model is evaluated at its calibration Tj (25 C, tj_extrapolated
-    # False) and only the (IF, di/dt) rescale changes between the two paths.
+    #   * Tj          — the flat `Qrr_temp_rise` scalar, EXCEPT on the op path for parts
+    #                   whose tau exponent is measured (per-die fit or AO/IR family
+    #                   pool, fetlib#41): those book the model's own Qrr(Tj) law at
+    #                   QRR_TJ_LAW_C (or the caller's Tj) and the scalar switches off.
+    # For conservative-bound parts the model is still evaluated at its calibration Tj
+    # (25 C, tj_extrapolated False): N_TAU=1.2 is a deliberate over-bound (~2x steeper
+    # than every measured die), and stacking its law on the flat 1.2 factor would
+    # double-count the temperature rise AND confound the thing --qrr-op exists to
+    # measure.
     # The datasheet Qrr integral includes junction displacement charge. P_coss owns that
     # capacitance, so even the flat path must remove the calibrated share when the
     # datasheet reverse-test voltage is known. Unknown VR/Qoss remains explicitly
@@ -505,6 +516,8 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             'Qoss(VR) model is %r, not a datasheet curve; refusing the '
             'out-of-calibration global-fraction subtraction'
             % qoss_detail['model_state'])
+    # The flat Tj scalar, unless the measured law below replaces it for this part.
+    tj_rise = Qrr_temp_rise
     if qrr_didt is not None:
         assert math.isfinite(qrr_didt) and qrr_didt > 0, ('qrr_didt', qrr_didt)
         # Qoss at the datasheet's REVERSE TEST voltage, so the single-point fit can be
@@ -557,6 +570,39 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             _cs = qrr_detail.get('cond_source')
             if _cs in ('parsed', 'layout'):
                 qrr_src += '-' + _cs
+            # Tj axis, fetlib#41 (gate passed 2026-07-28): parts whose tau exponent is
+            # MEASURED (per-die table/chart fit, or the AO/IR family pool it medians
+            # into) book the model's own Qrr(Tj) instead of the flat x1.2 scalar — the
+            # same fit record, re-evaluated at the operating junction temperature, so
+            # tau scaling and its superlinear effect on the charge stay inside
+            # evaluate_lm_fit. conservative-bound parts keep the flat scalar: their
+            # exponent is a deliberate over-bound (law at 80 C books x1.50 vs the
+            # flat x1.20) and stacking either on the other double-counts.
+            if qrr_detail.get('n_tau_state') in (
+                    'measured-fit', 'ao-family-pool', 'ir-family-pool'):
+                tj_law = temp if temp is not None else QRR_TJ_LAW_C
+                # Own containment: if the hot evaluation cannot bracket (pathological
+                # fits only — the fit record itself is cached from the call above),
+                # the part keeps the cold op-path booking WITH the flat scalar and
+                # its truthful labels. Letting this raise into the outer handler
+                # would relabel the row 'datasheet-flat-nofit' while Qrr_base still
+                # held the op-path number — a label/number mismatch.
+                try:
+                    hot = mf.Qrr_op(IF=dc.Io_min, didt=qrr_didt, Tj=tj_law,
+                                    detail=True,
+                                    qoss_vr=q_vr if qoss_subtractable else None)
+                    assert isinstance(hot, dict), hot
+                    cold_diffusion = float(qrr_detail['qrr_diffusion'])
+                    qrr_detail.update(hot)
+                    qrr_detail['qrr_tj_law'] = 'measured-n-tau'
+                    qrr_detail['tj_booked_c'] = tj_law
+                    qrr_detail['qrr_tj_rise'] = (
+                        float(hot['qrr_diffusion']) / cold_diffusion
+                        if cold_diffusion > 0 else float('nan'))
+                    Qrr_base = float(hot['qrr_diffusion'])
+                    tj_rise = 1.0
+                except LMFitError as e:
+                    qrr_detail['qrr_tj_law_error'] = str(e)
         except LMFitError as e:
             # No curated test conditions / an LM-inconsistent datasheet pair. Keep the
             # flat value (that is what the caller had before asking), but never let it
@@ -567,7 +613,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             qrr_detail['nofit_reason'] = str(e)
 
     assert 0 <= qrr_factor <= 1, ('qrr_factor', qrr_factor)
-    Qrr_eff = Qrr_base * Qrr_temp_rise * qrr_factor  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
+    Qrr_eff = Qrr_base * tj_rise * qrr_factor  # flat: temp rise 63 + ((75-25) * 0.25) ~1.2; 1.0 when the measured law already booked the hot charge
     # TODO Qrr Id (IPT025N15NM6ATMA1)
     # TODO https://application-notes.digchip.com/070/70-41484.pdf
     # TODO Qrr(didt) https://www.mouser.com/datasheet/2/268/mscos08164_1-2275581.pdf#page=7
@@ -599,6 +645,13 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             R_on=dict(Rds=rds),
             P_dt=dict(Vsd=vsd, tDead=dc.tDead),
             P_rr=dict(Qrr=Qrr_eff, Qrr_ds=mf.Qrr, Qrr_src=qrr_src,
+                      # Which Tj mechanism multiplied into Qrr_eff: the measured law
+                      # (booked at Qrr_tj_c with the part's own exponent, flat scalar
+                      # off) or the flat x1.2 (Qrr_tj_rise carries the scalar).
+                      Qrr_tj_law=qrr_detail.get('qrr_tj_law', 'flat-scalar'),
+                      Qrr_tj_rise=qrr_detail.get('qrr_tj_rise', tj_rise),
+                      **(dict(Qrr_tj_c=qrr_detail['tj_booked_c'])
+                         if 'tj_booked_c' in qrr_detail else {}),
                       # A de-rated P_rr must never be mistaken for the part's own charge.
                       **(dict(qrr_factor=qrr_factor) if qrr_factor != 1.0 else {}),
                       **(dict(qrr_didt=qrr_didt, qrr_IF=dc.Io_min) if qrr_didt else {}),

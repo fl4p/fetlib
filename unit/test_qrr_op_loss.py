@@ -500,6 +500,92 @@ def test_coss_vds_condition_floor_drops_strays_keeps_real():
     assert toshiba.get_mosfet_specs().Coss_Vds == 10.0
 
 
+# --- Qrr(Tj): the measured law replacing the flat scalar (fetlib#41, gated 2026-07-28) --
+
+def test_resolve_n_tau_four_states_and_the_ir_pool_scope():
+    from dslib.qrr_model import resolve_n_tau
+    r = resolve_n_tau("infineon:IRFB4137")
+    assert r["state"] == "measured-fit" and abs(r["n_tau"] - 0.7496) < 1e-9
+    # a table-harvested variant spelling hits its own per-die row ...
+    r = resolve_n_tau("infineon:IRFP4768PBF")
+    assert r["state"] == "measured-fit" and abs(r["n_tau"] - 0.7815) < 1e-9
+    # ... an unharvested order-code spelling falls to the FAMILY POOL (0.666), not to
+    # the bound — is_orderable_variant does not span the PBF suffix, and the pool is
+    # the correct, in-family fallback for it.
+    r = resolve_n_tau("infineon:IRFB4137PBF")
+    assert r["state"] == "ir-family-pool" and abs(r["n_tau"] - 0.666) < 1e-9
+    assert resolve_n_tau("infineon:IRFZ44N")["state"] == "ir-family-pool"
+    assert resolve_n_tau("infineon:AUIRF1324S")["state"] == "ir-family-pool"
+    # scope pin, the direction that matters: non-IR Infineon naming must NEVER
+    # inherit the IR pool — those dies have no measured relatives.
+    r = resolve_n_tau("infineon:IPP022N12NM6")
+    assert r["state"] == "conservative-bound" and r["n_tau"] == 1.2
+    assert resolve_n_tau("st:STP150N10F7")["state"] == "conservative-bound"
+    assert resolve_n_tau(None)["state"] == "conservative-bound"
+
+
+def _ir_specs():
+    """A part whose Tj exponent is per-die MEASURED (IRFB4137), with a 1pt condition
+    set manually — the wiring under test is the law booking, not the registries."""
+    mf = _specs(part=SimpleNamespace(mpn="IRFB4137", mfr="infineon"), registries=False)
+    mf.qrr_cond = dict(IF=DS_IF, didt=DS_DIDT, Tj=25.0, VR=75.0)
+    return mf
+
+
+def test_measured_tj_law_replaces_the_flat_scalar_not_stacks_on_it():
+    """The booked charge must be the model's own 80 C evaluation with the flat x1.2
+    OFF — an exact identity. 'It changed' would also pass for stacking (x1.2 on top
+    of the law, ~x1.5 total), which is the double-count the wiring must exclude."""
+    mf = _ir_specs()
+    op = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=DS_DIDT)
+    pr = op.get_cond('P_rr')
+    assert pr['Qrr_tj_law'] == 'measured-n-tau'
+    assert pr['Qrr_tj_c'] == 80.0
+    d_cold = mf.Qrr_op(IF=DC.Io_min, didt=DS_DIDT, Tj=25.0, detail=True)
+    d_hot = mf.Qrr_op(IF=DC.Io_min, didt=DS_DIDT, Tj=80.0, detail=True)
+    assert d_hot['n_tau_state'] == 'measured-fit' and d_hot['tj_extrapolated']
+    assert abs(pr['Qrr'] - d_hot['qrr_diffusion']) < 1e-18       # law, x1.2 OFF
+    rise = d_hot['qrr_diffusion'] / d_cold['qrr_diffusion']
+    assert 1.05 < rise < 1.6, rise            # superlinear in tau, but far below 2x
+    assert abs(pr['Qrr_tj_rise'] - rise) < 1e-9
+    assert pr['Qrr_n_tau'] == 'measured-fit'
+
+
+def test_caller_tj_wins_over_the_assumed_80c():
+    # Rds_on() hard-asserts Tj == 25 for finite Tj, so 25 C is the only finite value
+    # dcdc_buck_ls accepts today — which still pins the override direction: a caller
+    # that MODELS 25 C gets no temperature rise at all on a measured part (rise 1.0),
+    # where the old behaviour multiplied 1.2 regardless.
+    mf = _ir_specs()
+    op = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=DS_DIDT, Tj=25.0)
+    pr = op.get_cond('P_rr')
+    assert pr['Qrr_tj_c'] == 25.0
+    assert abs(pr['Qrr_tj_rise'] - 1.0) < 1e-9
+    d25 = mf.Qrr_op(IF=DC.Io_min, didt=DS_DIDT, Tj=25.0, detail=True)
+    assert abs(pr['Qrr'] - d25['qrr_diffusion']) < 1e-18
+
+
+def test_bound_part_keeps_the_flat_scalar_exactly_as_before():
+    mf = _specs()                             # IPP022N12NM6 -> conservative-bound
+    op = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=DS_DIDT)
+    pr = op.get_cond('P_rr')
+    assert pr['Qrr_tj_law'] == 'flat-scalar'
+    assert pr['Qrr_tj_rise'] == 1.2 and 'Qrr_tj_c' not in pr
+    d = mf.Qrr_op(IF=DC.Io_min, didt=DS_DIDT, detail=True)
+    assert d['n_tau_state'] == 'conservative-bound'
+    assert abs(pr['Qrr'] - d['qrr_diffusion'] * 1.2) < 1e-18
+
+
+def test_flat_path_never_applies_the_law_even_for_measured_parts():
+    # No qrr_didt -> no fit record -> no tau to scale. The flat scalar stays for
+    # everyone, including a measured-family part; only the op path books the law.
+    mf = _ir_specs()
+    flat = dcdc_buck_ls(DC, mf, gd=GD)
+    pr = flat.get_cond('P_rr')
+    assert pr['Qrr_tj_law'] == 'flat-scalar'
+    assert pr['Qrr_tj_rise'] == 1.2 and 'Qrr_tj_c' not in pr
+
+
 if __name__ == "__main__":
     for nm, fn in sorted(globals().items()):
         if nm.startswith("test_"):

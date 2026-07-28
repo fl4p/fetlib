@@ -216,16 +216,19 @@ def predict(tau, TM, IF, didt):
 
 
 def resolve_n_tau(part=None):
-    """Three-state Qrr(Tj) exponent resolution (Fab 2026-07-17).
+    """Four-state Qrr(Tj) exponent resolution (AO: Fab 2026-07-17; IR: Fab
+    2026-07-28, fetlib#41).
 
     `part` is a "mfr:MPN" string, a (mfr, mpn) pair, or None. Returns
     dict(n_tau, state, source) with state in:
-    measured-fit | ao-family-pool | conservative-bound.
+    measured-fit | ao-family-pool | ir-family-pool | conservative-bound.
     Unknown/absent parts get the conservative bound — never silently the
-    measured value of a different family.
+    measured value of a different family. The IR pool is scoped to IR-heritage
+    MPN prefixes under the infineon tag; IPP/BSC/... never resolve there.
     """
     from dslib.qrr_tj_specs import (
-        AO_FAMILY_POOL_N_TAU, MEASURED_SOURCE, QRR_TJ_MEASURED)
+        AO_FAMILY_POOL_N_TAU, IR_FAMILY_POOL_N_TAU, IR_MPN_PREFIXES,
+        IR_TABLE_SOURCE, MEASURED_SOURCE, QRR_TJ_MEASURED, QRR_TJ_MEASURED_IR)
     mfr = mpn = None
     if isinstance(part, str) and ":" in part:
         mfr, mpn = part.split(":", 1)
@@ -236,9 +239,18 @@ def resolve_n_tau(part=None):
         if key in QRR_TJ_MEASURED:
             return dict(n_tau=QRR_TJ_MEASURED[key], state="measured-fit",
                         source=MEASURED_SOURCE)
+        # IR entries via the orderable-suffix fallback: the table was harvested off
+        # base MPNs while the DB carries order codes (…PBF, …TRL, Infineon …XKMA1).
+        from dslib.mpn_match import lookup_base_variant
+        n_ir = lookup_base_variant(QRR_TJ_MEASURED_IR, key[0], key[1])
+        if n_ir is not None:
+            return dict(n_tau=n_ir, state="measured-fit", source=IR_TABLE_SOURCE)
         if key[0] == "ao":
             return dict(n_tau=AO_FAMILY_POOL_N_TAU, state="ao-family-pool",
                         source=MEASURED_SOURCE)
+        if key[0] == "infineon" and str(mpn).upper().startswith(IR_MPN_PREFIXES):
+            return dict(n_tau=IR_FAMILY_POOL_N_TAU, state="ir-family-pool",
+                        source=IR_TABLE_SOURCE)
     return dict(n_tau=N_TAU, state="conservative-bound",
                 source="legacy 'Qrr doubles' rule — no measured Tj data for this family")
 
