@@ -139,6 +139,62 @@ COSS_CURVES = {
     ],
 }
 
+# Structured conditions and source identity travel with the curve instead of being
+# recoverable only by reading the comments above. All currently curated curves are
+# Infineon typical capacitance graphs measured at VGS=0 V and f=1 MHz; the graph does not
+# state a temperature, so it remains None instead of being silently promoted to 25 C.
+COSS_CURVE_SOURCE = {
+    ("infineon", "IPP024N08NF2S"): dict(
+        datasheet_revision="2.1", source_figure="Diagram 11", source_page=8,
+        digitization_method="raster-dark-pixel-column-trace",
+        validation_method="overlay + Coss/Crss@40V + Qoss(0-40V) table anchors"),
+    ("infineon", "IPP019N08NF2S"): dict(
+        datasheet_revision="2.1", source_figure="Diagram 11", source_page=None,
+        digitization_method="dcdc-tools-vector-first",
+        validation_method="Coss/Crss@40V + Qoss(0-40V) table anchors"),
+    ("infineon", "IPP055N08NF2S"): dict(
+        datasheet_revision="2.1", source_figure="Diagram 11", source_page=8,
+        digitization_method="raster-dark-pixel-column-trace",
+        validation_method="Coss/Crss/Ciss@40V + Qoss(0-40V) table anchors"),
+    ("infineon", "IPP040N08NF2S"): dict(
+        datasheet_revision="2.1 (2022-06-15)", source_figure="Diagram 11",
+        source_page=None, digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="human overlay + Coss/Crss@40V + Qoss(0-40V) anchors"),
+    ("infineon", "IPP026N10NF2S"): dict(
+        datasheet_revision="2.1", source_figure="Diagram 11", source_page=None,
+        digitization_method="dcdc-tools-vector-first",
+        validation_method="Coss/Crss/Ciss@50V + Qoss(0-50V) table anchors"),
+    ("infineon", "IPP018N10N5"): dict(
+        datasheet_revision="2.3", source_figure="Diagram 11", source_page=None,
+        digitization_method="dcdc-tools-vector-first",
+        validation_method="Coss/Crss/Ciss@50V + Qoss(0-50V) table anchors"),
+    ("infineon", "IPP022N12NM6"): dict(
+        datasheet_revision="2.0", source_figure="Diagram 11", source_page=None,
+        digitization_method="dcdc-tools-vector-first",
+        validation_method="Coss/Crss/Ciss@60V + Qoss(0-60V) table anchors"),
+    ("infineon", "IPP050N10NF2S"): dict(
+        datasheet_revision="2.1 (2022-06-15)", source_figure="Diagram 11",
+        source_page=None, digitization_method="dcdc-tools-vector-first",
+        validation_method="Coss/Crss/Ciss@50V + Qoss(0-50V) table anchors"),
+}
+
+
+COSS_CURVE_META = {
+    key: dict(
+        frequency_hz=1e6,
+        temperature_c=None,
+        gate_bias_v=0.0,
+        curve_registry_id="%s:%s:coss-v1" % key,
+        binding_state="registry-curve-and-metadata",
+        source_document="Infineon datasheet",
+        provenance="%s datasheet Coss(V) graph; digitized trace with table-anchor validation" % mpn,
+        evidence_quality="PASS",
+        **COSS_CURVE_SOURCE[key],
+    )
+    for key in COSS_CURVES
+    for _, mpn in (key,)
+}
+
 
 # Optional (Vds_V, Ciss_pF) input-capacitance curves from the same datasheet graph.
 CISS_CURVES = {
@@ -230,6 +286,12 @@ def coss_curve_for(mfr, mpn):
     back to a base-MPN match so an orderable suffix (e.g. IPP024N08NF2S -> ...AKMA1) still
     resolves the base part's curve; longest matching base wins to avoid false positives."""
     return _curve_for(COSS_CURVES, mfr, mpn)
+
+
+def coss_curve_meta_for(mfr, mpn):
+    """Return structured measurement conditions/provenance for ``coss_curve_for``."""
+    meta = _curve_for(COSS_CURVE_META, mfr, mpn)
+    return dict(meta) if meta else None
 
 
 def ciss_curve_for(mfr, mpn):

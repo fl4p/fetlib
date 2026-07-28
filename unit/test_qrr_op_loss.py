@@ -64,7 +64,7 @@ def test_calibration_point_reproduces_the_datasheet_minus_the_capacitive_share()
     op = dcdc_buck_ls(DC, mf, gd=GD, qrr_didt=DS_DIDT)
 
     assert abs(DC.Io_min - DS_IF) < 1e-9, DC.Io_min      # the identity's precondition
-    assert flat.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat'
+    assert flat.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat-decontaminated'
     assert op.get_cond('P_rr')['Qrr_src'] == 'op-2pt'
 
     # the headline the model would rank on still lands on the datasheet row exactly
@@ -72,11 +72,19 @@ def test_calibration_point_reproduces_the_datasheet_minus_the_capacitive_share()
     assert abs(head['Qrr'] / DS_QRR - 1) < 1e-6, head['Qrr']
     q0 = head['q0']
     assert q0 > 0, 'the 2pt fit must solve a positive capacitive share here'
-    # ... and the BOOKED charge is that minus q0, so P_rr scales by the same ratio
-    assert abs(op.P_rr / flat.P_rr - (DS_QRR - q0) / DS_QRR) < 1e-6, (op.P_rr, flat.P_rr)
-    assert op.P_rr < flat.P_rr
+    # ... and both paths book their own explicitly decontaminated charge. The flat
+    # path uses the calibrated global q0 fraction; the 2pt path solves this die's q0.
+    flat_q0 = flat.get_cond('P_rr')['Qrr_q0']
+    assert flat_q0 > 0
+    assert abs(op.P_rr / flat.P_rr
+               - (DS_QRR - q0) / (DS_QRR - flat_q0)) < 1e-6
     assert op.get_cond('P_rr')['Qrr_decont'] is True
     assert abs(op.get_cond('P_rr')['Qrr_q0'] - q0) < 1e-18
+    assert op.get_cond('P_rr')['Qrr_q0_basis'] == 'two-point-Qrr-fit'
+    assert op.get_cond('P_rr')['Qrr_double_booking'] == 'exactly-once'
+    assert op.get_cond('P_rr')['Qrr_qoss_vr'] is not None
+    assert op.get_cond('P_rr')['Qrr_qoss_model_state'] == 'scalar-inverse-sqrt-fallback'
+    assert op.get_cond('P_rr')['Qrr_qoss_provenance']
 
 
 def test_booked_charge_excludes_what_p_coss_already_books():
@@ -267,7 +275,7 @@ def test_flag_on_but_no_didt_is_excluded_not_ranked_as_flat():
     assert didt is None, 'precondition: this part yields no operating point'
 
     ls = dcdc_buck_ls(DC, blind, gd=GD, qrr_didt=didt)
-    assert ls.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat'   # indistinguishable label
+    assert ls.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat-decontaminated'
     assert rankable(qrr_op, ls.get_cond('P_rr')['Qrr_src']) is False, \
         'a part with no operating point must not be ranked as if it had one'
     # ... and the same row IS rankable when nobody asked for an operating point
@@ -300,7 +308,7 @@ def test_uncurated_part_falls_back_visibly_not_silently():
     assert op.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat-nofit'
     assert 'qrr_nofit' in op.get_cond('P_rr')          # and it says why
     # the two fallbacks are distinguishable from the honest flat run
-    assert flat.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat'
+    assert flat.get_cond('P_rr')['Qrr_src'] == 'datasheet-flat-qoss-unverified'
 
 
 def test_nan_qrr_without_registries_stays_nan():

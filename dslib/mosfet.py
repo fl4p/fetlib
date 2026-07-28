@@ -32,6 +32,57 @@ def qrr_part_key(specs):
     return f'{mfr}:{mpn}' if mfr and mpn else None
 
 
+def attach_coss_registry(specs: 'MosfetSpecs', mfr, mpn):
+    """Attach the Coss(V) curve and its structured provenance by exact/base MPN.
+
+    Specs are built both from the parsed-datasheet pipeline and by unpickling the parts
+    DB. Keeping the attach in one helper prevents the former from silently falling back
+    to scalar Coss while the latter uses the nonlinear curve.
+    """
+    if specs is None:
+        return specs
+    try:
+        from dslib.coss_curves import coss_curve_for, coss_curve_meta_for
+    except ImportError:
+        return specs
+    registry_curve = coss_curve_for(mfr, mpn)
+    registry_meta = coss_curve_meta_for(mfr, mpn)
+    if not registry_curve or not registry_meta:
+        return specs
+
+    curve = getattr(specs, 'coss_curve', None)
+    meta = getattr(specs, 'coss_curve_meta', None)
+    has_curve, has_meta = bool(curve), bool(meta)
+
+    def same_curve(a, b):
+        return bool(a) and bool(b) and tuple(map(tuple, a)) == tuple(map(tuple, b))
+
+    if not has_curve and not has_meta:
+        # Registry data is one indivisible evidence object.
+        specs.coss_curve = registry_curve
+        specs.coss_curve_meta = registry_meta
+    elif has_curve and not has_meta:
+        # Old pickles may contain the registry curve but predate metadata. Bind only
+        # after comparing the complete trace; a custom curve must not borrow provenance.
+        if same_curve(curve, registry_curve):
+            specs.coss_curve_meta = registry_meta
+    elif has_meta and not has_curve:
+        # The registry ID is the only safe way to restore the other half.
+        if meta.get('curve_registry_id') == registry_meta.get('curve_registry_id'):
+            specs.coss_curve = registry_curve
+    else:
+        curve_matches = same_curve(curve, registry_curve)
+        meta_matches = (meta.get('curve_registry_id')
+                        == registry_meta.get('curve_registry_id'))
+        if curve_matches != meta_matches:
+            # Preserve caller data but make the broken evidence binding impossible to
+            # rank as PASS.
+            specs.coss_curve_meta = dict(
+                meta, evidence_quality='UNVERIFIED',
+                binding_state='unverified-curve-metadata-registry-mismatch')
+    return specs
+
+
 def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
     """Fill `specs.qrr_cond` / `specs.qrr_points` from the curated registries, in place.
 
@@ -100,6 +151,7 @@ class MosfetSpecs:
                  Vpl=None, Vsd=None,
                  Coss=math.nan, Coss_Vds=None,
                  Rg=math.nan, Id=math.nan, part=None, coss_curve=None,
+                 coss_curve_meta=None,
                  Id_gc=math.nan, gfs_min=math.nan, gfs_typ=math.nan, Id_gfs=math.nan,
                  Vgs_th=math.nan, Id_vsd=math.nan):
         """
@@ -198,6 +250,7 @@ class MosfetSpecs:
         # Attached by load_parts() from dslib.coss_curves (by MPN). Consumers use it for a
         # curve-faithful output cap; None -> they warn and fall back to the scalar Coss.
         self.coss_curve = coss_curve
+        self.coss_curve_meta = coss_curve_meta
         # Optional datasheet Ciss(V) curve: [(Vds_V, Ciss_pF), ...] or None.
         # Attached by load_parts() from dslib.coss_curves CISS_CURVES (by MPN). Together
         # with the Crss column of coss_curve it yields a datasheet Cgs(V) = Ciss - Crss;
@@ -483,21 +536,15 @@ class MosfetSpecs:
     def Coss_V0(self):
         mf = self
         coss_vds = getattr(mf, 'Coss_Vds', math.nan)
-        coss_v0 = math.nan
 
         # reject coss_v0 if it is too far away from half the break-down voltage
-        if coss_vds and math.isfinite(coss_vds) and (abs((mf.Vds / 2) - coss_v0) / mf.Vds < 0.2):
-            coss_v0 = abs(coss_vds)  # test voltage might be given negative for p-channel
+        vds = abs(mf.Vds or math.nan)
+        if (coss_vds and math.isfinite(coss_vds) and math.isfinite(vds) and vds > 0
+                and abs((vds / 2) - abs(coss_vds)) / vds < 0.2):
+            return abs(coss_vds)  # test voltage might be given negative for p-channel
 
-        elif math.isnan(coss_v0):
-            # Fallback: assume Coss specified at ~half Vds (common datasheet practice)
-            vds = abs(mf.Vds or math.nan)
-            if math.isfinite(vds) and vds > 1:
-                coss_v0 = vds / 2
-            else:
-                coss_v0 = math.nan
-
-        return coss_v0
+        # Fallback: assume Coss specified at ~half Vds (common datasheet practice).
+        return vds / 2 if math.isfinite(vds) and vds > 1 else math.nan
 
 
 class GateDrive:
@@ -530,6 +577,8 @@ class MosfetSlot():
 
     def __init__(self, mf: MosfetSpecs, rg_total, rg_total_dis=math.nan, parallel=1, L_csi=0):
         assert not L_csi
+        if isinstance(parallel, bool) or not isinstance(parallel, int) or parallel <= 0:
+            raise ValueError("MOSFET slot parallel count must be a positive integer")
         self.mf = mf
         self.rg_total = rg_total
         self.rg_total_dis = rg_total_dis if not math.isnan(rg_total_dis) else rg_total

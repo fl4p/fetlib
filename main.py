@@ -14,6 +14,7 @@ import pandas as pd
 import dslib.manual_fields
 from dclib.powerloss import (dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt,
                              qrr_rankable_at_operating_point, GateLoopInfeasible)
+from dclib.coss_loss import coss_audit_json
 from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict, round_to_n, isnum
 from dslib.cache import disk_cache
@@ -641,6 +642,11 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_sw=ls.P_sw,
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
+                P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
+                P_coss_state=ls.get_cond('P_coss').get('model_state'),
+                P_coss_evidence=ls.get_cond('P_coss').get('evidence_quality'),
+                P_coss_validation=ls.get_cond('P_coss').get('validation_status'),
+                P_coss_audit=coss_audit_json(ls.get_cond('P_coss')),
                 P_tot=ls.buck_hs(),
             ))
 
@@ -722,6 +728,21 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                             P_sw=ls.P_sw,
                             P_gd=ls.P_gd + ls3.P_gd,
                             P_coss=ls.P_coss + ls3.P_coss,
+                            P_coss_scope='%s + %s' % (
+                                ls.get_cond('P_coss').get('accounting_scope'),
+                                ls3.get_cond('P_coss').get('accounting_scope')),
+                            P_coss_state='%s + %s' % (
+                                ls.get_cond('P_coss').get('model_state'),
+                                ls3.get_cond('P_coss').get('model_state')),
+                            P_coss_evidence='%s + %s' % (
+                                ls.get_cond('P_coss').get('evidence_quality'),
+                                ls3.get_cond('P_coss').get('evidence_quality')),
+                            P_coss_validation='%s + %s' % (
+                                ls.get_cond('P_coss').get('validation_status'),
+                                ls3.get_cond('P_coss').get('validation_status')),
+                            P_coss_audit=coss_audit_json(dict(
+                                switcher=ls.get_cond('P_coss'),
+                                conductor=ls3.get_cond('P_coss'))),
                             P_tot=p,
                         ))
 
@@ -887,6 +908,26 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 # datasheet number that survived a failed fit.
                 Qrr_eff=round_to_n(loss_spec.get_cond('P_rr')['Qrr'] * 1e9, 4) * i,
                 Qrr_src=loss_spec.get_cond('P_rr')['Qrr_src'],
+                Qrr_q0_nC=(loss_spec.get_cond('P_rr').get('Qrr_q0') * 1e9 * i
+                           if loss_spec.get_cond('P_rr').get('Qrr_q0') is not None
+                           else None),
+                Qrr_q0_basis=loss_spec.get_cond('P_rr').get('Qrr_q0_basis'),
+                Qrr_double_booking=loss_spec.get_cond('P_rr').get(
+                    'Qrr_double_booking'),
+                Qrr_double_booking_evidence=loss_spec.get_cond('P_rr').get(
+                    'Qrr_double_booking_evidence'),
+                Qrr_qoss_vr_nC=(
+                    loss_spec.get_cond('P_rr').get('Qrr_qoss_vr') * 1e9 * i
+                    if loss_spec.get_cond('P_rr').get('Qrr_qoss_vr') is not None
+                    else None),
+                Qrr_qoss_model_state=loss_spec.get_cond('P_rr').get(
+                    'Qrr_qoss_model_state'),
+                Qrr_qoss_evidence=loss_spec.get_cond('P_rr').get(
+                    'Qrr_qoss_evidence'),
+                Qrr_qoss_provenance=loss_spec.get_cond('P_rr').get(
+                    'Qrr_qoss_provenance'),
+                Qrr_qoss_extrapolation_flags=loss_spec.get_cond('P_rr').get(
+                    'Qrr_qoss_extrapolation_flags'),
                 didt_rr=None if qrr_didt is None else round_to_n(qrr_didt / 1e6, 3),
                 Vsd=fet_specs and (fet_specs.Vsd),
                 QgdQgs=fet_specs and fet_specs.QgdQgsRatio,
@@ -900,6 +941,11 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_rr=ls.P_rr,
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
+                P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
+                P_coss_state=ls.get_cond('P_coss').get('model_state'),
+                P_coss_evidence=ls.get_cond('P_coss').get('evidence_quality'),
+                P_coss_validation=ls.get_cond('P_coss').get('validation_status'),
+                P_coss_audit=coss_audit_json(ls.get_cond('P_coss')),
                 P_tot=ls.buck_ls(),
             ))
 

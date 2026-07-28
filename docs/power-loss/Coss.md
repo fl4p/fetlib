@@ -1,144 +1,196 @@
-The depletion layers of the MOSFET have parasitic capacitance which changes with bias voltage.
-The capacitors are charged and discharged during each switching cycle.
+# Nonlinear Coss/Qoss/Eoss loss model
 
-see https://epc-co.com/epc/Portals/0/epc/documents/application-notes/AN030%20Hard%20Switching%20Losses%20Calculation.pdf
+`dclib.coss_loss` is the authoritative analytic model. It treats Coss as a
+nonlinear energy-storage element and keeps stored, recovered, dissipated, and
+measured hysteresis energy separate.
 
-During SW fall (HS turn-off):
-* Charging Coss_hs through inductor, no energy loss
-* Coss_ls is discharged through inductor, no energy loss
+## State functions
 
-During switch node rise (HS turn-on):
-* Energy in Coss_hs is dissipated through its own channel
-* Coss_ls is charged, loss through HS resistance
+For a drain-voltage trajectory, the model uses
 
-Capacitor charging:
-* Inductive charging is loss less
-* Resistive charging has a loss of half the energy stored in the capacitor
-
-Datasheets:
-* usually provide Coss at half of the break-down voltage, some Qoss
-* some datasheets provide a Coss_ER (energy related) and Coss_TR (time related), e.g. IRF100B202
-  * Coss_ER is slightly lower (up to 10% ?) than Coss_TR
-
-
-Toshibas AN: https://toshiba.semicon-storage.com/info/application_note_en_20230209_AKX00063.pdf?did=13415
-"Ciss is the input capacitance, Crss is the reverse transfer
-capacitance, and Coss is the output capacitance.
-Capacitances affect the switching performance of a power
-MOSFET."
-
-"Effective output capacitance (energy related):
-Co(er) is a fixed capacitance that gives the same stored energy as Co"
-
-"Co(tr) is a fixed capacitance that gives the same charging time as Coss while VDS is rising from 0 V to specified voltage."
-
-"For the power MOSFET, the input capacitance (Ciss=Cgd+Cgs), the output capacitance (Coss=Cds+Cgd) and the reverse transfer capacitance (Crss=Cgd) are important characteristics."
-
-"Co(tr) is used in the resonant converter deadtime calculation." https://community.infineon.com/t5/MOSFET-Si-SiC/Which-Coss-value-should-I-use/td-p/778654#.
-
-![img.png](coss-vds.png)
-
-Coss - Vds dependency:
-* Coss(Vds) can be approximated with an inverse square root:
-  * Coss(Vds) = Coss(100V) * sqrt(100V/Vds)
-* Integrating Coss(vds) over Vds gives us Qoss(Vds)
-* Integrating vds*Coss(vds) over Vds gives us the energy stored
-  * 2/3 * Coss(Vds) * Vds^2
-
-## Energy stored in a non-linear capacitor
-
-Coss depends on Vds, so the usual formula 1/2 * C * V^2 doesn't work, as we need to integrate over C(V).
-Datasheets usually contain capacitance over Vds diagrams, however chart reading is not yet implemented.
-
-We can approximate C(V) = C0 * sqrt(V0/V).
-Datasheets usually provide C0=C(V0=Vbr/2) with Vbr = break-down voltage.
-With c0' = C0 * sqrt(V0):
-C(V) = c0'/sqrt(V)
-
-there is a more precise formular fn2: C(V) = c0/sqrt(1+V/V0). This has a slightly flatter curve at
-low voltages (and has finite at zero). We ignore this error and slightly overestimate the capacity at lower voltages.
-
-![img.png](img.png)
-fn1 is the approximation we use.
-
-By integrating the capacity curve times v we get the energy stored in the capacitor:
-```
-Eoss = 2/3 * C0 * Vds^1.5 * V0^0.5
-```
-and in case of V0=Vds:
-```
-Eoss = 2/3 * C0 * Vds^2
+```text
+Qoss(V) = integral( Coss(v), v=0..V )
+Eoss(V) = integral( v*Coss(v), v=0..V )
 ```
 
-As mentioned above, charging HS has zero loss (inductive), but all its charge is lost
-during turn-on in its own channel. LS charge is recuperated to the load, but charging it through a resistive
-path has losses.
+It never applies `0.5*Coss_table*V^2` across a large voltage swing.
 
-We can compute these by subtracting the Eoss from the total bus energy:
+The preferred source is `dslib.coss_curves.COSS_CURVES`: the digitized
+datasheet Coss(V) graph, piecewise-linearly interpolated and analytically
+integrated segment by segment. `COSS_CURVE_META` preserves measurement
+frequency, temperature when stated, gate bias, provenance, and evidence
+quality. Operation beyond the graph is a constant-C extension and is reported
+as an extrapolation.
 
-```
-E_res = Ebus - Eoss
-```
+Parts without a curve use the legacy nonlinear assumption
 
-with
-
-```
-Ebus = Vbus * Qoss
-```
-
-and Qoss by integrating C(V) over 1..Vds (with the approximation we can't integrate from 0..):
-
-```
-Qoss = integral(C0*sqrt(V0/v), v=0..Vds)
-Qoss = 2*C0 * sqrt(V0) * sqrt(Vds) 
-Qoss = 2*C0 * Vds 
+```text
+Coss(V) = Coss(Vanchor) * sqrt(Vanchor/V)
+Qoss(V) = 2*Coss(Vanchor)*sqrt(Vanchor*V)
+Eoss(V) = 2/3*Coss(Vanchor)*sqrt(Vanchor)*V^(3/2)
 ```
 
-thus (Vbus=Vds)
+That fallback is always `UNVERIFIED` and warns. It is not a single-table
+`1/2 CV^2` substitution.
 
+## Transition ledger
+
+Energy loss is a property of the circuit transition, not Eoss alone.
+`CossTransition` stores a sampled Vds waveform as labelled segments. It also
+names the topology, device and peer-device IDs, HS/LS role, switch node,
+current direction, and cell event:
+
+- `commutated`: reversible transfer to or from the source/load;
+- `channel-discharge`: stored Eoss dissipated in the named channel;
+- `resistive-charge`: source energy `Vsource*dQ` split into stored Eoss and
+  dissipation in the named destination.
+
+Energy sources/destinations are typed buckets (`dc-source`,
+`load/inductor`, or `device:<id>:{coss,channel,body-diode,coss-hysteresis}`),
+not free-form labels. A device endpoint outside the transition's device/peer
+pair is rejected. Every transfer is emitted as a source → destination flow.
+Every transition also names its event count, device count, model state,
+evidence quality, and accounting owner. The energy balance for each event is
+
+```text
+Einitial + Esupplied = Efinal + Erecovered + Edissipated
 ```
-E_res = Vds * 2*C0*Vds - 2/3 C0 * Vds^2
-E_res = 4/3 * C0 * Vds^2 
-```
-or
-```
-E_res = 4/3 * C0 * sqrt(V0) * Vds^(3/2)
-```
-Notice that energy lost in the resistor (E_res) is double the energy stored in the capacitor (Eoss).
-For linear capacitors with constant C these are usually equal (Eoss=E_res). 
 
-TODO plot
+and the residual is reported.
 
-https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
+`CossSwitchingCellTransition` pairs complementary HS/LS waveforms for the
+same synchronous-buck event. It validates reciprocal device identities,
+distinct HS/LS devices, switch node, current direction, time grid, and
+`Vds_hs + Vds_ls = Vbus` before either loss is evaluated.
+The two device-side views of a Coss-to-Coss transfer must have equal
+independently integrated energy; the cell report then emits that physical
+transfer once. A mismatch produces a non-zero
+`cross_device_transfer_residual_j_per_event` and `FAIL`. Reverse
+(`load-to-source`) synchronous-buck commutation is rejected until its
+different flow rules are implemented, rather than applying the forward-flow
+ledger under a changed label.
 
+The default synchronous-buck assumptions are explicit and `UNVERIFIED`
+fragments of that paired event:
 
-https://www.ti.com/lit/an/slpa009a/slpa009a.pdf#page=8
+- HS Coss: `Vin -> 0`, discharged in the HS channel at turn-on;
+- LS Coss: `0 -> Vin`, charged through the commutating HS channel.
 
-Low-side: charge is recovered during dead-time (not lost)
+They are not assumed equal. Parallel-device multiplicity and switching events
+per cycle multiply the loss explicitly.
 
-High-side:
-https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=137
+## Partial ZVS and deadtime
 
-https://www.onsemi.jp/download/data-sheet/pdf/nvmfws2d1n08x-d.pdf
+`CossTransition.partial_zvs()` consumes the sampled deadtime Vds waveform. It
+accounts each sample interval as reversible commutation and dissipates only
+the Eoss remaining at the final residual voltage when the channel turns on.
+Reaching zero before turn-on therefore produces zero channel-dump energy;
+stopping at a residual voltage produces exactly `Eoss(Vresidual)`. There is no
+binary hard-switch multiplier.
 
-![img.png](img/img.webp)
+The transition carries an explicit `turn_on_time_s`. Samples are truncated at
+that deadline and Vds is linearly interpolated when it falls between samples;
+the original `waveform_covered_until_s` is retained as coverage evidence. A
+deadline outside the acquired waveform is rejected. The production buck path
+also requires the transition deadline to equal `dc.tDead`, so the Coss ledger
+cannot integrate a future sample while deadtime loss uses an earlier turn-on.
+Falling intervals transfer Coss energy toward the commutating circuit; rising
+rebound/ringing intervals reverse that source/destination pair and recharge
+Coss before any residual channel discharge.
 
-| V  | C      | C√V  |
-|----|--------|------|
-| 0  | 4000pF |      |
-| 20 | 1800pF | 8000 |
-| 30 | 1300pF | 7120 |
-| 40 | 1100pF | 6960 |
-| 50 | 900pF  | 6360 |
-| 70 | 700pF  | 5860 |
+## Coss hysteresis/dielectric loss
 
-C0 = 4000pF
-V= 3.3V
+Quasi-static Coss(V) defines reversible Qoss/Eoss only. It does not identify
+Coss hysteresis or dielectric loss.
 
+`CossHysteresisCalibration` is a separate measured energy-per-event input with
+its own voltage range, frequency, temperature, gate bias, provenance, and
+evidence quality. The evaluator refuses condition mismatches rather than
+implicitly extrapolating them. With no independent calibration,
+`P_hysteresis` and `p_total_w` remain unknown. `P_coss`/`p_accounted_w` is
+explicitly labelled
+`commutation-only-lower-bound:hysteresis-unverified`; the ranking CSV carries
+that scope and its evidence/validation states. It is not presented as a
+complete total and hysteresis is not silently treated as zero.
 
+With a calibration, its energy source and
+`device:<id>:coss-hysteresis` destination enter the flow ledger
+independently. A claimed hysteresis energy larger than the full reversible
+Eoss excursion fails validation rather than receiving PASS from algebraic
+conservation alone.
 
-# TODO
-* use more precise formular for C(V) = C0/sqrt(1+v/v0)
-* datsheets usually provide Coss at half the break-down voltage
-* https://www.eevblog.com/forum/projects/proof-mosfet-datasheets-lie-to-you!/
-* Coss hysteresis ? https://de.slideshare.net/MichaelHarrison96/coss-hysteresis-in-advanced-superjunction-mosfets-apec-2016-presentation-compressed
+The calibration is not an effective package/copper/Cin/ring resistance.
+Those damping terms belong to the switching-cell model and must not be fitted
+into this material-loss bucket.
+
+## Qrr ownership and exactly-once accounting
+
+A measured Qrr integral can contain junction displacement charge. The Coss
+bucket already owns that charge, so `dcdc_buck_ls` subtracts the calibrated
+Qoss share when Qrr test voltage `VR` and Qoss(VR) are available. It reports
+`Qrr_q0`, its `Qrr_q0_basis`, `Qrr_decont`, and the accounting state
+`Qrr_double_booking=exactly-once`. Accounting ownership is separate from
+confidence: `Qrr_double_booking_evidence`, `Qrr_qoss_model_state`,
+`Qrr_qoss_evidence`, provenance, conditions, and extrapolation flags preserve
+whether the subtraction used a validated curve, an extrapolated curve, or the
+scalar fallback. These fields survive successful operating-point fits and
+`datasheet-flat-nofit` fallbacks and are exported with ranking rows.
+
+When VR or Qoss is unavailable, the raw result is labelled
+`datasheet-flat-qoss-unverified` and `Qrr_double_booking=UNVERIFIED`; absence
+of evidence never appears as a successful decontamination.
+
+## Reporting and validation
+
+The `P_coss` condition report includes:
+
+- initial/final Vds and the full sampled waveform;
+- initial/final/peak stored Eoss and initial/final Qoss;
+- supplied, recovered, commutation-dissipated, and hysteresis energy;
+- destination buckets;
+- switching frequency, events per cycle, and device count;
+- curve/hysteresis/transition model states;
+- provenance, measurement/operating conditions, extrapolation flags;
+- `PASS`, `FAIL`, or `UNVERIFIED`, plus conservation residual.
+
+Production CSV rows retain this complete structure in the strict-JSON
+`P_coss_audit` column; unknown numeric results become JSON `null`. The compact
+adjacent `P_coss_*` columns are search/sort conveniences. Staged-switching
+rows namespace their two complete reports as `switcher` and `conductor` in
+the audit payload.
+
+`validate_coss_report()` checks conservation, expected destination, and
+evidence state. Total-watt agreement by itself is not a mechanism validation.
+The unit suite exercises isolated charge/discharge fixtures, partial ZVS, and
+synchronous switching-cell transitions at multiple bus voltages.
+
+## Ownership contract with dcdc-tools
+
+- **fetlib owns** datasheet Coss(V) data and metadata, Qoss/Eoss integration,
+  analytic transition ledgers, Coss/Qrr exactly-once bookkeeping, and
+  PASS/FAIL/UNVERIFIED reporting.
+- **dcdc-tools owns** simulated device/node waveforms, topology timing,
+  package/copper/Cin parasitics, ring damping, and waveform-derived device
+  dissipation.
+
+Ownership is term-specific. `accounting_owner="external-waveform"` hands off
+commutation only; fetlib still books a nonzero independently calibrated
+material-hysteresis term. Handing off both requires the separate explicit
+`hysteresis_accounting_owner="external-waveform"`. Missing fetlib-owned
+hysteresis remains `UNVERIFIED` with a named booked lower bound—it cannot
+become a zero/PASS result merely because commutation is external.
+
+dcdc-tools writes `coss_handoff` in `loss_budget.json` with the schema,
+per-term owners, externally accounted terms, `coss_rser` value/source, and
+whether intrinsic hysteresis was modeled. A nonzero `coss_rser` is labeled
+`diagnostic-fit-not-datasheet`, counted as external ring damping, and
+explicitly forbidden as a hysteresis calibration. Analytic and waveform
+ownership of the same term must never overlap.
+
+## References
+
+- Erickson and Maksimovic, *Fundamentals of Power Electronics*, nonlinear
+  capacitor energy and commutation.
+- EPC AN030, hard-switching loss calculation.
+- TI SLPA009A, MOSFET output-capacitance energy.
+- Infineon guidance on energy-related versus time-related effective Coss.

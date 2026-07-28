@@ -846,15 +846,10 @@ parts_db = ObjectDatabase[Tuple[Mfr, Mpn], Part]('parts-lib', key_func=lambda p:
 
 def load_parts():
     parts = parts_db.load()
-    # Attach datasheet Coss(V)/Crss(V) curves by MPN onto the loaded specs, so the pickle
-    # DB need not be rebuilt to add a curve. Only fills a curve that isn't already present.
-    # A missing curves module is tolerated (older checkout); any OTHER error is a real bug in
-    # the curve subsystem and must surface (Fab's rule: never silently degrade) rather than
-    # leave every part quietly curve-less.
-    try:
-        from dslib.coss_curves import coss_curve_for
-    except ImportError:
-        coss_curve_for = None
+    # Attach each Coss curve together with its metadata as one evidence object. The helper
+    # validates old partial records against the registry and refuses to cross-wire custom
+    # curves/provenance.
+    from dslib.mosfet import attach_coss_registry
     # Import Ciss SEPARATELY: a combined import would let a broken/renamed
     # ciss_curve_for silently disable the Coss attach too (same except clause),
     # violating the never-silently-degrade contract stated above.
@@ -862,16 +857,13 @@ def load_parts():
         from dslib.coss_curves import ciss_curve_for
     except ImportError:
         ciss_curve_for = None
-    if coss_curve_for is not None:
-        for key, p in parts.items():
-            specs = getattr(p, 'specs', None)
-            if specs is None or getattr(specs, 'coss_curve', None):
-                continue
-            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
-                                                            getattr(p, 'mpn', None)))
-            curve = coss_curve_for(mfr, mpn)
-            if curve:
-                specs.coss_curve = curve
+    for key, p in parts.items():
+        specs = getattr(p, 'specs', None)
+        if specs is None:
+            continue
+        mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
+                                                        getattr(p, 'mpn', None)))
+        attach_coss_registry(specs, mfr, mpn)
     # Ciss(V) pairs ride the same module but attach in an INDEPENDENT pass gated only on
     # ciss_curve_for: nesting this under `coss_curve_for is not None` (as it first shipped)
     # would let a broken/renamed coss_curve_for silently disable the Ciss attach too — the

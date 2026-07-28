@@ -1288,8 +1288,8 @@ class DatasheetFields():
                           f"({lo}..{hi}) — dropped to NaN (check the datasheet parse)")
             return math.nan
 
-        from dslib.mosfet import MosfetSpecs, attach_qrr_registries
-        return attach_qrr_registries(MosfetSpecs(
+        from dslib.mosfet import MosfetSpecs, attach_coss_registry, attach_qrr_registries
+        specs = MosfetSpecs(
             Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,
             Id=Id,
@@ -1314,7 +1314,11 @@ class DatasheetFields():
             # back to the flat datasheet value for every part. See attach_qrr_registries.
             # The datasheet's OWN parsed test point goes in as the lowest-precedence
             # source; curated entries still win. See qrr_test_conditions.
-        ), self.part.mfr, self.part.mpn, parsed_qrr_cond=self.qrr_test_conditions())
+        )
+        attach_coss_registry(specs, self.part.mfr, self.part.mpn)
+        return attach_qrr_registries(
+            specs, self.part.mfr, self.part.mpn,
+            parsed_qrr_cond=self.qrr_test_conditions())
 
     def get(self, sym, stat: Union[Tuple[Field.StatLiteral], Field.StatLiteral], required=False):
         if isinstance(stat, str):

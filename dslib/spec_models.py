@@ -231,6 +231,7 @@ class BuckConverter():
                             self.ls.mf,
                             gd
                             )
+        p_ls = p_ls.parallel(self.ls.parallel)
 
         from dclib.powerloss import dcdc_buck_caps
         p_cap = dcdc_buck_caps(dcdc, Z_cin=self.cin_imp, Z_cout=self.cout_imp)

@@ -24,12 +24,18 @@ https://www.ti.com/tool/download/SYNC-BUCK-FET-LOSS-CALC
 
 """
 
+import copy
 import math
 import numpy as np
 import warnings
 from typing import Tuple
 
 from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
+from dclib.coss_loss import (
+    CossEnergyModel, CossTransition, OWNER_FETLIB, PASS, UNVERIFIED,
+    buck_hs_hard_transition, buck_ls_hard_transition,
+    evaluate_coss_transition, scale_coss_report_dict, unavailable_coss_report,
+)
 from dslib.mosfet import Qgs2_Qgs_ratio_estimate, MosfetSpecs, GateDrive
 from dslib.spec_models import DcDcLoadParams
 from maglib.cores import MagneticCoreSpecs
@@ -145,8 +151,13 @@ class SwitchPowerLoss():
 
         :return:
         """
+        if isinstance(n, bool) or not isinstance(n, (int, np.integer)) or n <= 0:
+            raise ValueError("parallel device count must be a positive integer")
         if n == 1:
             return self
+        cond = copy.deepcopy(self._cond)
+        if cond and isinstance(cond.get('P_coss'), dict):
+            cond['P_coss'] = scale_coss_report_dict(cond['P_coss'], n)
         return SwitchPowerLoss(
             P_cl=self.P_cl / n * Pcl_ParallelMistmatchFactor,
             P_sw=self.P_sw,
@@ -154,7 +165,7 @@ class SwitchPowerLoss():
             P_rr=n * self.P_rr,
             P_gd=n * self.P_gd,
             P_dt=self.P_dt,
-            cond=self._cond,
+            cond=cond,
         )
 
     def buck_hs(self):
@@ -167,9 +178,9 @@ class SwitchPowerLoss():
 
     def buck_ls(self):
         # attributed (not dissipated)
-        # P_rr and P_coss is induced but not self-dissipated!
+        # P_rr and hard-charge P_coss are induced by this slot but their report names
+        # the physical destination; they are not assumed to heat this die.
         p = self.P_cl + self.P_coss + self.P_gd + self.P_dt + self.P_rr
-        # Qoss is recovered, not lost!
         return p
 
     def sum(self):
@@ -216,45 +227,85 @@ def Rds_on(mf: MosfetSpecs, Id, Tj):
     return mf.Rds_on
 
 
-def qoss_at(mf: MosfetSpecs, V) -> float:
-    """Output charge [C] stored at drain voltage V, on the same Coss(V) ~ 1/sqrt(V) model
-    p_coss_eoss integrates. NaN when Coss or V is unusable — an unknown charge stays
-    unknown rather than defaulting to a plausible one.
+def qoss_at(mf: MosfetSpecs, V, *, operating_frequency_hz=None,
+            operating_temperature_c=None, gate_bias_v=0.0, detail=False):
+    """Output charge at V from the same nonlinear state model used by P_coss.
 
-    Extracted so the Qrr decontamination (which needs Qoss at the datasheet's REVERSE
-    TEST voltage VR, not at V_bus) cannot drift from the Coss model the Coss/Eoss bucket
-    itself uses. Those two must agree: the whole point of subtracting a capacitive share
-    from Qrr is that this bucket already books it.
+    Qrr decontamination calls this at the datasheet reverse-test voltage, while the
+    switching-loss path calls it at each waveform sample. Keeping one implementation is
+    the exactly-once accounting contract. ``detail=True`` also returns the model state,
+    evidence, provenance, conditions, and extrapolation flags used for that charge.
     """
-    if V is None or not math.isfinite(V) or V <= 0 or not math.isfinite(mf.Coss):
-        return math.nan
-    coss_v0 = mf.Coss_V0
-    if math.isfinite(coss_v0) and coss_v0 > 0:
-        return 2 * mf.Coss * (coss_v0 * V) ** .5
-    return 2 * mf.Coss * V
+    unavailable = dict(
+        qoss_c=math.nan, model_state='unavailable', evidence_quality=UNVERIFIED,
+        provenance='Qoss voltage unavailable', extrapolation_flags=(),
+        conditions={})
+    if V is None or not math.isfinite(V) or V < 0:
+        return unavailable if detail else math.nan
+    try:
+        model = CossEnergyModel.from_mosfet(
+            mf, operating_frequency_hz=operating_frequency_hz,
+            operating_temperature_c=operating_temperature_c,
+            gate_bias_v=gate_bias_v)
+        state = model.at(V)
+    except ValueError as e:
+        unavailable['provenance'] = str(e)
+        return unavailable if detail else math.nan
+    if detail:
+        return dict(
+            qoss_c=state.qoss_c, model_state=model.model_state,
+            evidence_quality=model.evidence_quality,
+            provenance=model.provenance,
+            extrapolation_flags=tuple(model.extrapolation_flags),
+            conditions=model.conditions)
+    return state.qoss_c
 
 
-def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs) -> Tuple[float, float]:
-    # for Coss the HS contribution is the energy stored in Coss
-    # which is wasted in its own channel during turn-on
-    # mf.Coss is Coss at ~V_bus. Coss is ~1/sqrt(V)
-    # https://elprivod.nmu.org.ua/files/converters/Robert_Erikson_fundamentals-of-power-electronics-3n_2020.pdf#page=138
+def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs, *,
+                 transition: CossTransition = None, hysteresis=None,
+                 Tj=math.nan, gate_bias_v=0.0, detail=False):
+    """Evaluate nonlinear Coss energy on an explicit transition waveform.
 
-    coss_v0 = mf.Coss_V0
-
-    if math.isfinite(coss_v0) and coss_v0 > 0:
-        # Coss is ~1/sqrt(V)
-        p_coss = 2 / 3 * mf.Coss * dc.Vi ** (3 / 2) * coss_v0 ** .5 * dc.f
+    The no-transition compatibility path is the historical buck-HS hard turn-on, but it
+    is labelled UNVERIFIED. Buck HS/LS callers below pass role-specific transitions.
+    """
+    transition = transition or buck_hs_hard_transition(dc.Vi)
+    if (transition.turn_on_time_s is not None
+            or transition.waveform_covered_until_s is not None):
+        if (transition.turn_on_time_s is None
+                or transition.waveform_covered_until_s is None):
+            raise ValueError("timed Coss transition has incomplete timing metadata")
+        deadtime_duration = (
+            transition.turn_on_time_s - transition.segments[0].t0_s)
+        if not math.isclose(
+                deadtime_duration, dc.tDead, rel_tol=1e-6,
+                abs_tol=max(1e-15, abs(dc.tDead) * 1e-9)):
+            raise ValueError(
+                "timed Coss waveform duration %g s does not match configured "
+                "deadtime %g s" % (deadtime_duration, dc.tDead))
+    temp = Tj if Tj is not None and math.isfinite(Tj) else None
+    try:
+        model = CossEnergyModel.from_mosfet(
+            mf, operating_frequency_hz=dc.f,
+            operating_temperature_c=temp, gate_bias_v=gate_bias_v)
+    except ValueError as e:
+        report = unavailable_coss_report(transition, dc.f, str(e))
     else:
-        warnings.warn('%s coss v0 not available, using fallback equation' % mf.part.mpn)
-        p_coss = 2 / 3 * mf.Coss * dc.Vi ** 2 * dc.f  # 2/3 comes from integration of Coss(V)
-
-    return p_coss, qoss_at(mf, dc.Vi)
+        report = evaluate_coss_transition(
+            model, transition, switching_frequency_hz=dc.f,
+            temperature_c=temp, gate_bias_v=gate_bias_v, hysteresis=hysteresis)
+    if detail:
+        return report
+    qoss = max(report.qoss_initial_c, report.qoss_final_c)
+    return report.p_accounted_w, qoss
 
 
 def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
                  ls_Qoss=0, Lcsi=0,
-                 use_datasheet_timings=False, isGaN=False):
+                 use_datasheet_timings=False, isGaN=False,
+                 coss_transition=None, coss_hysteresis=None,
+                 coss_owner=OWNER_FETLIB,
+                 coss_hysteresis_owner=OWNER_FETLIB):
     """
     computes attributed power loss of the high-side mosfet in synchronous buck converter
     attributed means the part generates loss somewhere in the converter (!= self-dissipated loss)
@@ -307,7 +358,13 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
 
-    P_coss, qoss = p_coss_eoss(dc, mf)
+    coss_transition = coss_transition or buck_hs_hard_transition(
+        dc.Vi, accounting_owner=coss_owner,
+        hysteresis_accounting_owner=coss_hysteresis_owner)
+    coss_report = p_coss_eoss(
+        dc, mf, transition=coss_transition, hysteresis=coss_hysteresis,
+        Tj=Tj, gate_bias_v=gd.Voff, detail=True)
+    P_coss = coss_report.p_accounted_w
 
     return SwitchPowerLoss(
         P_cl=i_rms2 * rds,  # conduction loss
@@ -326,14 +383,18 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
                 Rds=rds, I=i_rms2 ** .5,
             ),
             P_gd=dict(Qg=mf.Qg),
-            P_coss=dict(Coss=mf.Coss, Qoss=qoss),
+            P_coss=dict(Coss=mf.Coss, Coss_Vds=mf.Coss_Vds,
+                        **coss_report.as_dict()),
         ),
     )
 
 
 def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
                  Qrr_temp_rise=Qrr_temp_rise_default,
-                 isGaN=False, qrr_didt=None, qrr_factor=1.0):
+                 isGaN=False, qrr_didt=None, qrr_factor=1.0,
+                 coss_transition=None, coss_hysteresis=None,
+                 coss_owner=OWNER_FETLIB,
+                 coss_hysteresis_owner=OWNER_FETLIB):
     # https://www.ti.com/lit/an/slua341a/slua341a.pdf?ts=1722843631468&ref_url=https%253A%252F%252Fwww.google.com%252F
     """
     tBDR + tBDF = 10 ns (assumption)
@@ -377,21 +438,69 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     # double-count the temperature rise AND confound the thing this flag exists to
     # measure. So the model is evaluated at its calibration Tj (25 C, tj_extrapolated
     # False) and only the (IF, di/dt) rescale changes between the two paths.
-    Qrr_base, qrr_src, qrr_detail = mf.Qrr, 'datasheet-flat', None
+    # The datasheet Qrr integral includes junction displacement charge. P_coss owns that
+    # capacitance, so even the flat path must remove the calibrated share when the
+    # datasheet reverse-test voltage is known. Unknown VR/Qoss remains explicitly
+    # UNVERIFIED rather than silently claiming exactly-once accounting.
+    from dslib.qrr_model import calibration_qrr, LMFitError
+    vr = (getattr(mf, 'qrr_cond', None) or {}).get('VR')
+    temp = Tj if Tj is not None and math.isfinite(Tj) else None
+    qoss_detail = qoss_at(
+        mf, vr, operating_frequency_hz=dc.f,
+        operating_temperature_c=temp, gate_bias_v=gd.Voff, detail=True)
+    q_vr = qoss_detail['qoss_c']
+    Qrr_base, qrr_src = mf.Qrr, 'datasheet-flat-qoss-unverified'
+    qrr_detail = dict(q0=0.0, decontaminated=False,
+                      qoss_vr=None if math.isnan(q_vr) else q_vr,
+                      q0_basis='none',
+                      double_booking_state='UNVERIFIED',
+                      double_booking_evidence='UNVERIFIED',
+                      qoss_model_state=qoss_detail['model_state'],
+                      qoss_evidence=qoss_detail['evidence_quality'],
+                      qoss_provenance=qoss_detail['provenance'],
+                      qoss_extrapolation_flags=qoss_detail['extrapolation_flags'],
+                      qoss_conditions=qoss_detail['conditions'])
+    if math.isfinite(q_vr):
+        try:
+            Qrr_base = calibration_qrr(mf.Qrr, q_vr)
+            qrr_detail.update(
+                q0=mf.Qrr - Qrr_base,
+                decontaminated=True,
+                q0_basis='Qoss(VR)-calibrated-global-fraction',
+                double_booking_state='exactly-once',
+                double_booking_evidence=qoss_detail['evidence_quality'])
+            qrr_src = 'datasheet-flat-decontaminated'
+        except LMFitError as e:
+            qrr_detail['decontamination_reason'] = str(e)
     if qrr_didt is not None:
-        from dslib.qrr_model import LMFitError
         assert math.isfinite(qrr_didt) and qrr_didt > 0, ('qrr_didt', qrr_didt)
         # Qoss at the datasheet's REVERSE TEST voltage, so the single-point fit can be
         # calibrated on diffusion charge alone (see the Qrr_base selection below). NaN ->
         # None -> no decontamination, reported via Qrr_decont.
-        vr = (getattr(mf, 'qrr_cond', None) or {}).get('VR')
-        q_vr = qoss_at(mf, vr)
         try:
-            qrr_detail = mf.Qrr_op(IF=dc.Io_min, didt=qrr_didt, Tj=25.0, detail=True,
-                                   qoss_vr=None if math.isnan(q_vr) else q_vr)
+            op_detail = mf.Qrr_op(
+                IF=dc.Io_min, didt=qrr_didt, Tj=25.0, detail=True,
+                qoss_vr=None if math.isnan(q_vr) else q_vr)
             # detail=True is a mapping by contract; assert it rather than let a future
             # signature slip put a bare float into Qrr_base and multiply on quietly.
-            assert isinstance(qrr_detail, dict), qrr_detail
+            assert isinstance(op_detail, dict), op_detail
+            # Qrr_op owns the fit; this layer owns the Qoss measurement provenance.
+            # Merge instead of replacing so both survive into P_rr and the CSV.
+            qrr_detail.update(op_detail)
+            qrr_detail['qoss_vr'] = None if math.isnan(q_vr) else q_vr
+            method = qrr_detail.get('method')
+            if qrr_detail.get('decontaminated'):
+                qrr_detail['q0_basis'] = (
+                    'two-point-Qrr-fit' if method == '2pt'
+                    else 'Qoss(VR)-calibrated-global-fraction')
+                qrr_detail['double_booking_state'] = 'exactly-once'
+                qrr_detail['double_booking_evidence'] = (
+                    PASS if method in ('2pt', 'zero')
+                    else qoss_detail['evidence_quality'])
+            else:
+                qrr_detail['q0_basis'] = 'none'
+                qrr_detail['double_booking_state'] = 'UNVERIFIED'
+                qrr_detail['double_booking_evidence'] = 'UNVERIFIED'
             # DIFFUSION charge, not the measured-equivalent headline. The datasheet Qrr
             # integral also contains the diode's own junction displacement charge, and
             # P_coss below already books that (doubled) for this same part — booking the
@@ -419,7 +528,9 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             # flat value (that is what the caller had before asking), but never let it
             # pass as an operating-point number — see the Qrr_src contract above.
             qrr_src = 'datasheet-flat-nofit'
-            qrr_detail = dict(nofit_reason=str(e))
+            # Keep the already-applied flat-path Qoss subtraction and all of its
+            # evidence fields. Replacing this dict used to hide a numerical correction.
+            qrr_detail['nofit_reason'] = str(e)
 
     assert 0 <= qrr_factor <= 1, ('qrr_factor', qrr_factor)
     Qrr_eff = Qrr_base * Qrr_temp_rise * qrr_factor  # Qrr temp rise 63 + ((75-25) * 0.25) ~1.2
@@ -435,18 +546,13 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0
 
-    P_coss, qoss = p_coss_eoss(dc, mf)
-    # charge in Coss is recovered during discharge
-    # the only loss is during turn-off through the charge "resistor"
-    # P_coss = (V_bus * Qoss - Eoss) * f
-    # With Coss ∝ 1/√V rescaled from datasheet coss_v0 (see HS path):
-    #   Qoss = 2 * Coss * √(coss_v0 * V_bus)
-    #   Eoss = (2/3) * Coss * √coss_v0 * V_bus^(3/2)
-    # → P_coss = (4/3) * Coss * √coss_v0 * V_bus^(3/2) * f
-    #
-    # LS Coss loss = (E_supply - E_stored) × f = 2 × HS loss
-    # See: Erickson, Fundamentals of Power Electronics, §4.3
-    P_coss = P_coss * 2  # charge is recovered, but charging over a resistance path, so it is doubled
+    coss_transition = coss_transition or buck_ls_hard_transition(
+        dc.Vi, accounting_owner=coss_owner,
+        hysteresis_accounting_owner=coss_hysteresis_owner)
+    coss_report = p_coss_eoss(
+        dc, mf, transition=coss_transition, hysteresis=coss_hysteresis,
+        Tj=Tj, gate_bias_v=gd.Voff, detail=True)
+    P_coss = coss_report.p_accounted_w
 
     return SwitchPowerLoss(
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
@@ -467,12 +573,29 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
                       # whether that exclusion rested on data or defaulted to zero.
                       **(dict(Qrr_q0=qrr_detail.get('q0'),
                               Qrr_decont=qrr_detail.get('decontaminated'),
-                              Qrr_n_tau=qrr_detail.get('n_tau_state'))
+                              Qrr_n_tau=qrr_detail.get('n_tau_state'),
+                              Qrr_qoss_vr=qrr_detail.get('qoss_vr'),
+                              Qrr_q0_basis=qrr_detail.get('q0_basis'),
+                              Qrr_double_booking=qrr_detail.get(
+                                  'double_booking_state',
+                                  ('exactly-once' if qrr_detail.get('decontaminated')
+                                   else 'UNVERIFIED')),
+                              Qrr_double_booking_evidence=qrr_detail.get(
+                                  'double_booking_evidence', 'UNVERIFIED'),
+                              Qrr_qoss_model_state=qrr_detail.get('qoss_model_state'),
+                              Qrr_qoss_evidence=qrr_detail.get('qoss_evidence'),
+                              Qrr_qoss_provenance=qrr_detail.get('qoss_provenance'),
+                              Qrr_qoss_extrapolation_flags=qrr_detail.get(
+                                  'qoss_extrapolation_flags'),
+                              Qrr_qoss_conditions=qrr_detail.get('qoss_conditions'))
                          if qrr_detail and 'q0' in qrr_detail else {}),
+                      **(dict(Qrr_decont_reason=qrr_detail['decontamination_reason'])
+                         if qrr_detail and 'decontamination_reason' in qrr_detail else {}),
                       **(dict(qrr_nofit=qrr_detail['nofit_reason'])
                          if qrr_detail and 'nofit_reason' in qrr_detail else {})),
             P_gd=(dict(Qg=mf.Qg)),
-            P_coss=dict(Coss=mf.Coss, Qoss=qoss),
+            P_coss=dict(Coss=mf.Coss, Coss_Vds=mf.Coss_Vds,
+                        **coss_report.as_dict()),
         )
     )
 
