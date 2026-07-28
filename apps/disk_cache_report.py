@@ -24,12 +24,11 @@ is `--orphans`, and only because "the source file this key was derived from no l
 exists" is a fact rather than a judgement -- with the caveat, enforced by a default-off
 `--include-foreign`, that a path outside this repo may merely be an unmounted checkout.
 
-Every delete goes through `_rmtree_within_cache`, which refuses anything resolving outside
-data/cache. It does NOT use `dslib.cache.delete_disk_cache_tree` -- originally because that
-function's rmtree was commented out since 886fb686 (it logged "deleting" and removed
-nothing, which made an earlier version of this tool report bytes reclaimed that were still
-on disk). The library function has since been fixed; this tool keeps its own guarded delete
-for its CLI semantics (see the comment in delete()).
+`--delete` routes through `dslib.cache.delete_disk_cache_tree` / `resolve_cache_tree_path`
+(fixed and calibrated 2026-07-28 -- its rmtree had been commented out since 886fb686, which
+once made this tool report bytes reclaimed that were still on disk). `--orphans` still uses
+the local `_rmtree_within_cache`, because its paths are reconstructed from key strings, not
+caller prefixes. Both refuse anything resolving outside data/cache.
 
 Cost note: it stats files, it never unpickles them. `exp` lives inside the pickle, so
 reporting true expiry would mean reading all ~17 GB back through pickle -- hours -- to learn
@@ -213,7 +212,17 @@ def orphans(apply_, include_foreign=False):
 
 
 def delete(prefix, apply_):
-    path = os.path.join(cache_dir, prefix)
+    # Both the dry-run measurement and the apply resolve the prefix through the SAME
+    # library helper, so what gets counted is provably what gets deleted. This used to
+    # be os.path.join here vs string-concat in the library -- for an absolute prefix
+    # those name DIFFERENT trees (join discards cache_dir entirely, so the dry run
+    # counted e.g. the real /etc while the apply was refused). ValueError -> SystemExit
+    # keeps the CLI's refusal style.
+    from dslib.cache import delete_disk_cache_tree, resolve_cache_tree_path
+    try:
+        path = resolve_cache_tree_path(prefix)
+    except ValueError as e:
+        raise SystemExit(str(e))
     if not os.path.isdir(path):
         raise SystemExit('not a cache subtree: %s' % path)
 
@@ -229,15 +238,14 @@ def delete(prefix, apply_):
               'datasheet parse that is minutes per part.')
         return
 
-    # Deliberately NOT dslib.cache.delete_disk_cache_tree. Historically its shutil.rmtree
-    # was commented out (since 886fb686, 2025-09-16), so routing this through it made
-    # --delete --apply print a reclaim total for bytes that were still on disk -- a
-    # destructive command reporting success it had not earned. That function has since
-    # been fixed (real rmtree + containment, 2026-07-28), but this tool keeps its own
-    # _rmtree_within_cache: it already carries the dry-run/size accounting around the
-    # delete, and its SystemExit refusals fit a CLI better than ValueError.
-    if not _rmtree_within_cache(path, 'delete %r' % prefix):
-        raise SystemExit('nothing deleted: %s is not a directory' % path)
+    # Routed through dslib.cache.delete_disk_cache_tree since 2026-07-28. It spent a year
+    # with its rmtree commented out (886fb686) -- logging 'deleting' while removing
+    # nothing, which made an earlier --delete --apply print a reclaim total for bytes
+    # still on disk -- and this tool carried its own guarded delete meanwhile. Now that
+    # the library function really deletes, is containment-checked, and is calibrated by
+    # test/unit/test_delete_disk_cache_tree.py, there is no reason for two deleters.
+    if not delete_disk_cache_tree(prefix):
+        raise SystemExit('nothing deleted: %s vanished between dry run and apply' % path)
     print('deleted %s (%s reclaimed)' % (path, human(b)))
 
 

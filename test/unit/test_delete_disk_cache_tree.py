@@ -165,6 +165,49 @@ def test_module_tree_roundtrip_via_real_writer(sandbox):
     assert calls == [3], 'cache tree was deleted, so this must recompute'
 
 
+def _load_report_tool():
+    import importlib.util
+    repo = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    spec = importlib.util.spec_from_file_location(
+        'disk_cache_report', os.path.join(repo, 'apps', 'disk_cache_report.py'))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_report_tool_delete_wiring(sandbox, capsys):
+    """apps/disk_cache_report.py --delete routes through the library deleter.
+
+    Same calibration bar as the library: the apply is seen to delete, the dry
+    run is seen NOT to, and an escaping prefix is refused with the target
+    surviving (as SystemExit -- the CLI's refusal style)."""
+    tmp_path, cdir = sandbox
+    tool = _load_report_tool()
+
+    sub = cdir / 'tree'
+    entry = sub / 'a' / 'entry.pickle'
+    entry.parent.mkdir(parents=True)
+    entry.write_bytes(b'x' * 10)
+
+    tool.delete('tree', apply_=False)
+    assert entry.exists(), 'dry run must not delete'
+    assert 'DRY RUN' in capsys.readouterr().out
+
+    tool.delete('tree', apply_=True)
+    assert not sub.exists()
+    assert 'deleted' in capsys.readouterr().out
+
+    victim = tmp_path / 'victim'
+    victim.mkdir()
+    (victim / 'keep.txt').write_text('keep')
+    with pytest.raises(SystemExit):
+        tool.delete('../victim', apply_=True)
+    assert (victim / 'keep.txt').exists()
+
+    with pytest.raises(SystemExit):
+        tool.delete('gone', apply_=True)
+
+
 def test_module_prefix_matches_writer_key():
     """The prefix is the exact head of every key disk_cache_key builds."""
     mod = sys.modules[__name__]

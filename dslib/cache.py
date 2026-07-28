@@ -179,6 +179,24 @@ def _get_fn(key, ext):
     return path
 
 
+def resolve_cache_tree_path(prefix):
+    """Validate a cache-tree prefix and return the real directory it names.
+
+    Shared by delete_disk_cache_tree and apps/disk_cache_report.py so that
+    what a dry run measures and what an apply deletes is provably the same
+    path. Raises ValueError for junk prefixes and for anything resolving
+    outside data/cache; never touches the tree itself.
+    """
+    if not isinstance(prefix, str) or len(prefix) <= 1:
+        raise ValueError('refusing cache-tree delete: bad prefix %r' % (prefix,))
+    root = os.path.realpath(cache_dir)
+    real = os.path.realpath(root + "/" + prefix)
+    if real == root or not real.startswith(root + os.sep):
+        raise ValueError('refusing cache-tree delete: prefix %r resolves to %s, outside %s'
+                         % (prefix, real, root))
+    return real
+
+
 def delete_disk_cache_tree(prefix):
     """Delete the cache subtree at ``data/cache/<prefix>/**``.
 
@@ -200,13 +218,7 @@ def delete_disk_cache_tree(prefix):
     reparse, so a half-deleted subtree must not look fully deleted.
     """
     import shutil
-    if not isinstance(prefix, str) or len(prefix) <= 1:
-        raise ValueError('refusing cache-tree delete: bad prefix %r' % (prefix,))
-    root = os.path.realpath(cache_dir)
-    real = os.path.realpath(root + "/" + prefix)
-    if real == root or not real.startswith(root + os.sep):
-        raise ValueError('refusing cache-tree delete: prefix %r resolves to %s, outside %s'
-                         % (prefix, real, root))
+    real = resolve_cache_tree_path(prefix)
     if not os.path.exists(real):
         return False
     if not os.path.isdir(real):
