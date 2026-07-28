@@ -622,12 +622,26 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
              errors=0, fresh_skip=0, quota_stop=0)
 
     todo = []
+    fresh = []
     for mfr, mpn in parts:
         existing = prices_db.load_obj((mfr, mpn, DIGIKEY, currency))
         if existing is not None and (now - existing.fetched_at) <= max_age:
             n['fresh_skip'] += 1
+            fresh.append(existing)
         else:
             todo.append((mfr, mpn))
+
+    if fresh:
+        # heal the history side table for fresh-skipped records: prices_db.add lands
+        # BEFORE record_history by design, so a crash/error between them leaves a
+        # fresh record whose history is unwritable until expiry (252 such keys found
+        # in review). record_history is content-hash idempotent -- healthy records
+        # cost one hash lookup, stranded ones get their snapshot appended now.
+        healed = record_history(fresh)
+        if healed:
+            print('digikey: healed %d missing history snapshot(s) for fresh records'
+                  % healed)
+
     if not todo:
         return n
 

@@ -660,6 +660,27 @@ def test_history_hash_tolerates_none_packaging_and_dup_skus(tmp_path):
     assert len(read_history('infineon', 'X1', path=hp)) == 3
 
 
+def test_fresh_skip_heals_missing_history(monkeypatch, db, tmp_path):
+    # a crash between prices_db.add and record_history leaves a fresh record whose
+    # history cannot be written until expiry (fresh_skip short-circuits) -- the
+    # fresh-skip path now reconciles via the idempotent content hash
+    import dslib.prices.digikey_api as dk
+    from dslib.prices.history import read_history
+    hp = str(tmp_path / 'hist.sqlite3')
+    monkeypatch.setattr(dk, 'prices_db', db)
+    monkeypatch.setattr('dslib.prices.history._PATH', hp)
+
+    db.add([_rec(offers=[_offer([(1, 1.0)])])])  # store write WITHOUT history (crash)
+    assert read_history('infineon', 'X1', path=hp) == []
+
+    n = dk.fetch_digikey_prices([('infineon', 'X1')])  # all fresh: no keys needed
+    assert n['fresh_skip'] == 1
+    assert len(read_history('infineon', 'X1', path=hp)) == 1  # healed
+    # second run: hash matches, nothing re-appended
+    dk.fetch_digikey_prices([('infineon', 'X1')])
+    assert len(read_history('infineon', 'X1', path=hp)) == 1
+
+
 def test_history_negative_status_is_a_datapoint(tmp_path):
     from dslib.prices.history import read_history, record_history
     hp = str(tmp_path / 'hist.sqlite3')
