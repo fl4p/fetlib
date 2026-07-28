@@ -16,9 +16,13 @@ own `source='layout'` tag, and they rank BELOW the hand-curated table:
     qrr_points (per-row) > qrr_conditions (hand-read) > THIS > parsed cond keys
 
 THE PRIMARY SAFETY PROPERTY is a value cross-check, not regex confidence. The extractor
-also reads the Qrr and trr VALUES out of the same block and requires them to match what
-the DB parsed independently, so a condition taken from a different block than the charge
-is dropped -- 229 were, in the run that produced the shipped module.
+reads the Qrr and trr VALUES out of each recovery block and serves the conditions of the
+block that PRINTS the DB's value -- so conditions are attributed to the same block as
+the charge. On single-block sheets that is an independent agreement check; on
+multi-di/dt sheets it is a selector (agreement with the chosen block holds by
+construction), guarded by the trr co-match and by refusing a charge that matches blocks
+with different conditions. The earlier first-block-only form of this check rejected
+209-229 multi-block parts per run as 'wrong block'.
 
 WHAT THAT CROSS-CHECK DOES NOT COVER, because getting this wrong shipped six bad entries:
 it is only independent for cross-ROW and cross-BLOCK errors. When the DB value and the
@@ -104,14 +108,18 @@ def _values_in(line):
 
 
 def extract(body):
-    """Layout text -> dict(IF, didt, VR, Tj, qrr_seen, trr_seen), or None."""
+    """Layout text -> dict(IF, didt, VR, Tj, qrr_seen, trr_seen), or None.
+
+    FIRST block only. This is the right contract for --calibrate (the hand-read
+    entries are anchored to it) and for single-block sheets; harvest() selects among
+    ALL blocks by value instead — see extract_all_blocks."""
     r = extract_with_block(body)
     return r[0] if r else None
 
 
 def extract_with_block(body):
-    """(conditions, block_lines) or None — the block being the exact text the conditions
-    were read from.
+    """First (conditions, block_lines) or None — the block being the exact text the
+    conditions were read from.
 
     Verification tooling MUST go through this rather than re-deriving the block, or it
     shows a reader different evidence than the code used. The first cut of the sample
@@ -120,6 +128,23 @@ def extract_with_block(body):
     for IAUTN12S5N018GATMA1 — whose real conditions came from the table further in.
     Evidence that does not match what ran is worse than no evidence.
     """
+    for r in iter_blocks(body):
+        return r
+    return None
+
+
+def extract_all_blocks(body):
+    """Every recovery block on the sheet, in document order.
+
+    extract()/extract_with_block() stop at the FIRST block, which on multi-di/dt
+    sheets is often not the one the DB's Qrr was parsed from — the value cross-check
+    in harvest() then refused the part: 229 'Qrr value mismatch (wrong block)'
+    rejections in the run that shipped the 409-entry module. Selection among these
+    blocks (by value match against the DB) happens in harvest(), not here."""
+    return list(iter_blocks(body))
+
+
+def iter_blocks(body):
     lines = body.split('\n')
     for i, line in enumerate(lines):
         if not RE_QRR_ROW.search(line):
@@ -141,9 +166,11 @@ def extract_with_block(body):
                 # read off line `i`, which is always right for SOME block -- so the window
                 # has to refuse it structurally rather than be caught downstream.
         hi = min(len(lines), i + 3)        # continuation lines below the Qrr row
-        for j in range(i + 1, hi):         # ... but never past a new section
-            if RE_SECTION_BREAK.search(lines[j]):
-                hi = j
+        for j in range(i + 1, hi):         # ... but never past a new section OR the
+            if (RE_SECTION_BREAK.search(lines[j])   # next recovery block: its rows are
+                    or RE_TRR_ROW.search(lines[j])  # not continuations of this cell,
+                    or RE_QRR_ROW.search(lines[j])):  # and a 'TJ = 150 C' printed there
+                hi = j                                # must not stamp THIS block's Tj
                 break
         flat = re.sub(r'[ \t]+', ' ', '\n'.join(lines[lo:hi]))
         d, f_, v, t = (RE_DIDT.search(flat), RE_IF.search(flat),
@@ -151,17 +178,26 @@ def extract_with_block(body):
         if not (d and f_):
             continue
         qv = _values_in(re.sub(r'^[^|]*?charge\D*', '', line, flags=re.I))
+        # The DB stores Qrr in nC; sheets printing uC (vishay '126 189 uC', ao '1.18
+        # uC', st '0.9 uC') made the value cross-check compare across units and refuse
+        # every such part. Normalise on the printed unit -- last charge-unit token on
+        # the line, after the values ('/us' has no C, and the 'x C' of a temperature is
+        # preceded by a degree sign, not a prefix). A bare/mangled 'C' (the IRFB38N20D
+        # lost-micro class) matches no prefix and stays UNSCALED, so those sheets keep
+        # refusing instead of guessing a magnitude.
+        u = re.findall(r'([nuµμ])\s*C(?![a-zA-Z])', line)
+        if u and u[-1] in 'uµμ':
+            qv = [x * 1e3 for x in qv]
         tv = []
         for j in range(lo, hi):
             if RE_TRR_ROW.search(lines[j]):
                 tv = _values_in(re.sub(r'^[^|]*?time\D*', '', lines[j], flags=re.I))
                 break
-        return (dict(IF=abs(_f(f_.group(1))), didt=abs(_f(d.group(1))) * 1e6,
-                     VR=_f(v.group(1)) if v else None,
-                     Tj=_f(t.group(1)) if t else 25.0,
-                     qrr_seen=qv, trr_seen=tv),
-                [re.sub(r'\s+', ' ', x).strip() for x in lines[lo:hi] if x.strip()])
-    return None
+        yield (dict(IF=abs(_f(f_.group(1))), didt=abs(_f(d.group(1))) * 1e6,
+                    VR=_f(v.group(1)) if v else None,
+                    Tj=_f(t.group(1)) if t else 25.0,
+                    qrr_seen=qv, trr_seen=tv),
+               [re.sub(r'\s+', ' ', x).strip() for x in lines[lo:hi] if x.strip()])
 
 
 def calibrate():
@@ -189,6 +225,47 @@ def calibrate():
 
 def _near(v, lst, rel=0.02):
     return any(abs(v - x) <= max(rel * abs(v), 0.51) for x in (lst or []))
+
+
+def select_block(blocks, qrr, trr):
+    """(conditions, None) from the recovery block that PRINTS the DB's (qrr, trr), or
+    (None, rejection reason).
+
+    This replaces the first-block-only cross-check, which insisted the DB matched
+    whatever block came first on the sheet -- multi-di/dt sheets put the DB's charge in
+    a later block, and that insistence cost 209-229 parts per run as 'wrong block'.
+
+    Selecting by value changes what the cross-check IS: for the chosen block, agreement
+    holds by construction, not as an independent verdict. What it certifies is
+    ATTRIBUTION -- the conditions come from the recovery block that prints the DB's
+    charge -- which is the property the check existed to protect. Residual risks and
+    their guards: a coincidental numeric match in a different recovery block (trr must
+    then also co-match where printed, and a charge matching blocks with DIFFERENT
+    conditions is refused as ambiguous rather than resolved first-wins -- a wrong test
+    point is worse than a missing one); a match against text that is not a recovery
+    block cannot happen, because every candidate is anchored to a 'reverse recovery
+    charge' row. The caller's IRRM band and Qrr/IF floor still gate the survivor."""
+    if not blocks:
+        return None, 'no recovery block in layout text'
+    qrr_hits = [c for c, _blk in blocks if _near(qrr, c['qrr_seen'])]
+    if not qrr_hits:
+        return None, 'Qrr value mismatch (no block prints the DB value)'
+    matches = [c for c in qrr_hits if not c['trr_seen'] or _near(trr, c['trr_seen'])]
+    if not matches:
+        return None, 'trr value mismatch'
+    # _near's 2% band exists for parse rounding; ambiguity means EQUALLY close, not
+    # merely both-within-band. FDH055N15A prints 342 nC @120 A and 348 nC @30 A -- the
+    # DB stored 342 exactly, 348 is inside the band, and refusing both threw away a
+    # part the value cross-check had always attributed correctly. Keep only the
+    # closest-printing block(s); refuse only when equally close prints disagree on
+    # conditions.
+    def dist(c):
+        return min(abs(qrr - x) for x in c['qrr_seen'])
+    best = min(dist(c) for c in matches)
+    closest = [c for c in matches if dist(c) <= best + max(1e-9 * abs(qrr), 1e-12)]
+    if len({(c['IF'], c['didt'], c['VR'], c['Tj']) for c in closest}) > 1:
+        return None, 'ambiguous: DB Qrr matches blocks with different conditions'
+    return closest[0], None
 
 
 def harvest():
@@ -238,15 +315,9 @@ def harvest():
         if not os.path.exists(pdf):
             stats['no pdf'] += 1
             continue
-        c = extract(layout_text(pdf))
-        if not c:
-            stats['no recovery block in layout text'] += 1
-            continue
-        if not _near(qrr, c['qrr_seen']):
-            stats['Qrr value mismatch (wrong block)'] += 1
-            continue
-        if c['trr_seen'] and not _near(trr, c['trr_seen']):
-            stats['trr value mismatch'] += 1
+        c, why = select_block(extract_all_blocks(layout_text(pdf)), qrr, trr)
+        if c is None:
+            stats[why] += 1
             continue
         if not (0.05 <= c['IF'] <= 3000) or not (1e6 <= c['didt'] <= 1e11):
             stats['out of band'] += 1
@@ -295,9 +366,12 @@ hand-curated dslib/qrr_conditions.py:
 
     qrr_points (per-row) > qrr_conditions (hand-read) > THIS > parsed cond keys
 
-Every entry here satisfied all of: the Qrr (and where present trr) value in the block
-matched what the DB independently parsed, the value lay in a physical band, a
-Lauritzen-Ma fit succeeded, and the implied IRRM stayed under 5x IF.
+Every entry here satisfied all of: its conditions come from the recovery block that
+prints the DB's Qrr (and, where printed there, trr) value -- an independent agreement
+check on single-block sheets, a same-block attribution guarantee on multi-block ones,
+with a charge matching blocks of differing conditions refused as ambiguous -- the value
+lay in a physical band, a Lauritzen-Ma fit succeeded, and the implied IRRM stayed under
+5x IF.
 """
 
 QRR_LAYOUT_CONDITIONS = {
