@@ -9,11 +9,19 @@ def write_csv(df: 'pd.DataFrame', path: str, sort_by=['P_tot', 'Vds_max', 'mfr',
             by.remove(b)
     df.sort_values(by=by, inplace=True, kind='mergesort')
 
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    # Full-precision sidecar, written BEFORE the display rounding below mutates the
+    # frame. The display CSV clips every float to 3 s.f. (float_format) and P_*/FoM
+    # columns to power_value_digits (2), so e.g. P_rr = Vi*f*Qrr_eff can only be
+    # re-derived from it to ~0.5% -- audits recompute from the sidecar instead.
+    full = (path[:-len('.csv')] if path.endswith('.csv') else path) + '.full.csv'
+    df.to_csv(full, index=False)
+
     for col in df.columns:
         if col.startswith('P_') or col.startswith('FoM'):
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, power_value_digits) if isinstance(v, float) else v)
 
-    os.makedirs(os.path.dirname(path), exist_ok=True)
     return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
 
 
