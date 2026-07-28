@@ -102,11 +102,21 @@ def main():
     # that never started serving. A <=30 s straggler is harmless; a half-finished restart
     # is not.
     if not args.no_tabula_watchdog:
-        subprocess.Popen(
-            [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                                          'tabula_watchdog.py'),
-             '--watch-pid', str(os.getpid())],
-            stdout=sys.stderr, stderr=subprocess.STDOUT)
+        # Failure to SPAWN the supervisor must be loud but not fatal: stdout=sys.stderr
+        # needs a real file descriptor, and pytest capture / notebook kernels / logging
+        # wrappers replace sys.stderr with fd-less streams -- crashing the whole sweep
+        # before its first parse over a missing watchdog inverts the priorities. The
+        # sweep ran unguarded for years; it degrades, it does not die.
+        try:
+            subprocess.Popen(
+                [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                              'tabula_watchdog.py'),
+                 '--watch-pid', str(os.getpid())],
+                stdout=sys.stderr, stderr=subprocess.STDOUT)
+        except Exception as e:
+            print('WARNING: tabula watchdog did not start (%s: %s) -- sweeping '
+                  'UNSUPERVISED; a wedged Tabula will need a manual restart'
+                  % (type(e).__name__, e))
 
     db = datasheets_db.load()
     before_fields = _n_fields(db)

@@ -113,7 +113,16 @@ def run_loop(probe_fn, restart_fn, keep_running_fn, sleep_fn,
         fails += 1
         log('probe failed (%d/%d)' % (fails, threshold))
         if fails >= threshold:
-            restart_fn()
+            # A raising restart must not kill the loop. main() catches only
+            # KeyboardInterrupt, and reparse_all deliberately does not supervise this
+            # process -- so an uncaught OSError here would end the watchdog silently and
+            # the rest of a multi-hour sweep would run unguarded: the supervisor failing
+            # the exact way it exists to prevent. Log it, keep the counter, keep probing;
+            # the next threshold crossing tries again.
+            try:
+                restart_fn()
+            except Exception as e:
+                log('restart FAILED: %s: %s -- still watching' % (type(e).__name__, e))
             fails = 0
 
 

@@ -196,3 +196,26 @@ def test_merge_keeps_the_stored_discovered_part():
     fresh2.part = _Discovered()
     plain = _ds('X', Rds_on=(16.0, 'mOhm'))
     assert merge_keeping_absent_symbols(plain, fresh2).part is fresh2.part
+
+
+def test_merge_part_test_is_the_type_not_a_specs_proxy():
+    """The reviewer's break of the first version: DiscoveredPart.__init__ allows
+    specs=None for a REAL part, so `fresh.part.specs is None` misread a re-discovered
+    part carrying a corrected ds_url/package as bare and kept the STALE stored part.
+    Bare-ness is what MpnMfr means; the merge must ask the type."""
+    from dslib.discovery import DiscoveredPart
+
+    stored = _ds('X', Rds_on=(16.0, 'mOhm'))
+    stored.part = DiscoveredPart('mfr', 'X', ds_url='http://OLD-DEAD-URL',
+                                 package='TO-220', specs=None)
+    fresh = _ds('X', Rds_on=(15.0, 'mOhm'))
+    fresh.part = DiscoveredPart('mfr', 'X', ds_url='http://NEW-CORRECT-URL',
+                                package='TO-220FP', specs=None)
+
+    merged = merge_keeping_absent_symbols(stored, fresh)
+    assert merged.part is fresh.part, 'real specs-less fresh part displaced by stale one'
+
+    # and the case the guard exists for still holds: bare MpnMfr fresh keeps stored
+    bare = _ds('X', Rds_on=(15.0, 'mOhm'))  # _ds builds an MpnMfr part
+    merged2 = merge_keeping_absent_symbols(stored, bare)
+    assert merged2.part is stored.part

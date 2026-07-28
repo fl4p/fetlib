@@ -1734,8 +1734,16 @@ def merge_keeping_absent_symbols(stored: 'DatasheetFields',
     # catalog-witnessed population collapsed 5562 -> 1442 before anything noticed. The
     # symbol-level integrity check was blind to it by construction, so this cannot be
     # left to the caller.
-    if (getattr(getattr(fresh, 'part', None), 'specs', None) is None
-            and getattr(getattr(stored, 'part', None), 'specs', None) is not None):
+    #
+    # The test is the TYPE, not `.specs is None`. The first version used the specs proxy
+    # and a reviewer broke it immediately: DiscoveredPart.__init__ allows specs=None for a
+    # real, non-bare part, so a re-discovered part carrying a corrected ds_url/package but
+    # no specs yet was silently displaced by the STALE stored part -- the same
+    # signature-vs-proxy hole this function's own docstring warns about. Bare-ness is what
+    # MpnMfr means; ask that.
+    if (isinstance(getattr(fresh, 'part', None), MpnMfr)
+            and getattr(stored, 'part', None) is not None
+            and not isinstance(stored.part, MpnMfr)):
         merged.part = stored.part
 
     for sym, lst in stored.fields_lists.items():

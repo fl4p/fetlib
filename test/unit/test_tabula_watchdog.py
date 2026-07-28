@@ -88,3 +88,25 @@ def test_engage_gate_refuses_when_tabula_was_never_running(monkeypatch):
     monkeypatch.setattr(W, 'app_pid', lambda: None)
     monkeypatch.setattr(sys, 'argv', ['tabula_watchdog.py'])
     assert W.main() == 1
+
+
+def test_raising_restart_does_not_kill_the_loop():
+    """Reviewer finding: main() catches only KeyboardInterrupt and nothing supervises
+    the watchdog, so an uncaught OSError from restart() ended it silently -- the
+    supervisor failing exactly the way it exists to prevent. It must log and keep
+    watching, and a later wedge must still get a restart attempt."""
+    attempts = []
+
+    def bad_then_good_restart():
+        attempts.append(1)
+        if len(attempts) == 1:
+            raise OSError('open -a failed')
+
+    seq = [False, False, True, False, False]  # wedge, recover, wedge again
+    tick = [0]
+    run_loop(lambda: seq[tick[0] - 1],
+             bad_then_good_restart,
+             lambda: tick[0] < len(seq),
+             lambda _: tick.__setitem__(0, tick[0] + 1),
+             interval=0, threshold=2, log=lambda m: None)
+    assert len(attempts) == 2, 'loop died on the raising restart instead of continuing'
