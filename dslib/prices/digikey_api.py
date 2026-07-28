@@ -441,7 +441,18 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
             continue
         if not ladder:
             continue
-        currency = ((d.get('search_locale_used') or {}).get('currency')) or currency
+        # search_locale_used is PER DETAIL: the record's currency is locked by the
+        # first accepted priced detail, and any later detail in a different currency
+        # is skipped -- overwriting the currency while accumulating ladders labeled a
+        # USD price as EUR (no-currency-mixing invariant, final review pass)
+        d_currency = ((d.get('search_locale_used') or {}).get('currency')) or requested_currency
+        if not offers:
+            currency = d_currency
+        elif d_currency != currency:
+            print('digikey batch %s: detail %r is %s but record is %s, skipping '
+                  '(one currency per record)'
+                  % (mpn, d.get('digi_key_part_number'), d_currency, currency))
+            continue
         url = url or d.get('product_url')
         matched_mpns.append(d.get('manufacturer_part_number') or '')
         offers.append(Offer(

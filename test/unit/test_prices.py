@@ -390,6 +390,18 @@ def test_batch_parse_suffix_tier_and_audit():
     assert parse_digikey_batch('onsemi', 'X9', raw) is None  # X1TR does not extend X9
 
 
+def test_batch_parse_never_mixes_currencies_across_details():
+    # search_locale_used is per detail: a EUR detail must not join a USD record's
+    # ladder (nor relabel it) -- currency locks at the first accepted priced detail
+    from dslib.prices.digikey_api import parse_digikey_batch
+    usd = _batch_detail(sku='USD1', pricing=[{'break_quantity': 1, 'unit_price': 1.0}])
+    eur = _batch_detail(sku='EUR1', pricing=[{'break_quantity': 1, 'unit_price': 0.5}])
+    eur['search_locale_used'] = {'currency': 'EUR'}
+    rec = parse_digikey_batch('infineon', 'X1', _batch_raw([usd, eur]))
+    assert rec.currency == 'USD'
+    assert [o.sku for o in rec.offers] == ['USD1']  # the EUR ladder stayed out
+
+
 def test_batch_parse_invalid_pricing_entries_skip_detail():
     # nonempty pricing without valid breaks is a schema anomaly: the detail is
     # skipped so the part falls through to the keyword path -- never priced wrong,
