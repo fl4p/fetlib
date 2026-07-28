@@ -42,6 +42,17 @@ _STORAGE_BASE = os.path.realpath(os.path.join(os.path.dirname(__file__), '..'))
 _env_lock = threading.Lock()  # SDK TokenHandler reads process-global env
 
 
+class DkAuthFailed(RuntimeError):
+    """A 401 that survived one client rebuild: this key's auth is broken for the run.
+    The worker must retire the key GLOBALLY and re-queue the job -- booking the job as
+    an error would let one bad key drain the whole queue as errors while a healthy
+    key sits idle."""
+
+    def __init__(self, mpn, client_id):
+        super().__init__('digikey auth failed (401 after client rebuild) for %r on '
+                         'key %s...' % (mpn, client_id[:6]))
+
+
 class DkRateLimited(RuntimeError):
     """A 429 that survived the burst backoff -- almost certainly the key's 1,000/day
     quota (resets 00:00 UTC). Retrying on THIS key is pointless until then."""
@@ -168,10 +179,12 @@ def _dk_keyword_search_raw(mpn: str, currency: str = 'USD',
                 x_digikey_locale_site='US', x_digikey_locale_language='en',
                 x_digikey_locale_currency=currency)
         except ApiException as e:
-            if e.status == 401 and not retried_auth:
-                retried_auth = True   # access token expired mid-run: rebuild, retry
-                _build_client(key)
-                continue
+            if e.status == 401:
+                if not retried_auth:
+                    retried_auth = True   # access token expired mid-run: rebuild, retry
+                    _build_client(key)
+                    continue
+                raise DkAuthFailed(mpn, key.client_id) from e
             if e.status == 429 and not retried_burst:
                 retried_burst = True  # maybe just the 120/min burst: one 10s backoff
                 time.sleep(10)
@@ -630,6 +643,14 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
                 time.sleep(wait)
             try:
                 raw = _dk_keyword_search_raw(job[1], currency=currency, key=key)
+            except DkAuthFailed as e:
+                # auth-bad key: retire GLOBALLY and re-queue the job for a healthy
+                # key -- this job is fine, the KEY is broken
+                key.dead = True
+                jobs.put(job)
+                print('digikey: key %s retiring (%s)' % (key.label, e))
+                results.put(('key_dead', key, None))
+                return
             except DkRateLimited as e:
                 key.consecutive_429 += 1
                 jobs.put(job)  # this JOB is fine -- retry it on a surviving key

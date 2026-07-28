@@ -524,6 +524,37 @@ def test_batch_phase_quota_death_returns_all_unattempted(monkeypatch, db):
     assert k1.dead  # daily quota: dead for keyword too
 
 
+def test_keyword_pool_retires_auth_bad_key_and_requeues(monkeypatch, db):
+    # round 5: a key whose 401 survives the client rebuild must be retired GLOBALLY
+    # with its job re-queued -- previously each job on it was booked as an error, so
+    # one bad key could drain the whole queue while a healthy key sat idle
+    import dslib.prices.digikey_api as dk
+    k1, k2 = _FakeKey('k1'), _FakeKey('k2')
+    k1.limiter_lock, k2.limiter_lock = __import__('threading').Lock(), __import__('threading').Lock()
+    k1.next_slot = k2.next_slot = 0.0
+
+    def fake_raw(mpn, currency='USD', key=None):
+        if key.label == 'k1':
+            raise dk.DkAuthFailed(mpn, 'k1xxxx')
+        return {'fetched_at': NOW.isoformat(),
+                'response': {'exact_matches': [_dk_product(mpn=mpn)],
+                             'search_locale_used': {'currency': 'USD'}},
+                'rate_limit_remaining': 900}
+
+    monkeypatch.setattr(dk, 'discover_keys', lambda: [k1, k2])
+    monkeypatch.setattr(dk, '_build_client', lambda key: None)
+    monkeypatch.setattr(dk, '_dk_keyword_search_raw', fake_raw)
+    monkeypatch.setattr(dk, 'prices_db', db)
+    monkeypatch.setattr('dslib.prices.history.record_history',
+                        lambda recs, path=None: 0)
+
+    parts = [('infineon', 'A1'), ('infineon', 'A2'), ('infineon', 'A3')]
+    n = dk.fetch_digikey_prices(parts, use_batch=False, min_interval=0.0)
+    # every part priced via the healthy key; nothing lost to the auth-bad one
+    assert n['fetched'] == 3 and n['errors'] == 0 and n['quota_stop'] == 0
+    assert k1.dead and not k2.dead
+
+
 # ------------------------------------------------------------------ history
 def test_history_appends_changes_only_and_samples_stock_at_changes(tmp_path):
     from dslib.prices.history import read_history, record_history
