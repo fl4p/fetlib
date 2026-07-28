@@ -22,7 +22,7 @@ import datetime
 from collections import Counter
 from typing import Dict, List, Optional, Tuple
 
-from dslib import mfr_tag
+from dslib import mfr_tag, mfrs
 from dslib.prices import LCSC, Offer, PartOffers, prices_db
 
 # Brand ids verified via `--probe` (each asserts brandNameEn). The discovery china
@@ -147,9 +147,11 @@ async def _fetch_all_brand_rows(brand_names=None) -> List[Tuple[dict, datetime.d
                 'priced offer' % (name, brand_id, len(rows)))
         for r in rows:
             bn = r.get('brandNameEn') or ''
-            if bn and '_' in mfr_tag(bn) and ' ' in bn:
+            if bn and mfr_tag(bn) not in mfrs:
                 # mfr_tag fell through to the space->underscore fallback: this brand
-                # name is unknown to dslib.mfrs and will never join with ranked parts
+                # name is unknown to dslib.mfrs and will never join with ranked parts.
+                # (Checked against the registry, NOT for '_' in the tag -- canonical
+                # tags like good_ark contain underscores too and false-alarmed.)
                 fallthrough[bn] += 1
         rows_with_ts += [(r, fetched_at) for r in rows]
         print('lcsc harvest: brand %s (%d): %d rows, %d priced' %

@@ -37,7 +37,7 @@ mfrs = dict(
     ti='texas instruments', ao=('alpha & omega', 'aos'), nxp=('nxp', 'nexperia'),
     st='stmicroelectronics', toshiba='toshiba', vishay='vishay', diodes='diodes inc',
     diotec='diotec', rohm='rohm',
-    good_ark='good-ark',
+    good_ark=('good-ark', 'suzhou good-ark'),  # LCSC brandNameEn: 'Suzhou Good-Ark Elec'
     mcc=('micro commercial', 'mcc')
     , renesas='renesas',
     ts=('taiwan semiconductor', 'taiwansemi'),
