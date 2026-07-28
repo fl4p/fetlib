@@ -59,8 +59,18 @@ def parse_lcsc_row(row: dict) -> Optional[Tuple[Tuple[str, str, str, str], Offer
     mpn = row.get('productModel')
     if not mpn:
         return None
-    ladder = [(p['ladder'], p['usdPrice']) for p in row['productPriceList']
+    pricing = row['productPriceList']
+    ladder = [(p['ladder'], p['usdPrice']) for p in pricing
               if p.get('ladder') and p.get('usdPrice')]
+    if ladder and len(ladder) < len(pricing):
+        # same integrity rule as the DigiKey parsers: a mixed valid/malformed price
+        # list must not persist a PARTIAL ladder (a dropped break silently mis-prices
+        # at some qty). Logged and dropped; the brand-level schema-drift guard in
+        # _fetch_all_brand_rows catches the systematic case.
+        print('lcsc %s %s: %d/%d price entries malformed, dropping row (no partial '
+              'ladder)' % (row.get('brandNameEn'), mpn, len(pricing) - len(ladder),
+                           len(pricing)))
+        return None
     if not ladder:
         return None
     mfr = mfr_tag(row['brandNameEn'])

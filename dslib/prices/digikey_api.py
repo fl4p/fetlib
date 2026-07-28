@@ -302,17 +302,10 @@ def parse_digikey_offers(mfr: str, mpn: str, raw: dict,
             if pricing is None:
                 raise ValueError('digikey %s: variation %r lacks standard_pricing'
                                  % (mpn, pv.get('digi_key_product_number')))
-            ladder = [(pb['break_quantity'], pb['unit_price'])
-                      for pb in pricing
-                      if pb.get('break_quantity') and pb.get('unit_price')]
-            if pricing and not ladder:
-                # NONEMPTY pricing where no entry has valid break_quantity/unit_price
-                # is a schema/parse anomaly (renamed or nulled fields), not an empty
-                # offer -- booking no_eligible_offer here would persist a durable
-                # negative over a response-shape change. Errors write nothing.
-                raise ValueError('digikey %s: variation %r has %d pricing entries but '
-                                 'no valid (break_quantity, unit_price) pairs'
-                                 % (mpn, pv.get('digi_key_product_number'), len(pricing)))
+            # all-or-error: ANY malformed entry (renamed/nulled fields) raises -- a
+            # durable negative or a partially-persisted ladder would both misprice
+            ladder = _parse_ladder(pricing, 'digikey %s variation %r'
+                                   % (mpn, pv.get('digi_key_product_number')))
             if not ladder:  # explicitly empty pricing = a real, empty offer
                 continue
             offers.append(Offer(
@@ -334,6 +327,25 @@ def parse_digikey_offers(mfr: str, mpn: str, raw: dict,
     # audit trail for the match tiers: which catalog MPN(s) actually priced this part
     rec.matched_mpns = [m for m in matched_mpns if m.lower() != mpn.lower()] or None
     return rec
+
+
+def _parse_ladder(pricing: list, ctx: str) -> List[Tuple[int, float]]:
+    """ALL-OR-ERROR ladder parse: a pricing array mixing valid and malformed entries
+    raises instead of silently persisting the valid subset -- a partially-parsed
+    ladder is worse than none (a dropped 10-break makes price_at(100) read the
+    1-break price, silently overstating cost; a dropped 100-break understates it).
+    An explicitly empty array returns [] (a real, empty offer)."""
+    ladder, bad = [], 0
+    for pb in pricing:
+        bq, up = pb.get('break_quantity'), pb.get('unit_price')
+        if isinstance(bq, (int, float)) and bq >= 1 \
+                and isinstance(up, (int, float)) and up > 0:
+            ladder.append((int(bq), float(up)))
+        else:
+            bad += 1
+    if bad:
+        raise ValueError('%s: %d/%d pricing entries malformed' % (ctx, bad, len(pricing)))
+    return ladder
 
 
 def _pidvid_name(v) -> str:
@@ -398,14 +410,14 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
         if 'digi-reel' in pkg.lower():
             continue
         pricing = d.get('standard_pricing') or []
-        ladder = [(pb['break_quantity'], pb['unit_price'])
-                  for pb in pricing
-                  if pb.get('break_quantity') and pb.get('unit_price')]
-        if pricing and not ladder:
-            # schema anomaly (see keyword parser): don't price this detail; if
-            # nothing else matches, the part falls through to the keyword path
-            print('digikey batch %s: detail %r pricing has no valid breaks, skipping'
-                  % (mpn, d.get('digi_key_part_number')))
+        try:
+            # all-or-error (see _parse_ladder): a mixed valid/malformed array must not
+            # persist a partial ladder. In the batch parser the detail is skipped so
+            # the part falls through to the keyword path, which raises loudly.
+            ladder = _parse_ladder(pricing, 'digikey batch %s detail %r'
+                                   % (mpn, d.get('digi_key_part_number')))
+        except ValueError as e:
+            print('%s -- skipping detail' % e)
             continue
         if not ladder:
             continue

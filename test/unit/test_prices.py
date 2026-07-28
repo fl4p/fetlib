@@ -397,6 +397,24 @@ def test_batch_parse_invalid_pricing_entries_skip_detail():
     assert parse_digikey_batch('infineon', 'X1', _batch_raw([bad])) is None
 
 
+def test_mixed_pricing_arrays_never_persist_partial_ladders():
+    # round 4: [valid, malformed] must not store just the valid subset -- a dropped
+    # break silently mis-prices at some qty. Keyword parser raises (writes nothing);
+    # batch parser skips the detail (part falls through to keyword); LCSC drops the row
+    from dslib.prices.digikey_api import parse_digikey_batch
+    mixed = [{'break_quantity': 1, 'unit_price': 1.0}, {'quantity': 10, 'price': 0.8}]
+    v = _dk_var()
+    v['standard_pricing'] = mixed
+    with pytest.raises(ValueError):
+        parse_digikey_offers('infineon', 'X1',
+                             _dk_raw(exact=[_dk_product(variations=[v])]))
+    assert parse_digikey_batch('infineon', 'X1',
+                               _batch_raw([_batch_detail(pricing=mixed)])) is None
+    row = dict(LCSC_ROW, productPriceList=[{'ladder': 5, 'usdPrice': 1.2},
+                                           {'ladder': 100, 'usdPrice': None}])
+    assert parse_lcsc_row(row) is None
+
+
 def test_dk_nonempty_invalid_pricing_raises_not_negative():
     # keyword parser: same anomaly must raise (writes nothing), not book
     # no_eligible_offer (re-review round 3)
@@ -457,7 +475,10 @@ def test_batch_phase_probes_every_key_before_fallback(monkeypatch, db):
 def test_batch_phase_all_keys_403_returns_full_todo_unwritten(monkeypatch, db):
     todo = [('infineon', 'X1'), ('infineon', 'X2')]
     k1, k2 = _FakeKey('k1'), _FakeKey('k2')
-    raise403 = lambda mpns: (_ for _ in ()).throw(_Http(403))
+
+    def raise403(mpns):
+        raise _Http(403)
+
     n, left = _run_batch_phase(monkeypatch, db, todo, [k1, k2],
                                {'k1': raise403, 'k2': raise403})
     assert left == todo and n['fetched'] == 0 and n['quota_stop'] == 0
