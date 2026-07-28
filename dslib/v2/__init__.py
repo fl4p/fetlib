@@ -394,6 +394,28 @@ def _make_field(ex: ExtractedRow) -> Optional[Field]:
     if all(math.isnan(v) for v in (mn, typ, mx)):
         return None
 
+    # Physical domain: charges (Q*), times (t*), capacitances (C*) and resistances
+    # (R*) cannot be negative regardless of channel polarity — a negative stat here
+    # is always tokenization junk. The observed class (2026-07-28, 96 DB records):
+    # an OCR'd text layer prints the min/typ/max cells as '- 54 -' and the
+    # placeholder dash fuses onto the value, so Qrr typ became -54 nC and P_rr
+    # would book a negative loss. Refuse the stat (NaN + warning), never abs():
+    # the sign is evidence the cell grouping failed, and a lower-priority stage
+    # that read the same row cleanly should win instead of a silent sign flip.
+    # Voltages AND currents stay exempt — P-channel parts legitimately rate
+    # Vgs_th, Vsd, Id and Idp negative (233 negative-Id ratings in the corpus are
+    # real P-FETs, measured before this guard shipped).
+    if ex.symbol and ex.symbol[0] in "QCRt":
+        bad = [s for s, v in (("min", mn), ("typ", typ), ("max", mx))
+               if not math.isnan(v) and v < 0]
+        if bad:
+            warnings.warn("v2: negative %s for %s from %r — refusing the stat "
+                          "(placeholder-dash fusion?)" % ("/".join(bad), ex.symbol, raw))
+            mn, typ, mx = (math.nan if (not math.isnan(v) and v < 0) else v
+                           for v in (mn, typ, mx))
+            if all(math.isnan(v) for v in (mn, typ, mx)):
+                return None
+
     unit = (ex.unit or "").strip(",; ") or None
     if unit is None and inline_units:
         # only trust an inline unit when every cell that had one agreed;
