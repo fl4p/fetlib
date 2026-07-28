@@ -25,10 +25,11 @@ exists" is a fact rather than a judgement -- with the caveat, enforced by a defa
 `--include-foreign`, that a path outside this repo may merely be an unmounted checkout.
 
 Every delete goes through `_rmtree_within_cache`, which refuses anything resolving outside
-data/cache. It deliberately does NOT use `dslib.cache.delete_disk_cache_tree`: that
-function's rmtree has been commented out since 886fb686, so it logs "deleting" and removes
-nothing -- which made an earlier version of this tool report bytes reclaimed that were
-still on disk.
+data/cache. It does NOT use `dslib.cache.delete_disk_cache_tree` -- originally because that
+function's rmtree was commented out since 886fb686 (it logged "deleting" and removed
+nothing, which made an earlier version of this tool report bytes reclaimed that were still
+on disk). The library function has since been fixed; this tool keeps its own guarded delete
+for its CLI semantics (see the comment in delete()).
 
 Cost note: it stats files, it never unpickles them. `exp` lives inside the pickle, so
 reporting true expiry would mean reading all ~17 GB back through pickle -- hours -- to learn
@@ -228,12 +229,13 @@ def delete(prefix, apply_):
               'datasheet parse that is minutes per part.')
         return
 
-    # Deliberately NOT dslib.cache.delete_disk_cache_tree: its shutil.rmtree has been
-    # commented out since 886fb686 (2025-09-16), so it logs 'deleting %s/**' and removes
-    # nothing. Routing this through it made --delete --apply print a reclaim total for
-    # bytes that were still on disk -- a destructive command reporting success it had not
-    # earned. That function is left as-is (whoever disabled it may have had a reason); this
-    # tool just stops depending on it.
+    # Deliberately NOT dslib.cache.delete_disk_cache_tree. Historically its shutil.rmtree
+    # was commented out (since 886fb686, 2025-09-16), so routing this through it made
+    # --delete --apply print a reclaim total for bytes that were still on disk -- a
+    # destructive command reporting success it had not earned. That function has since
+    # been fixed (real rmtree + containment, 2026-07-28), but this tool keeps its own
+    # _rmtree_within_cache: it already carries the dry-run/size accounting around the
+    # delete, and its SystemExit refusals fit a CLI better than ValueError.
     if not _rmtree_within_cache(path, 'delete %r' % prefix):
         raise SystemExit('nothing deleted: %s is not a directory' % path)
     print('deleted %s (%s reclaimed)' % (path, human(b)))

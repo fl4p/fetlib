@@ -180,21 +180,44 @@ def _get_fn(key, ext):
 
 
 def delete_disk_cache_tree(prefix):
-    assert len(prefix) > 1
-    path = cache_dir + "/" + prefix
-    if os.path.exists(path):
-        assert os.path.isdir(path), path
-        logger.warning('deleting %s/**', path)
+    """Delete the cache subtree at ``data/cache/<prefix>/**``.
 
-        def onerror(*args):
-            logger.warning('error deleting %s', args)
+    Returns True when a tree was actually removed, False when nothing exists at
+    that prefix. Any other outcome raises -- this function must never report or
+    imply a deletion that did not happen (its rmtree spent a year commented out
+    while the log line above it said "deleting").
 
-        # shutil.rmtree(path, ignore_errors=True, onerror=onerror)
+    ``prefix`` is joined with the same string concat the writer uses
+    (``_get_fn``: ``cache_dir + "/" + key``), NOT os.path.join: module prefixes
+    are absolute paths like ``/Users/.../parse.py`` (see disk_cache_key), which
+    os.path.join would let replace cache_dir entirely. The concat re-roots them
+    inside the cache, exactly where the kernel's slash-collapsing put the keys.
+    The resolved target must stay inside data/cache: a prefix that escapes via
+    ``..`` or a symlinked subtree raises ValueError rather than being skipped,
+    because an escaping target means the caller's prefix is wrong and silently
+    ignoring that hides the bug while still deleting whatever else looked fine.
+    Deletion errors surface (no ignore_errors): this tree costs a multi-day
+    reparse, so a half-deleted subtree must not look fully deleted.
+    """
+    import shutil
+    if not isinstance(prefix, str) or len(prefix) <= 1:
+        raise ValueError('refusing cache-tree delete: bad prefix %r' % (prefix,))
+    root = os.path.realpath(cache_dir)
+    real = os.path.realpath(root + "/" + prefix)
+    if real == root or not real.startswith(root + os.sep):
+        raise ValueError('refusing cache-tree delete: prefix %r resolves to %s, outside %s'
+                         % (prefix, real, root))
+    if not os.path.exists(real):
+        return False
+    if not os.path.isdir(real):
+        raise NotADirectoryError('cache-tree prefix %r is a file, not a directory: %s' % (prefix, real))
+    logger.warning('deleting %s/**', real)
+    shutil.rmtree(real)
+    return True
 
 
 def delete_module_disk_cache_tree(mod):
-    prefix = get_module_cache_key_prefix(mod)
-    delete_disk_cache_tree(prefix)
+    return delete_disk_cache_tree(get_module_cache_key_prefix(mod))
 
 
 def _set_df_file_store_mtime(fn, df):
@@ -338,7 +361,15 @@ dict_keys_t = type({}.keys())
 #    return PandasPickleFileStore
 
 def get_module_cache_key_prefix(mod):
-    return mod.__name__
+    """The prefix every disk_cache key of ``mod`` starts with: its ``__file__``.
+
+    This is the single source for disk_cache_key's ``mod_file`` -- keys are
+    ``<mod_file>/<path_hash>/<func>/...``, so the module's cache tree lives at
+    ``data/cache/<mod_file>/`` (leading slash collapsed by the kernel). It used
+    to return ``mod.__name__``, a dotted name like ``dslib.pdf.parse`` that
+    matches nothing on disk and made delete_module_disk_cache_tree a no-op.
+    Changing this changes every cache key -- don't."""
+    return mod.__file__.replace('__mp_main__', '__main__')
 
 
 def chunk_cache(chunk_time, no_data_exception=NoDataException, write_empty=True, store=ParquetFileStore(),
@@ -625,7 +656,7 @@ def disk_cache_key(mod, target, ignore_kwargs, args, kwargs):
     cache_key_obj = (to_hashable(args), to_hashable(kwargs_cache))
     cache_key_hash = hashlib.sha224(bytes(str(cache_key_obj), 'utf-8')).hexdigest()
 
-    mod_file = mod.__file__.replace('__mp_main__', '__main__')
+    mod_file = get_module_cache_key_prefix(mod)
     path_hash = hashlib.sha224(bytes(mod_file, 'utf-8')).hexdigest()[:4]
 
     cache_key_prefix = ''
