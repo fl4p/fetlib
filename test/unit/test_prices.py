@@ -384,7 +384,105 @@ def test_batch_parse_suffix_tier_and_audit():
     raw = _batch_raw([_batch_detail(mpn='X1TR', mfr_name='onsemi')])
     rec = parse_digikey_batch('onsemi', 'X1', raw)
     assert rec.status == 'ok' and rec.offers[0].sku == 'DK1'
+    assert rec.matched_mpns == ['X1TR']  # audit contract, same as keyword parser
     assert parse_digikey_batch('onsemi', 'X9', raw) is None  # X1TR does not extend X9
+
+
+def test_batch_parse_invalid_pricing_entries_skip_detail():
+    # nonempty pricing without valid breaks is a schema anomaly: the detail is
+    # skipped so the part falls through to the keyword path -- never priced wrong,
+    # never a durable negative
+    from dslib.prices.digikey_api import parse_digikey_batch
+    bad = _batch_detail(pricing=[{'quantity': 1, 'price': 1.0}])  # renamed fields
+    assert parse_digikey_batch('infineon', 'X1', _batch_raw([bad])) is None
+
+
+def test_dk_nonempty_invalid_pricing_raises_not_negative():
+    # keyword parser: same anomaly must raise (writes nothing), not book
+    # no_eligible_offer (re-review round 3)
+    v = _dk_var()
+    v['standard_pricing'] = [{'quantity': 1, 'price': 1.0}]
+    with pytest.raises(ValueError):
+        parse_digikey_offers('infineon', 'X1',
+                             _dk_raw(exact=[_dk_product(variations=[v])]))
+
+
+class _FakeKey:
+    """Duck-typed stand-in for digikey_api._Key (real one wants creds)."""
+
+    def __init__(self, label, remaining=None):
+        self.label = label
+        self.client_id = label
+        self.dead = False
+        self.remaining = remaining
+        self.consecutive_429 = 0
+
+
+class _Http(Exception):
+    def __init__(self, status):
+        self.status = status
+        super().__init__('HTTP %d' % status)
+
+
+def _run_batch_phase(monkeypatch, db, todo, keys, responses):
+    """responses: {key_label: callable(mpns) -> raw dict | raises}."""
+    import dslib.prices.digikey_api as dk
+
+    def fake_raw(mpns, currency, key):
+        return responses[key.label](mpns)
+
+    monkeypatch.setattr(dk, '_dk_batch_details_raw', fake_raw)
+    monkeypatch.setattr('dslib.prices.history.record_history', lambda recs, path=None: 0)
+    n = dict(fetched=0, quota_stop=0)
+    left = dk._batch_phase(todo, keys, 'USD', n, quota_floor=25)
+    return n, left
+
+
+def test_batch_phase_probes_every_key_before_fallback(monkeypatch, db):
+    # 403 on key1 must NOT trigger global fallback (enablement is per app): key2 is
+    # probed, prices the chunk, and key1 stays alive for keyword work
+    todo = [('infineon', 'X1')]
+    k1, k2 = _FakeKey('k1'), _FakeKey('k2')
+
+    def k1_resp(mpns):
+        raise _Http(403)
+
+    n, left = _run_batch_phase(monkeypatch, db, todo, [k1, k2],
+                               {'k1': k1_resp,
+                                'k2': lambda mpns: _batch_raw([_batch_detail()])})
+    assert n['fetched'] == 1 and left == []
+    assert not k1.dead  # batch-incapable, but keyword-capable
+
+
+def test_batch_phase_all_keys_403_returns_full_todo_unwritten(monkeypatch, db):
+    todo = [('infineon', 'X1'), ('infineon', 'X2')]
+    k1, k2 = _FakeKey('k1'), _FakeKey('k2')
+    raise403 = lambda mpns: (_ for _ in ()).throw(_Http(403))
+    n, left = _run_batch_phase(monkeypatch, db, todo, [k1, k2],
+                               {'k1': raise403, 'k2': raise403})
+    assert left == todo and n['fetched'] == 0 and n['quota_stop'] == 0
+    assert not k1.dead and not k2.dead
+    assert db.count() == 0  # nothing written
+
+
+def test_batch_phase_quota_death_returns_all_unattempted(monkeypatch, db):
+    # 100 parts: chunk 1 prices 40, leaves 10 unmatched; chunk 2 kills the only key.
+    # EVERYTHING unpriced (10 + 50) must come back for the keyword phase; the batch
+    # phase itself never touches quota_stop (review round 3 reproduction)
+    todo = [('infineon', 'P%03d' % i) for i in range(100)]
+    k1 = _FakeKey('k1')
+    calls = []
+
+    def k1_resp(mpns):
+        calls.append(list(mpns))
+        if len(calls) == 1:  # price the first 40 of the chunk, leave 10 unmatched
+            return _batch_raw([_batch_detail(mpn=m) for m in mpns[:40]])
+        raise _Http(429)
+
+    n, left = _run_batch_phase(monkeypatch, db, todo, [k1], {'k1': k1_resp})
+    assert n['fetched'] == 40 and n['quota_stop'] == 0
+    assert len(left) == 60  # 10 unmatched + the whole second chunk
+    assert k1.dead  # daily quota: dead for keyword too
 
 
 # ------------------------------------------------------------------ history

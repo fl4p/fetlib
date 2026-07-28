@@ -137,7 +137,10 @@ def _build_client(key: _Key) -> None:
         key.client = {'api': dpi.ProductSearchApi(dpi.ApiClient(cfg)), 'auth': auth}
         bcfg = dbp.Configuration()
         bcfg.api_key['X-DIGIKEY-Client-Id'] = key.client_id
-        bcfg.host = 'https://api.digikey.com/BatchSearch/v4'
+        # do NOT override bcfg.host: the fork's digikey.v4.batchproductdetails is an
+        # alias of the v3 classes and its Configuration correctly defaults to
+        # .../BatchSearch/v3 -- forcing /v4 manufactured a permanent 404 that was
+        # indistinguishable from "endpoint not enabled on this app"
         bcfg.access_token = token.access_token
         key.client_batch = {'api': dbp.BatchSearchApi(dbp.ApiClient(bcfg)), 'auth': auth}
 
@@ -192,25 +195,29 @@ class IndeterminateMatch(RuntimeError):
     days. Raised so the caller books an error and writes NOTHING."""
 
 
-# Reviewed packaging/carrier suffixes only -- NOT a generic "any non-digit" rule:
-# letter continuations can be distinct electrical/qualification variants (X1 vs X1A).
+# Reviewed, COMPLETE packaging/carrier suffixes only -- no generic rules. A generic
+# "any non-digit" rule admitted X1A, and a "separator-led" branch admitted X1-A; both
+# letter and separator continuations can be distinct electrical/qualification
+# variants, and a wrong-part price in the ranking is worse than a missing one.
 # T1G/T3G/T1/T3 = onsemi tape&reel; TR/TL/TF/CT = DigiKey carrier codes; TRPBF =
-# Infineon/IR tape&reel lead-free. Extend deliberately, with a test.
-PACKAGING_SUFFIXES = ('t1g', 't3g', 't1', 't3', 'tr', 'tl', 'tf', 'ct', 'trpbf')
-_SUFFIX_SEPARATORS = '-_,/ '
+# Infineon/IR tape&reel lead-free; -T1-GE3/-T1-RE3/-E3/-GE3 = Vishay carrier/lead
+# codes; -7/-13 = Diodes Inc 7"/13" reels; ,118/,127/,135 = Nexperia reel codes.
+# Extend deliberately, with a test; parts whose only listing falls outside this list
+# stay unpriced (indeterminate/catalog_miss) rather than risk a wrong attachment.
+PACKAGING_SUFFIXES = (
+    't1g', 't3g', 't1', 't3', 'tr', 'tl', 'tf', 'ct', 'trpbf',
+    '-t1-ge3', '-t1-re3', '-e3', '-ge3', '-t1', '-t3', '-tr', '-tl',
+    '-7', '-13', ',118', ',127', ',135',
+)
 
 
 def _suffix_extends_mpn(candidate: str, mpn: str) -> bool:
-    """True when candidate is mpn plus a KNOWN packaging suffix (NTMFS5C628NL ->
-    NTMFS5C628NLT1G) or a separator-led suffix (SIR104LDP -> SIR104LDP-T1-RE3, tape
-    codes after '-'/'_' are carrier designators by convention). Anything else --
-    digit continuations (X1 -> X10) and bare letter continuations (X1 -> X1A) -- is
-    treated as a DIFFERENT part."""
+    """True when candidate is mpn plus one COMPLETE reviewed packaging suffix
+    (NTMFS5C628NL -> NTMFS5C628NLT1G). Everything else -- digit continuations
+    (X1 -> X10), letter continuations (X1 -> X1A), unknown separator-led
+    continuations (X1 -> X1-A) -- is treated as a DIFFERENT part."""
     c, m = candidate.lower(), mpn.lower()
-    if not (c.startswith(m) and len(c) > len(m)):
-        return False
-    suffix = c[len(m):]
-    return suffix in PACKAGING_SUFFIXES or suffix[0] in _SUFFIX_SEPARATORS
+    return c.startswith(m) and c[len(m):] in PACKAGING_SUFFIXES
 
 
 def _iter_products(raw_response: dict, mfr: str, mpn: str):
@@ -298,6 +305,14 @@ def parse_digikey_offers(mfr: str, mpn: str, raw: dict,
             ladder = [(pb['break_quantity'], pb['unit_price'])
                       for pb in pricing
                       if pb.get('break_quantity') and pb.get('unit_price')]
+            if pricing and not ladder:
+                # NONEMPTY pricing where no entry has valid break_quantity/unit_price
+                # is a schema/parse anomaly (renamed or nulled fields), not an empty
+                # offer -- booking no_eligible_offer here would persist a durable
+                # negative over a response-shape change. Errors write nothing.
+                raise ValueError('digikey %s: variation %r has %d pricing entries but '
+                                 'no valid (break_quantity, unit_price) pairs'
+                                 % (mpn, pv.get('digi_key_product_number'), len(pricing)))
             if not ladder:  # explicitly empty pricing = a real, empty offer
                 continue
             offers.append(Offer(
@@ -372,6 +387,7 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
     offers: List[Offer] = []
     url = None
     currency = requested_currency
+    matched_mpns = []
     for d in matched:
         d_mfr = _pidvid_name(d.get('manufacturer'))
         if not d_mfr or mfr_tag(d_mfr) != mfr:
@@ -381,13 +397,21 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
         pkg = _pidvid_name(d.get('packaging'))
         if 'digi-reel' in pkg.lower():
             continue
+        pricing = d.get('standard_pricing') or []
         ladder = [(pb['break_quantity'], pb['unit_price'])
-                  for pb in d.get('standard_pricing') or []
+                  for pb in pricing
                   if pb.get('break_quantity') and pb.get('unit_price')]
+        if pricing and not ladder:
+            # schema anomaly (see keyword parser): don't price this detail; if
+            # nothing else matches, the part falls through to the keyword path
+            print('digikey batch %s: detail %r pricing has no valid breaks, skipping'
+                  % (mpn, d.get('digi_key_part_number')))
+            continue
         if not ladder:
             continue
         currency = ((d.get('search_locale_used') or {}).get('currency')) or currency
         url = url or d.get('product_url')
+        matched_mpns.append(d.get('manufacturer_part_number') or '')
         offers.append(Offer(
             sku=d.get('digi_key_part_number') or '',
             packaging=pkg or None,
@@ -397,10 +421,13 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
         ))
     if not offers:
         return None
-    return PartOffers(mfr=mfr, mpn=mpn, distributor=DIGIKEY, currency=currency,
-                      offers=offers,
-                      fetched_at=datetime.datetime.fromisoformat(raw['fetched_at']),
-                      url=url, status='ok')
+    rec = PartOffers(mfr=mfr, mpn=mpn, distributor=DIGIKEY, currency=currency,
+                     offers=offers,
+                     fetched_at=datetime.datetime.fromisoformat(raw['fetched_at']),
+                     url=url, status='ok')
+    # same audit contract as the keyword parser: which catalog MPN(s) priced this part
+    rec.matched_mpns = [m for m in matched_mpns if m.lower() != mpn.lower()] or None
+    return rec
 
 
 def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
@@ -409,11 +436,14 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
     request against the daily quota, ~60 requests for the full fugu3 corpus) and
     return the leftovers for the keyword path.
 
-    The endpoint must be enabled per app by DigiKey support: a 403/404 on the first
-    chunk means 'not enabled (yet)' -- everything falls through to keyword search with
-    one loud line. Only 'ok' records are ever written here (the batch error list does
-    not name failing MPNs reliably); unmatched parts stay in the leftovers where the
-    keyword path's catalog_miss/indeterminate semantics apply.
+    Endpoint enablement is PER APP: a 403/404 retires that key from the batch set only
+    (it stays alive for keyword work) and the next key is probed; global fallback
+    happens only after every key rejected the endpoint. This phase never touches
+    n['quota_stop'] -- every part it could not price (unmatched, or un-attempted after
+    keys died) is RETURNED, and the keyword phase owns the final accounting (it
+    quota-stops them if no key survives). Only 'ok' records are ever written here (the
+    batch error list does not name failing MPNs reliably); unmatched parts fall
+    through to the keyword path's catalog_miss/indeterminate semantics.
 
     NOTE errors are matched by SHAPE (getattr status), not by exception class: every
     generated SDK sub-package has its own rest.ApiException, and the fork's v4 batch
@@ -422,50 +452,70 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
     from dslib.prices import prices_db as _db
     from dslib.prices.history import record_history
 
-    alive = [k for k in keys if not k.dead]
+    batch_keys = [k for k in keys if not k.dead]  # batch-capable until proven otherwise
     leftovers: List[Tuple[str, str]] = []
+    priced = 0
     chunks = [todo[i:i + 50] for i in range(0, len(todo), 50)]
     for ci, chunk in enumerate(chunks):
         raw = None
-        while alive and raw is None:
-            key = alive[0]
+        while batch_keys and raw is None:
+            key = batch_keys[0]
+            if key.dead:
+                batch_keys.pop(0)
+                continue
             if key.remaining is not None and key.remaining < quota_floor:
                 print('digikey batch: key %s below quota floor, retiring' % key.label)
                 key.dead = True
-                alive.pop(0)
+                batch_keys.pop(0)
                 continue
             try:
                 raw = _dk_batch_details_raw([mpn for _, mpn in chunk], currency, key)
             except Exception as e:
                 status = getattr(e, 'status', None)
-                if status in (403, 404) and ci == 0:
-                    print('digikey batch: endpoint not enabled on key %s (HTTP %s) -- '
-                          'falling back to per-MPN keyword search. Ask DigiKey API '
-                          'support to enable BatchProductDetails (50 MPNs/request).'
-                          % (key.label, status))
-                    return todo
+                if status in (403, 404):
+                    # not enabled on THIS app -- key stays alive for keyword work
+                    print('digikey batch: endpoint not enabled on key %s (HTTP %s), '
+                          'trying next key' % (key.label, status))
+                    batch_keys.pop(0)
+                    continue
                 if status == 429:
-                    print('digikey batch: key %s rate limited, retiring' % key.label)
+                    print('digikey batch: key %s rate limited (daily quota), retiring'
+                          % key.label)
                     key.dead = True
-                    alive.pop(0)
+                    batch_keys.pop(0)
                     continue
                 raise
-        if raw is None:  # every key retired mid-batch
-            n['quota_stop'] += sum(len(c) for c in chunks[ci:]) - len(leftovers)
-            print('digikey batch: STOPPED, all keys exhausted; %d parts stay '
-                  'un-fetched' % n['quota_stop'])
-            return leftovers
+        if raw is None:
+            # no batch-capable key left. Everything not yet attempted goes back to the
+            # keyword phase VERBATIM -- dropping or counting it here undercounted 50
+            # parts per lost chunk in review reproduction.
+            remaining = [p for c in chunks[ci:] for p in c]
+            if priced == 0 and ci == 0:
+                print('digikey batch: endpoint not enabled on any key -- falling back '
+                      'to per-MPN keyword search. Ask DigiKey API support to enable '
+                      'BatchProductDetails (50 MPNs/request).')
+            else:
+                print('digikey batch: no batch-capable key left after %d chunk(s); '
+                      '%d parts fall back to keyword search'
+                      % (ci, len(leftovers) + len(remaining)))
+            return leftovers + remaining
         for mfr, mpn in chunk:
-            rec = parse_digikey_batch(mfr, mpn, raw, requested_currency=currency)
+            try:
+                rec = parse_digikey_batch(mfr, mpn, raw, requested_currency=currency)
+            except Exception as e:
+                print('digikey batch %s %s: parse error, falling back to keyword: %s'
+                      % (mfr, mpn, e))
+                rec = None
             if rec is None:
                 leftovers.append((mfr, mpn))
             else:
                 _db.add([rec])
                 record_history([rec])
                 n['fetched'] += 1
+                priced += 1
     if leftovers:
         print('digikey batch: %d/%d parts priced, %d fall through to keyword search'
-              % (n['fetched'], len(todo), len(leftovers)))
+              % (priced, len(todo), len(leftovers)))
     return leftovers
 
 
@@ -614,7 +664,7 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
     finally:
         done.set()  # release any workers idling on the empty queue
 
-    n['quota_stop'] = len(todo) - accounted
+    n['quota_stop'] += len(todo) - accounted  # += so no other phase's count is clobbered
     if n['quota_stop']:
         print('digikey: STOPPED %d parts short -- every key hit its daily quota or '
               'floor; they stay un-fetched for the next run' % n['quota_stop'])

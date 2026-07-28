@@ -118,11 +118,17 @@ a column) and returns `None`, never 0, for unpriced parts.
   parts wait for the next run. Calls `keyword_search_with_http_info` DIRECTLY — the SDK wrapper
   swallows ApiException and drops the rate-limit headers. Per-MPN keyword search of the ranked
   candidates only; no disk_cache (prices_db freshness gate, `max_age='7d'`, is the single
-  authority). Match tiers: exact / MPN equality / `base_product_number` / non-digit suffix
-  extension (`<mpn>T1G` etc.); all-candidates-rejected ⇒ `IndeterminateMatch`, writes nothing.
-  Offers with `moq > qty` do not price at qty (no MOQ-tier flattery). The ~3,073-candidate
-  fugu3 corpus needs the 50-MPN batch endpoint (DigiKey must enable it per app) or several
-  days of quota.
+  authority). Match tiers: exact / MPN equality / `base_product_number` / a COMPLETE
+  reviewed packaging suffix (`PACKAGING_SUFFIXES`; generic letter/separator continuations are
+  different parts); all-candidates-rejected ⇒ `IndeterminateMatch`, writes nothing. Offers
+  with `moq > qty` do not price at qty (no MOQ-tier flattery). **Batch path** (`use_batch`,
+  default on): BatchProductDetails at the SDK-default `/BatchSearch/v3` host (the fork's
+  "v4" batch package is a v3 alias — do not force /v4, that 404s), 50 MPNs = 1 request;
+  enablement is PER APP, so each key is probed and a 403/404 retires it from batch only
+  (keyword still works); batch writes only `ok` records and returns everything else to the
+  keyword phase, which owns all negative/quota accounting. As of 2026-07-28 enablement was
+  requested but not yet granted — until then runs print the fallback line and the
+  ~3,073-candidate fugu3 corpus costs several key-days of keyword quota.
 - **LCSC** (`dslib/prices/lcsc.py`): re-parses the price ladders out of the same
   `fetch_brand_rows_raw` envelopes discovery uses (`usdPrice` only — `currencyPrice` is
   locale-dependent), for `dslib.discovery.lcsc.brands` ∪ `EXTRA_PRICE_BRANDS` (major brands,
