@@ -32,6 +32,15 @@ nan = math.nan
 #   ('pdf', {'symbol': (min, typ, max), ...}, err_threshold)
 SAMPLES: List[Tuple[str, object, float]] = [
 
+    # Littelfuse P-channel sheet: the VSD maximum is encoded as two PDF words
+    # ("-" and "3.3").  V2 must join the leading sign rather than discard the
+    # body-diode row as non-numeric.
+    ('datasheets/littelfuse/IXTR170P10P.pdf',
+     {
+         'Vsd': (nan, nan, -3.3),
+     },
+     1e-3),
+
     # straightforward onsemi sheet, used as a smoke test
     ('datasheets/onsemi/FDD86367.pdf',
      {

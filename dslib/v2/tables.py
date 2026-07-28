@@ -40,6 +40,23 @@ head_re = re.compile(
 
 head_re_groups = ('sym', 'param', 'min', 'typ', 'max', 'values', 'unit', 'cond')
 
+# Canonical spellings used by the fuzzy HEADER fallback.  Short labels are
+# matched exactly: allowing one edit in "min"/"typ"/"max" would turn ordinary
+# three-letter words into columns.  Longer labels tolerate one
+# Damerau-Levenshtein edit, which covers the real ST typo "condictions" as
+# "conditions" without making fuzzy matching part of symbol/data detection.
+_HEADER_WORD_FORMS = {
+    'sym': ('symbol',),
+    'param': ('parameter', 'parameters', 'characteristic', 'characteristics'),
+    'min': ('min', 'minimum'),
+    'typ': ('typ', 'typical'),
+    'max': ('max', 'maximum', 'limit'),
+    'values': ('value', 'values', 'rating', 'ratings'),
+    'unit': ('unit', 'units'),
+    'cond': ('condition', 'conditions'),
+}
+_FUZZY_HEADER_MIN_LEN = 5
+
 head_stop = (
     'Avalanche', 'allowable', 'limited', 'Lead',
     'Static', 'Electrical', 'Dynamic', 'curves', 'above',
@@ -206,26 +223,127 @@ _VALUE_COLS = ("min", "typ", "max", "values", "unit")
 _PAIR_MAX_ROW_GAP = 2.5
 
 
-def _header_columns(row: TextRow, m: re.Match) -> Dict[str, Tuple[float, float]]:
-    """Compute (x1, x2) for every recognized header group.
+def _damerau_levenshtein_at_most_one(a: str, b: str) -> bool:
+    """Whether two strings are at Damerau-Levenshtein distance at most one.
 
-    The center of each header label anchors the column. For "wide" columns
-    (Symbol / Parameter / Conditions) we extend to the midpoint of each
-    neighbor. For narrow numeric columns (Min, Typ, Max, Unit) we use the
-    smaller of (half-distance to neighbor) on each side, so a wide
-    Conditions column doesn't bleed into Min.
+    This threshold-one implementation is deliberately local instead of adding
+    a dependency for a handful of header labels.  It accepts one insertion,
+    deletion, substitution, or adjacent transposition and rejects everything
+    farther away.
+    """
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 1:
+        return False
+
+    if len(a) == len(b):
+        mismatches = [i for i, (ca, cb) in enumerate(zip(a, b)) if ca != cb]
+        if len(mismatches) == 1:
+            return True
+        return (len(mismatches) == 2
+                and mismatches[1] == mismatches[0] + 1
+                and a[mismatches[0]] == b[mismatches[1]]
+                and a[mismatches[1]] == b[mismatches[0]])
+
+    shorter, longer = (a, b) if len(a) < len(b) else (b, a)
+    i = j = 0
+    skipped = False
+    while i < len(shorter) and j < len(longer):
+        if shorter[i] == longer[j]:
+            i += 1
+            j += 1
+            continue
+        if skipped:
+            return False
+        skipped = True
+        j += 1
+    return True
+
+
+def _header_word_group(text: str) -> Tuple[Optional[str], bool]:
+    """Return ``(group, was_fuzzy)`` for one possible header word.
+
+    Punctuation is irrelevant for labels (``Min.`` is ``min``), but digits
+    and internal punctuation are not guessed into letters.  A fuzzy result is
+    accepted only when exactly one header group is the best one-edit match;
+    ambiguity means refusal.
+    """
+    token = re.sub(r'^[^a-z]+|[^a-z]+$', '', text.lower())
+    if not token:
+        return None, False
+
+    exact = {
+        group for group, forms in _HEADER_WORD_FORMS.items()
+        if token in forms
+    }
+    if len(exact) == 1:
+        return next(iter(exact)), False
+
+    if len(token) < _FUZZY_HEADER_MIN_LEN:
+        return None, False
+    fuzzy = {
+        group for group, forms in _HEADER_WORD_FORMS.items()
+        if any(len(form) >= _FUZZY_HEADER_MIN_LEN
+               and _damerau_levenshtein_at_most_one(token, form)
+               for form in forms)
+    }
+    if len(fuzzy) == 1:
+        return next(iter(fuzzy)), True
+    return None, False
+
+
+def _items_have_ordered_numeric_cluster(items: List[Tuple[str, Word]]) -> bool:
+    """The geometry gate that makes fuzzy header labels safe.
+
+    A typo is not enough: the row must still contain at least two distinct
+    value-column labels in table order, ending in Max or Unit.  This mirrors
+    ``_has_ordered_numeric_cluster`` but works from classified words rather
+    than regex capture offsets.
+    """
+    rank = {'min': 0, 'typ': 1, 'values': 2, 'max': 3, 'unit': 4}
+    found = sorted((w.bbox.cx, rank[g]) for g, w in items if g in rank)
+    if len(found) < 2:
+        return False
+    ranks = [r for _cx, r in found]
+    return ranks[-1] in (rank['max'], rank['unit']) and all(
+        a < b for a, b in zip(ranks, ranks[1:]))
+
+
+def _fuzzy_header_items(row: TextRow) -> List[Tuple[str, Word]]:
+    """Classify a structurally convincing header containing a one-edit typo.
+
+    Exact regex parsing remains the primary path.  This fallback must see an
+    actual fuzzy correction, a structural label, four distinct columns, and
+    an ordered numeric cluster.  Those requirements prevent fuzzy vocabulary
+    from promoting prose such as "VDS = Max rating" into a table header.
     """
     items: List[Tuple[str, Word]] = []
-    for g in head_re_groups:
-        if not m.groupdict().get(g):
+    seen = set()
+    corrected = False
+    for word in row.words:
+        group, was_fuzzy = _header_word_group(word.text)
+        if group is None or group in seen:
             continue
-        w = row.word_at_offset(m.start(g))
-        if w is None:
-            continue
-        items.append((g, w))
+        seen.add(group)
+        items.append((group, word))
+        corrected = corrected or was_fuzzy
 
-    items.sort(key=lambda kv: kv[1].bbox.cx)
+    if not corrected:
+        return []
+    if len(items) < 4 or not seen.intersection({'sym', 'param', 'cond'}):
+        return []
+    if not _items_have_ordered_numeric_cluster(items):
+        return []
+    if any(sw in row.text for sw in head_stop):
+        return []
+    if max((w.bbox.height for _g, w in items), default=0.0) < 2.5:
+        return []
+    return items
 
+
+def _header_columns_from_items(items: List[Tuple[str, Word]]) -> Dict[str, Tuple[float, float]]:
+    """Compute header columns from already classified label words."""
+    items = sorted(items, key=lambda kv: kv[1].bbox.cx)
     cols: Dict[str, Tuple[float, float]] = {}
     for i, (g, w) in enumerate(items):
         cx = w.bbox.cx
@@ -277,25 +395,53 @@ def _header_columns(row: TextRow, m: re.Match) -> Dict[str, Tuple[float, float]]
 
     if "values" in cols and "typ" not in cols:
         cols["typ"] = cols["values"]
-
     return cols
 
 
-def _candidate_header(row: TextRow) -> Optional[Tuple[re.Match, Dict[str, Tuple[float, float]]]]:
+def _header_columns(row: TextRow, m: re.Match) -> Dict[str, Tuple[float, float]]:
+    """Compute (x1, x2) for every recognized header group.
+
+    The center of each header label anchors the column. For "wide" columns
+    (Symbol / Parameter / Conditions) we extend to the midpoint of each
+    neighbor. For narrow numeric columns (Min, Typ, Max, Unit) we use the
+    smaller of (half-distance to neighbor) on each side, so a wide
+    Conditions column doesn't bleed into Min.
+    """
+    items: List[Tuple[str, Word]] = []
+    for g in head_re_groups:
+        if not m.groupdict().get(g):
+            continue
+        w = row.word_at_offset(m.start(g))
+        if w is None:
+            continue
+        items.append((g, w))
+
+    return _header_columns_from_items(items)
+
+
+def _candidate_header(row: TextRow) -> Optional[Tuple[Optional[re.Match], Dict[str, Tuple[float, float]]]]:
     """Return (match, columns) if this row looks header-like at all (no
     minimum on min/typ/max — a row with just Sym/Param/Unit/Cond also
     counts so we can merge it with a neighbour)."""
     if not row.text:
         return None
     m = head_re.search(row.text)
-    if not m:
-        return None
-    if not _row_is_header(row, m):
-        return None
-    cols = _header_columns(row, m)
-    if not cols:
-        return None
-    return m, cols
+    if m is not None and _row_is_header(row, m):
+        cols = _header_columns(row, m)
+        # Preserve the exact path whenever it found a complete value-column
+        # run.  Fuzzy matching is a fallback for a typo that interrupted that
+        # run, not an alternate interpretation of every working header.
+        if cols and any(k in cols for k in _VALUE_COLS):
+            return m, cols
+    else:
+        cols = {}
+
+    fuzzy_items = _fuzzy_header_items(row)
+    if fuzzy_items:
+        return m, _header_columns_from_items(fuzzy_items)
+    if cols:
+        return m, cols
+    return None
 
 
 def _clamp_open_cond(cols: Dict[str, Tuple[float, float]]) -> None:
@@ -813,6 +959,12 @@ def _extract_value(s: Optional[str]) -> Optional[str]:
     s = s.strip().strip(",;")
     if not s:
         return None
+    # A sign typeset as a separate PDF word is still part of the number.
+    # Littelfuse's P-channel IXTR170P10P, for example, emits its body-diode
+    # maximum as "- 3.3".  Keeping the inter-word space made
+    # _is_numeric_token reject the row before _make_field could preserve the
+    # negative polarity.
+    s = re.sub(r"^([+-])\s+(?=\d)", r"\1", s)
     return s
 
 

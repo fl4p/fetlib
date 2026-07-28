@@ -33,7 +33,11 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from dslib.v2.chars import BBox, TextRow, Word  # noqa: E402
-from dslib.v2.tables import _candidate_header, head_re  # noqa: E402
+from dslib.v2.tables import (  # noqa: E402
+    _candidate_header,
+    _damerau_levenshtein_at_most_one,
+    head_re,
+)
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -105,6 +109,37 @@ def test_the_headers_that_governed_the_broken_sheet_still_parse():
     assert cols['min'][0] < cols['typ'][0] < cols['max'][0]
 
 
+def test_fuzzy_header_recovers_st_condictions_typo():
+    """STP80NF10FP prints the typo; it must not erase the whole dynamic table."""
+    c = _candidate_header(
+        _row('Symbol Parameter Test condictions Min. Typ. Max. Unit'))
+    assert c is not None
+    _m, cols = c
+    for k in ('sym', 'param', 'cond', 'min', 'typ', 'max', 'unit'):
+        assert k in cols
+    assert cols['min'][0] < cols['typ'][0] < cols['max'][0] < cols['unit'][0]
+
+
+@pytest.mark.parametrize(('a', 'b'), [
+    ('condictions', 'conditions'),  # deletion
+    ('conditxons', 'conditions'),   # substitution
+    ('conditios', 'conditions'),    # insertion
+    ('conditinos', 'conditions'),   # adjacent transposition
+])
+def test_fuzzy_header_distance_accepts_one_damerau_edit(a, b):
+    assert _damerau_levenshtein_at_most_one(a, b)
+
+
+def test_fuzzy_header_distance_rejects_two_edits():
+    assert not _damerau_levenshtein_at_most_one('condxxions', 'conditions')
+
+
+def test_fuzzy_words_without_table_structure_are_not_headers():
+    """One near-match in prose is not permission to reinterpret the row."""
+    row = _row('current VDS = Mox rating at 125 C 10 uA')
+    assert _candidate_header(row) is None
+
+
 # ------------------------------------------------------------------ end-to-end, real sheet
 @pytest.mark.skipif(not os.path.exists(os.path.join(REPO, 'datasheets/st/STP50NF25.pdf')),
                     reason='needs the datasheets repo')
@@ -116,3 +151,15 @@ def test_stp50nf25_reads_its_real_rds_on():
     f = ds.fields_filled.get('Rds_on')
     assert f is not None, 'Rds_on disappeared entirely -- the guard over-rejected'
     assert f.max == pytest.approx(69.0, rel=0.02), 'got %r (10000.0 was the bug)' % f.max
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(REPO, 'datasheets/st/STP80NF10FP.pdf')),
+                    reason='needs the datasheets repo')
+def test_stp80nf10fp_fuzzy_header_recovers_qgs():
+    """Ground truth: the dynamic table explicitly prints Qgs typ = 23 nC."""
+    from dslib.v2 import parse_datasheet as v2parse
+    ds = v2parse(os.path.join(REPO, 'datasheets/st/STP80NF10FP.pdf'),
+                 mfr='st', mpn='STP80NF10FP')
+    f = ds.fields_filled.get('Qgs')
+    assert f is not None
+    assert f.typ == pytest.approx(23.0)
