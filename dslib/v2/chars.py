@@ -57,6 +57,14 @@ _OVERSTRIKE_MAX_D = 0.10
 # font size — used to recover the baseline from a glyph box bottom.
 _DEFAULT_DESCENT = -0.2
 
+# How complete a pdfminer page must be, relative to the fitz page it would
+# replace, before the auto backend accepts it as a repair. Measured over 16 real
+# repaired pages: pdfminer returns 0.99-1.00 of fitz's glyph count (fewer on 11
+# of them, by 1-15 glyphs, the two libraries splitting glyphs slightly
+# differently). So equality is far too strict and would reject most genuine
+# repairs; this leaves ten times the observed spread as margin.
+_MIN_REPAIR_CHAR_RATIO = 0.9
+
 
 @dataclass
 class BBox:
@@ -850,11 +858,40 @@ def extract_pages_with_rows(pdf_path: str,
             repaired = {}
         if not repaired:
             return pages
-        # Keep fitz's page unless pdfminer actually produced text for it: an
-        # empty replacement is a regression, not a repair.
+        # Keep fitz's page unless pdfminer's is comparably complete.
+        #
+        # The first version asked only ``if page.char_count`` -- non-empty. A
+        # reviewer pointed out that is a PROXY for "at least as good", not the
+        # thing itself: a page where fitz lost one glyph out of 500 would be
+        # swapped for a 1-character pdfminer page if pdfminer stumbled on that
+        # page for an unrelated reason, silently discarding 499 good glyphs.
+        #
+        # Their proposed fix, ``page.char_count >= pages[i].char_count``, is
+        # wrong and measuring it is what showed that: across 16 real repaired
+        # pages pdfminer returns FEWER glyphs than fitz on 11 of them, by 1-15
+        # (ratio 0.99-1.00), because the two libraries disagree slightly on
+        # glyph splitting. A >= rule would reject two thirds of the genuine
+        # repairs -- i.e. it would delete the feature to close the hole.
+        #
+        # So: a ratio, not equality. Legitimate repairs measured at >= 0.99;
+        # the failure being guarded is a collapse to a fraction of the page.
+        # 0.9 leaves ten times the observed spread as margin and still catches
+        # anything losing more than a tenth of its glyphs. A refusal is
+        # reported rather than silent -- keeping the fitz page means keeping a
+        # page with a KNOWN missing cell, which the caller should hear about.
         for i, page in repaired.items():
-            if page.char_count:
-                pages[i] = page
+            base = pages[i].char_count
+            if not page.char_count:
+                continue                       # empty is never a repair
+            if base and page.char_count < _MIN_REPAIR_CHAR_RATIO * base:
+                import warnings
+                warnings.warn(
+                    "v2: pdfminer repair of %s page %d returned %d glyphs vs "
+                    "fitz's %d — keeping fitz's page, which still has %d "
+                    "undecodable" % (pdf_path, i, page.char_count, base,
+                                     pages[i].n_undecoded))
+                continue
+            pages[i] = page
         return pages
 
     reader = _pages_fitz if backend == "fitz" else _pages_pdfminer
