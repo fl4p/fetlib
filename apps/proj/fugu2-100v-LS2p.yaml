@@ -1,6 +1,6 @@
 topology: buck
 
-substrates: [ Si, GaN ]
+substrates: [ Si ]
 #packages: ['TO-220']
 vdsRange: [ 100, 200 ]
 
