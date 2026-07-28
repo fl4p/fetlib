@@ -58,6 +58,12 @@ def norm_mpn(mpn: str) -> str:
 # normal_mpn strips these), so the ranked spelling is whichever code discovery saw
 # first, while the distributor may only stock a SIBLING (IPP023N10N5AKSA1 with 0
 # stock vs IPP023N10N5XKSA1 in stock).
+#
+# On the review concern that suffixed siblings sometimes show DIFFERENT Vds in
+# parts_db (IPZ60R017C7 650V vs ...XKSA1 600V): CoolMOS datasheets rate V(BR)DSS at
+# both 25C (600V) and 150C (650V) for the SAME part, and the two spellings' specs
+# come from different scrape sources reading different rows -- a parsing/source
+# artifact, not a voltage bin. Infineon's OPN docs define this block as packing.
 _INFINEON_PACKING = __import__('re').compile(r'(.{6,}?)[ax][ktu][sm]a\d$')
 
 
@@ -285,13 +291,22 @@ class PriceLookup:
         (currency match, fresh, status ok). Informational -- stock never gates a
         price. Distributors with no stock report are absent, never 0."""
         out: Dict[str, int] = {}
+        seen = set()  # (distributor, sku): family-sibling RECORDS built from the same
+        #               family search hold the SAME SKUs (live: byte-identical offer
+        #               lists under AKSA1 and XKSA1 keys) -- summing per record would
+        #               double/triple-count that stock. Dedupe across the family.
         for rec in self._by_part.get((mfr, family_mpn(mfr, mpn)), ()):
             if rec.currency != self.currency or rec.status != 'ok' \
                     or rec.age(self._now) > self.max_age:
                 continue
-            s = rec.total_stock()
-            if s is not None:
-                out[rec.distributor] = out.get(rec.distributor, 0) + s
+            for o in rec.offers:
+                if o.stock is None:
+                    continue
+                k = (rec.distributor, o.sku)
+                if o.sku and k in seen:
+                    continue
+                seen.add(k)
+                out[rec.distributor] = out.get(rec.distributor, 0) + o.stock
         return out
 
     def stats(self) -> str:

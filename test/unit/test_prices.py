@@ -332,6 +332,64 @@ def test_dk_family_tier_matches_ordering_sibling():
     assert rec.total_stock() == 4000
 
 
+def test_stocks_dedupes_shared_skus_across_sibling_records(db):
+    # spawned-review P1: sibling records built from the SAME family search hold the
+    # same SKUs (live: byte-identical offer lists under AKSA1 and XKSA1 keys) --
+    # summing per record reported 8000 for 4000 real pieces
+    shared = lambda: [_offer([(1, 1.8)], stock=4000, sku='448-X-ND'),
+                      _offer([(1, 2.0)], stock=0, sku='448-A-ND')]
+    db.add([_rec(mpn='IPP023N10N5AKSA1', offers=shared()),
+            _rec(mpn='IPP023N10N5XKSA1', offers=shared())])
+    lu = PriceLookup(qty=1)
+    assert lu.stocks('infineon', 'IPP023N10N5AKSA1') == {DIGIKEY: 4000}
+
+
+def test_fresh_gate_suppresses_family_siblings(monkeypatch, db, tmp_path):
+    # spawned-review P1 root cause: gate keyed narrower (exact) than the query
+    # (family) meant ranked sibling spellings each re-fetched the same family
+    # response every run -- quota waste AND the duplicate-SKU source
+    import dslib.prices.digikey_api as dk
+    monkeypatch.setattr(dk, 'prices_db', db)
+    monkeypatch.setattr('dslib.prices.history._PATH', str(tmp_path / 'h.sqlite3'))
+    db.add([_rec(mpn='IPP023N10N5AKSA1', offers=[_offer([(1, 1.0)])])])
+    n = dk.fetch_digikey_prices([('infineon', 'IPP023N10N5XKSA1')])
+    assert n['fresh_skip'] == 1 and n.get('fetched', 0) == 0
+
+
+def test_dk_truncated_window_is_indeterminate_not_miss():
+    # spawned-review P3: family-base queries are generic; 0 matches within a
+    # truncated hit window is not evidence of absence
+    from dslib.prices.digikey_api import IndeterminateMatch
+    raw = _dk_raw(products=[_dk_product(mpn='UNRELATED%d' % i, variations=[_dk_var()])
+                            for i in range(3)])
+    raw['response']['products_count'] = 40  # 37 more hits beyond the window
+    with pytest.raises(IndeterminateMatch):
+        parse_digikey_offers('infineon', 'IPP023N10N5AKSA1', raw)
+    # complete window with zero matches stays a real catalog_miss
+    raw['response']['products_count'] = 3
+    rec = parse_digikey_offers('infineon', 'IPP023N10N5AKSA1', raw)
+    assert rec.status == 'catalog_miss'
+
+
+def test_batch_phase_queries_include_family_bases(monkeypatch, db):
+    # spawned-review P2: the batch endpoint answers exact lookups only -- family
+    # parts must contribute their base to the query list or the stocked sibling
+    # never appears in the response
+    todo = [('infineon', 'IPP023N10N5AKSA1'), ('onsemi', 'NTMFS5C628NL')]
+    k1 = _FakeKey('k1')
+    seen_queries = []
+
+    def capture(mpns):
+        seen_queries.extend(mpns)
+        return _batch_raw([])
+
+    n, left = _run_batch_phase(monkeypatch, db, todo, [k1], {'k1': capture})
+    assert 'IPP023N10N5AKSA1' in seen_queries
+    assert 'IPP023N10N5' in seen_queries       # the family base rode along
+    assert 'NTMFS5C628NL' in seen_queries
+    assert len([q for q in seen_queries if q.startswith('NTMFS')]) == 1  # no base
+
+
 def test_dk_equality_tier_ignores_whitespace_and_case():
     raw = _dk_raw(products=[_dk_product(mpn='BSC070N10NS3G', variations=[_dk_var()])])
     rec = parse_digikey_offers('infineon', 'BSC070N10NS3 G', raw)

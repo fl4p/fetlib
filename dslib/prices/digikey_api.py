@@ -181,12 +181,17 @@ def _dk_keyword_search_raw(mpn: str, currency: str = 'USD',
     # orderable variant, hiding stocked siblings (AKSA1 with 0 stock vs XKSA1 in
     # stock); the base returns the whole family and the match tiers pick it apart
     keywords = family_mpn(mfr, mpn) if mfr else mpn
+    # a family-base query is shorter/more generic than an exact code: widen the hit
+    # window so a large ordering family (or catalog noise ranking above it) does not
+    # push the ranked sibling out of view (see also the truncation guard in
+    # parse_digikey_offers)
+    limit = 25 if keywords != mpn.lower() and keywords != mpn else 10
 
     retried_auth = retried_burst = False
     while True:
         try:
             data, status, headers = key.client['api'].keyword_search_with_http_info(
-                key.client_id, body=KeywordRequest(keywords=keywords, limit=10),
+                key.client_id, body=KeywordRequest(keywords=keywords, limit=limit),
                 authorization=key.client['auth'],
                 x_digikey_locale_site='US', x_digikey_locale_language='en',
                 x_digikey_locale_currency=currency)
@@ -365,6 +370,16 @@ def parse_digikey_offers(mfr: str, mpn: str, raw: dict,
     elif found_product:
         status = 'no_eligible_offer'
     else:
+        # truncation guard: with NOTHING matched, a hit window smaller than the
+        # response's total product count means the part may simply rank below the
+        # window (family-base queries are generic) -- that is not evidence of
+        # absence, and catalog_miss would persist it for max_age days
+        hits = resp.get('products') or []
+        total = resp.get('products_count')
+        if total is not None and total > len(hits):
+            raise IndeterminateMatch(
+                'digikey %s: 0 of %d returned products matched but the catalog has '
+                '%s -- window truncated, writing nothing' % (mpn, len(hits), total))
         status = 'catalog_miss'
     rec = PartOffers(mfr=mfr, mpn=mpn, distributor=DIGIKEY, currency=currency,
                      offers=offers, fetched_at=fetched_at, url=url, status=status)
@@ -536,8 +551,30 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
     leftovers: List[Tuple[str, str]] = []
     priced = 0
     auth_retried = set()  # key labels that already got one 401 client rebuild
-    chunks = [todo[i:i + 50] for i in range(0, len(todo), 50)]
-    for ci, chunk in enumerate(chunks):
+
+    # chunk by QUERY STRINGS (<=50/request), not parts: the batch endpoint answers
+    # exact product lookups only, so an ordering-family part contributes its ranked
+    # code PLUS the family base -- without it the stocked sibling of a consolidated
+    # code never appears in the batch response (the keyword path widens its search
+    # automatically; batch must be told). If the endpoint does not resolve bases,
+    # the exact codes still return their own data (status quo, no harm).
+    from dslib.prices import family_mpn as _family, norm_mpn as _norm
+    chunks: List[Tuple[List[Tuple[str, str]], List[str]]] = []
+    _parts, _queries = [], []
+    for part in todo:
+        q = [part[1]]
+        fam = _family(part[0], part[1])
+        if fam != _norm(part[1]):
+            q.append(fam.upper())
+        if _queries and len(_queries) + len(q) > 50:
+            chunks.append((_parts, _queries))
+            _parts, _queries = [], []
+        _parts.append(part)
+        _queries.extend(q)
+    if _parts:
+        chunks.append((_parts, _queries))
+
+    for ci, (chunk, queries) in enumerate(chunks):
         raw = None
         while batch_keys and raw is None:
             key = batch_keys[0]
@@ -550,7 +587,7 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
                 batch_keys.pop(0)
                 continue
             try:
-                raw = _dk_batch_details_raw([mpn for _, mpn in chunk], currency, key)
+                raw = _dk_batch_details_raw(queries, currency, key)
             except Exception as e:
                 status = getattr(e, 'status', None)
                 body = str(getattr(e, 'body', '') or '')
@@ -600,7 +637,7 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
             # no batch-capable key left. Everything not yet attempted goes back to the
             # keyword phase VERBATIM -- dropping or counting it here undercounted 50
             # parts per lost chunk in review reproduction.
-            remaining = [p for c in chunks[ci:] for p in c]
+            remaining = [p for c, _ in chunks[ci:] for p in c]
             if priced == 0 and ci == 0:
                 print('digikey batch: endpoint not enabled on any key -- falling back '
                       'to per-MPN keyword search. Ask DigiKey API support to enable '
@@ -655,19 +692,24 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
     # freshness gate matches on the REQUESTED currency: a USD query that DigiKey
     # answered in EUR lives under the (..., 'EUR') key, and probing only the
     # (..., 'USD') key re-spent quota on that part every run inside max_age
-    from dslib.prices import norm_mpn
+    from dslib.prices import family_mpn
     dk_by_part: Dict[Tuple[str, str], List[PartOffers]] = {}
     for rec in prices_db.load().values():
         if rec.distributor == DIGIKEY:
-            # normalized like the PriceLookup join: a discovery spelling change
-            # across runs ('BSC070N10NS3G' stored, 'BSC070N10NS3 G' ranked now)
-            # must not re-spend quota on an already-fresh part
-            dk_by_part.setdefault((rec.mfr, norm_mpn(rec.mpn)), []).append(rec)
+            # FAMILY-keyed, exactly like the PriceLookup join. Keying narrower
+            # (norm_mpn) while querying wider (family base) made ranked sibling
+            # spellings (AKSA1 + XKSA1 both ranked) re-fetch the SAME family
+            # response every run -- wasting quota and writing duplicate-SKU records
+            # under both keys (the stocks() double-count source). One fresh family
+            # member now suppresses fetching its siblings. Also covers plain
+            # spelling changes ('BSC070N10NS3G' vs 'BSC070N10NS3 G').
+            dk_by_part.setdefault((rec.mfr, family_mpn(rec.mfr, rec.mpn)),
+                                  []).append(rec)
 
     todo = []
     fresh = []
     for mfr, mpn in parts:
-        existing = [r for r in dk_by_part.get((mfr, norm_mpn(mpn)), ())
+        existing = [r for r in dk_by_part.get((mfr, family_mpn(mfr, mpn)), ())
                     if (getattr(r, 'requested_currency', None) or r.currency) == currency
                     and (now - r.fetched_at) <= max_age]
         if existing:
