@@ -19,7 +19,7 @@ if REPO_ROOT not in sys.path:
 from dslib import get_datasheets_path  # noqa: E402
 from dslib.store import parts_db  # noqa: E402
 
-from .housing import normalize as _normalize_housing  # noqa: E402
+from dslib.housing import normalize as _normalize_housing  # noqa: E402
 from .schema import Bucket, Meta, Part, Range  # noqa: E402
 
 log = logging.getLogger("mosfet-web")
