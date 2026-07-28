@@ -455,6 +455,7 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
     batch_keys = [k for k in keys if not k.dead]  # batch-capable until proven otherwise
     leftovers: List[Tuple[str, str]] = []
     priced = 0
+    auth_retried = set()  # key labels that already got one 401 client rebuild
     chunks = [todo[i:i + 50] for i in range(0, len(todo), 50)]
     for ci, chunk in enumerate(chunks):
         raw = None
@@ -472,9 +473,23 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
                 raw = _dk_batch_details_raw([mpn for _, mpn in chunk], currency, key)
             except Exception as e:
                 status = getattr(e, 'status', None)
-                if status in (403, 404):
-                    # not enabled on THIS app -- key stays alive for keyword work
-                    print('digikey batch: endpoint not enabled on key %s (HTTP %s), '
+                body = str(getattr(e, 'body', '') or '')
+                if status == 401 and 'subscribe' in body.lower():
+                    # the OBSERVED live not-enabled signal at /BatchSearch/v3:
+                    # 401 'You are not subscribed to this API' -- key stays alive
+                    # for keyword work
+                    print('digikey batch: key %s not subscribed to BatchSearch, '
+                          'trying next key' % key.label)
+                    batch_keys.pop(0)
+                    continue
+                if status == 401 and key.label not in auth_retried:
+                    auth_retried.add(key.label)  # token expiry: one rebuild, retry
+                    _build_client(key)
+                    continue
+                if status in (401, 403, 404):
+                    # 403/404 = endpoint absent/forbidden for this app; second 401 =
+                    # auth beyond repair here -- either way batch-incapable only
+                    print('digikey batch: endpoint not usable on key %s (HTTP %s), '
                           'trying next key' % (key.label, status))
                     batch_keys.pop(0)
                     continue

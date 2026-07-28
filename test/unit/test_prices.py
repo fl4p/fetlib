@@ -465,6 +465,24 @@ def test_batch_phase_all_keys_403_returns_full_todo_unwritten(monkeypatch, db):
     assert db.count() == 0  # nothing written
 
 
+def test_batch_phase_401_not_subscribed_retires_key_from_batch_only(monkeypatch, db):
+    # the OBSERVED live signal at /BatchSearch/v3 for a not-enabled app is 401
+    # 'You are not subscribed to this API' -- batch-incapable, keyword-alive
+    todo = [('infineon', 'X1')]
+    k1, k2 = _FakeKey('k1'), _FakeKey('k2')
+
+    def not_subscribed(mpns):
+        e = _Http(401)
+        e.body = '{"ErrorMessage":"Invalid Client-Id","ErrorDetails":"You are not ' \
+                 'subscribed to this API. Please subscribe and try again."}'
+        raise e
+
+    n, left = _run_batch_phase(monkeypatch, db, todo, [k1, k2],
+                               {'k1': not_subscribed,
+                                'k2': lambda mpns: _batch_raw([_batch_detail()])})
+    assert n['fetched'] == 1 and left == [] and not k1.dead
+
+
 def test_batch_phase_quota_death_returns_all_unattempted(monkeypatch, db):
     # 100 parts: chunk 1 prices 40, leaves 10 unmatched; chunk 2 kills the only key.
     # EVERYTHING unpriced (10 + 50) must come back for the keyword phase; the batch

@@ -124,9 +124,10 @@ a column) and returns `None`, never 0, for unpriced parts.
   with `moq > qty` do not price at qty (no MOQ-tier flattery). **Batch path** (`use_batch`,
   default on): BatchProductDetails at the SDK-default `/BatchSearch/v3` host (the fork's
   "v4" batch package is a v3 alias — do not force /v4, that 404s), 50 MPNs = 1 request;
-  enablement is PER APP, so each key is probed and a 403/404 retires it from batch only
-  (keyword still works); batch writes only `ok` records and returns everything else to the
-  keyword phase, which owns all negative/quota accounting. As of 2026-07-28 enablement was
+  enablement is PER APP, so each key is probed and a not-enabled signal retires it from
+  batch only (keyword still works) — the observed live signal is **401 "not subscribed to
+  this API"**, with 403/404 handled too; batch writes only `ok` records and returns
+  everything else to the keyword phase, which owns all negative/quota accounting. As of 2026-07-28 enablement was
   requested but not yet granted — until then runs print the fallback line and the
   ~3,073-candidate fugu3 corpus costs several key-days of keyword quota.
 - **LCSC** (`dslib/prices/lcsc.py`): re-parses the price ladders out of the same
