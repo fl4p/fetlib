@@ -959,7 +959,36 @@ def _header_has_structure(header: HeaderRow) -> bool:
     return bool(set(header.cols) - _CAPTION_ONLY_COLS)
 
 
-def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
+def _row_unit_conflicts(row: TextRow,
+                        cols: Dict[str, Tuple[float, float]],
+                        symbol: str) -> bool:
+    """True when ``row``'s own unit cell names a unit of a DIFFERENT
+    dimension than ``symbol`` -- positive evidence the row measures some
+    other parameter (fetlib#43: the IGSS row's cell reads "nA"; no
+    resistance row prints that).
+
+    Only a single clean word in the unit column counts as evidence -- the
+    multi-token salvage in _clean_unit can pull a stray "V" out of leaked
+    condition text, which must not veto a correct pairing. A row with no
+    readable unit stays eligible: split value rows usually carry no unit at
+    all, and this guard vetoes theft on positive proof, it does not demand
+    proof of innocence.
+    """
+    dim = _symbol_dimension(symbol)
+    if dim is None or "unit" not in cols:
+        return False
+    x1, x2 = cols["unit"]
+    cand = [w for w in row.words if x1 <= w.bbox.cx <= x2]
+    if len(cand) != 1:
+        return False
+    unit = _clean_unit(cand[0].text)
+    if unit is None:
+        return False
+    return not _dimension_unit_re(dim).match(unit)
+
+
+def _pair_split_rows(scan: List[dict], i: int,
+                     cols: Dict[str, Tuple[float, float]]) -> List[TextRow]:
     """Value rows belonging to a symbol row that carries no numbers.
 
     Where one parameter is measured under several conditions, the label and
@@ -986,7 +1015,22 @@ def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
     way, so neighbours in the list can be far apart on the page.
     """
     row = scan[i]["row"]
+    symbol = scan[i]["sym"].symbol
     reach = max(row.bbox.height, 1.0) * _PAIR_MAX_ROW_GAP
+
+    # A symbol row that SHARES ITS BASELINE with a numbered row is not a
+    # vertically centred label at all -- it is one fragment of a single
+    # printed line that the clustering split in two (huayi "WPS 文字" sheets
+    # split "description + cond + unit" from "RDS(ON)* + values" by ~0.4 pt,
+    # fetlib#43). The values live on that fragment and nowhere else: if it
+    # names the symbol itself it already owns them as its own scan row, and
+    # reaching past it stole the IGSS row's ±100 nA as Rds_on max=100 mΩ.
+    for other in scan:
+        if other is scan[i] or not other["has_num"]:
+            continue
+        ob = other["row"].bbox
+        if ob.v_overlap(row.bbox) > 0.5 * min(row.bbox.height, ob.height):
+            return [] if other["sym"] else [other["row"]]
 
     out: List[TextRow] = []
     for j in (i - 1, i + 1):
@@ -994,6 +1038,8 @@ def _pair_split_rows(scan: List[dict], i: int) -> List[TextRow]:
             continue
         other = scan[j]
         if not other["has_num"] or other["sym"]:
+            continue
+        if _row_unit_conflicts(other["row"], cols, symbol):
             continue
         if abs(other["row"].bbox.cy - row.bbox.cy) <= reach:
             out.append(other["row"])
@@ -1261,7 +1307,7 @@ def parse_rows_for_page(mfr: str,
             if item["has_num"]:
                 value_rows = [item["row"]]
             else:
-                value_rows = _pair_split_rows(scan, i)
+                value_rows = _pair_split_rows(scan, i, header.cols)
             for value_row in value_rows:
                 values = (item["values"] if value_row is item["row"]
                           else _values_for_row(value_row, header.cols))
@@ -1299,6 +1345,17 @@ def parse_rows_for_page(mfr: str,
                     if not cond:
                         cond = _cond_with_continuation(scan, v_idx, header.cols)
                         cond_src = "wrap" if cond else None
+                if not cond and value_row is not item["row"]:
+                    # A split line prints the condition against the label
+                    # half; the value half has none of its own. Same fallback
+                    # the unit takes above — without it the mcc/MCU60N02
+                    # 5.5/8.8 mΩ row sheds its "VGS=2.5V, ID=15A" and reads
+                    # as the part's unconditioned nominal.
+                    cond = _cond_from_cell(page, scan, i, header.cols)
+                    cond_src = "sym-cell" if cond else None
+                    if not cond:
+                        cond = _cond_with_continuation(scan, i, header.cols)
+                        cond_src = "sym-wrap" if cond else None
                 # A condition printed in the symbol's own name is MORE specific
                 # than anything the shared Conditions cell says. It goes FIRST
                 # because _parse_cond_text keeps the first statement of a key,
