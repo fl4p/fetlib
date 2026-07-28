@@ -183,6 +183,40 @@ def test_corpus_membership_is_stable():
     they had never had -- hence 26 more comparable records than before the incident, and
     one new reported row. If this number moves again, find out which of those two things
     happened before touching it.
+
+    STILL RED as of 2026-07-27 evening, ON PURPOSE. Read this before adjusting 5308.
+
+    An attempt to re-pin this at 5562 was reverted, because the investigation behind it was
+    wrong in the one direction that matters. Recording it so the next person does not
+    repeat it:
+
+      * Growth is real: vs the .bak-20260727-1419 snapshot, +295 records, 0 removed, and
+        447 shared records gained a symbol.
+      * The total field count fell 597389 -> 583106. That part IS benign: fields_lists
+        holds one entry per extraction CANDIDATE, and a re-parse legitimately replaces a
+        symbol's candidate list with fewer candidates. The merge guard is symbol-level and
+        test_no_duplicate_candidates_for_a_symbol_fresh_already_has pins that deliberately.
+      * BUT the records that lost Rds_on entirely (17 at first measurement, 26 an hour
+        later) were NOT garbage being refused, which is what the reverted version claimed.
+        Their unit was ':' -- and ':' is an explicitly recognised omega rendering, listed
+        in dslib.field._OHM_BODY, so ohm_unit_to_milli_mul(':') == 1e3 and a stored 0.0375
+        means 37.5 mOhm. Checked against the independent catalog witness: 0.0375 * 1000 ==
+        37.5 == catalog, ratio 1.0000. Those were CORRECT values.
+      * And they were not refused: fields_lists['Rds_on'] is now EMPTY for them, i.e. the
+        parser produced zero candidates. That is an extraction-RECALL regression that
+        destroyed known-good data, and it is invisible to this test's metrics because an
+        absent symbol reports no disagreement -- exactly like a correct one.
+      * Symbol-set diffing is not sufficient anyway: 82 shared records changed their
+        get_resistance_milliohm('Rds_on') OUTPUT while keeping the symbol, several by ~2.09x
+        (e.g. vishay/SUM45N25-58 58.0 -> 121.0 mOhm). None crosses DISAGREE_RATIO yet.
+        Compare VALUES, not just symbol presence, before trusting any new number.
+
+    Also: the count is not measurable right now. apps/reparse_all.py --apply is in flight
+    and this has read 5562, 5463 and 5373 within one hour; it is only stable between
+    batches. Re-measure once that finishes AND the recall regression above is understood.
+
+    Per the paragraph above: left RED until the data comes back, rather than adjusted to
+    match the damage.
     """
     from apps.audit_rds_witnesses import rows
     comparable, rs = rows()
