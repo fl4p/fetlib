@@ -1026,10 +1026,20 @@ QRR_LAYOUT_CONDITIONS = {
     ("st", "STWA88N65M5"): dict(IF=84, didt=1e+08, VR=100, Tj=25),  # Qrr=14000 nC trr=544 ns, IRRM/IF=0.62
     ("st", "STY139N65M5"): dict(IF=130, didt=1e+08, VR=100, Tj=25),  # Qrr=15000 nC trr=570 ns, IRRM/IF=0.41
     ("st", "STY145N65M5"): dict(IF=138, didt=1e+08, VR=100, Tj=25),  # Qrr=14500 nC trr=568 ns, IRRM/IF=0.37
-    ("toshiba", "TK090A65Z"): dict(IF=15, didt=1e+08, VR=400, Tj=25),  # Qrr=5100 nC trr=330 ns, IRRM/IF=2.08
-    ("toshiba", "TK090Z65Z"): dict(IF=15, didt=1e+08, VR=400, Tj=25),  # Qrr=5100 nC trr=330 ns, IRRM/IF=2.08
+    ("toshiba", "TK042N65Z5"): dict(IF=27.5, didt=1e+08, VR=400, Tj=25),  # Qrr=1100 nC trr=160 ns, IRRM/IF=0.51
+    ("toshiba", "TK057V60Z1"): dict(IF=20, didt=1e+08, VR=400, Tj=25),  # Qrr=5700 nC trr=354 ns, IRRM/IF=1.63
+    ("toshiba", "TK058V60Z5"): dict(IF=20, didt=1e+08, VR=400, Tj=25),  # Qrr=870 nC trr=140 ns, IRRM/IF=0.63
+    ("toshiba", "TK065U65Z"): dict(IF=19, didt=1e+08, VR=400, Tj=25),  # Qrr=6000 nC trr=350 ns, IRRM/IF=1.81
+    ("toshiba", "TK068N65Z5"): dict(IF=18.5, didt=1e+08, VR=400, Tj=25),  # Qrr=740 nC trr=135 ns, IRRM/IF=0.61
+    ("toshiba", "TK068Z65Z5"): dict(IF=18.5, didt=1e+08, VR=400, Tj=25),  # Qrr=740 nC trr=135 ns, IRRM/IF=0.61
+    ("toshiba", "TK073E60Z5"): dict(IF=16, didt=1e+08, VR=400, Tj=25),  # Qrr=690 nC trr=126 ns, IRRM/IF=0.69
+    ("toshiba", "TK090E65Z"): dict(IF=15, didt=1e+08, VR=400, Tj=25),  # Qrr=5100 nC trr=330 ns, IRRM/IF=2.08
+    ("toshiba", "TK100A08N1"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=190 nC trr=93 ns, IRRM/IF=0.04
+    ("toshiba", "TK100A08N1,S4X"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=190 nC trr=93 ns, IRRM/IF=0.04
     ("toshiba", "TK100A10N1"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=220 nC trr=93 ns, IRRM/IF=0.05
     ("toshiba", "TK100A10N1,S4X"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=220 nC trr=93 ns, IRRM/IF=0.05
+    ("toshiba", "TK100E08N1"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=190 nC trr=93 ns, IRRM/IF=0.04
+    ("toshiba", "TK100E08N1,S1X"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=190 nC trr=93 ns, IRRM/IF=0.04
     ("toshiba", "TK100E10N1"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=220 nC trr=93 ns, IRRM/IF=0.05
     ("toshiba", "TK100E10N1,S1X"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=220 nC trr=93 ns, IRRM/IF=0.05
     ("toshiba", "TK125U60Z1"): dict(IF=10, didt=1e+08, VR=400, Tj=25),  # Qrr=3100 nC trr=285 ns, IRRM/IF=2.24
