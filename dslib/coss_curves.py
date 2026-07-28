@@ -141,8 +141,11 @@ COSS_CURVES = {
 
 # Structured conditions and source identity travel with the curve instead of being
 # recoverable only by reading the comments above. All currently curated curves are
-# Infineon typical capacitance graphs measured at VGS=0 V and f=1 MHz; the graph does not
-# state a temperature, so it remains None instead of being silently promoted to 25 C.
+# Infineon typical capacitance graphs measured at VGS=0 V and f=1 MHz. The diagram
+# caption states no temperature, but the datasheet's blanket characteristics condition
+# ("at Tj=25 °C, unless otherwise specified" — verified on IPP022N12NM6 Rev 2.0 p.3;
+# same template across these Rev 2.0/2.1/2.3 OptiMOS/StrongIRFET sheets) covers it, so
+# temperature_c=25.0 is a datasheet-stated condition, not a silent promotion.
 COSS_CURVE_SOURCE = {
     ("infineon", "IPP024N08NF2S"): dict(
         datasheet_revision="2.1", source_figure="Diagram 11", source_page=8,
@@ -182,17 +185,20 @@ COSS_CURVE_SOURCE = {
 COSS_CURVE_META = {
     key: dict(
         frequency_hz=1e6,
-        temperature_c=None,
+        temperature_c=25.0,
         gate_bias_v=0.0,
         curve_registry_id="%s:%s:coss-v1" % key,
         binding_state="registry-curve-and-metadata",
-        source_document="Infineon datasheet",
+        # Per-entry, from the key + curated revision: a shared literal here silently
+        # stamped "Infineon" onto whatever non-Infineon curve gets added next.
+        source_document="%s %s datasheet rev %s" % (
+            mfr, mpn, COSS_CURVE_SOURCE[key]["datasheet_revision"]),
         provenance="%s datasheet Coss(V) graph; digitized trace with table-anchor validation" % mpn,
         evidence_quality="PASS",
         **COSS_CURVE_SOURCE[key],
     )
     for key in COSS_CURVES
-    for _, mpn in (key,)
+    for mfr, mpn in (key,)
 }
 
 
@@ -284,8 +290,12 @@ def coss_curve_for(mfr, mpn):
     """Return the digitized [(V, Coss_pF, Crss_pF), ...] curve for a part, or None if the
     part has no curve in the DB. Case-tolerant on mfr (matching dslib key lookups). Falls
     back to a base-MPN match so an orderable suffix (e.g. IPP024N08NF2S -> ...AKMA1) still
-    resolves the base part's curve; longest matching base wins to avoid false positives."""
-    return _curve_for(COSS_CURVES, mfr, mpn)
+    resolves the base part's curve; longest matching base wins to avoid false positives.
+
+    Returns a COPY: handing out the module-level list let any consumer that mutates a
+    specs' curve in place corrupt the registry process-wide."""
+    curve = _curve_for(COSS_CURVES, mfr, mpn)
+    return list(curve) if curve else None
 
 
 def coss_curve_meta_for(mfr, mpn):
@@ -295,5 +305,7 @@ def coss_curve_meta_for(mfr, mpn):
 
 
 def ciss_curve_for(mfr, mpn):
-    """Return the optional digitized [(V, Ciss_pF), ...] curve for a part, or None."""
-    return _curve_for(CISS_CURVES, mfr, mpn)
+    """Return the optional digitized [(V, Ciss_pF), ...] curve for a part, or None.
+    Returns a copy for the same reason as ``coss_curve_for``."""
+    curve = _curve_for(CISS_CURVES, mfr, mpn)
+    return list(curve) if curve else None

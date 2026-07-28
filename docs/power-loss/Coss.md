@@ -127,16 +127,25 @@ into this material-loss bucket.
 
 A measured Qrr integral can contain junction displacement charge. The Coss
 bucket already owns that charge, so `dcdc_buck_ls` subtracts the calibrated
-Qoss share when Qrr test voltage `VR` and Qoss(VR) are available. It reports
-`Qrr_q0`, its `Qrr_q0_basis`, `Qrr_decont`, and the accounting state
-`Qrr_double_booking=exactly-once`. Accounting ownership is separate from
-confidence: `Qrr_double_booking_evidence`, `Qrr_qoss_model_state`,
-`Qrr_qoss_evidence`, provenance, conditions, and extrapolation flags preserve
-whether the subtraction used a validated curve, an extrapolated curve, or the
-scalar fallback. These fields survive successful operating-point fits and
-`datasheet-flat-nofit` fallbacks and are exported with ranking rows.
+Qoss share when the Qrr test voltage `VR` is available **and Qoss(VR) comes
+from a datasheet Coss(V) curve**. It reports `Qrr_q0`, its `Qrr_q0_basis`,
+`Qrr_decont`, and the accounting state `Qrr_double_booking=exactly-once`.
+Accounting ownership is separate from confidence:
+`Qrr_double_booking_evidence`, `Qrr_qoss_model_state`, `Qrr_qoss_evidence`,
+provenance, conditions, and extrapolation flags preserve whether the
+subtraction used a validated or an extrapolated curve. These fields survive
+successful operating-point fits and `datasheet-flat-nofit` fallbacks and are
+exported with ranking rows.
 
-When VR or Qoss is unavailable, the raw result is labelled
+The scalar 1/&radic;V fallback never funds a subtraction — flat path or 1pt
+fit. `QRR_QOSS_FRACTION` was calibrated against measured Coss(V) curves, and
+applying it to the scalar guess is anti-monotone in the optimistic direction:
+the worse a corrupt Coss overstates the die, the more Qrr it deletes and the
+better the part ranks. Such rows keep the full flat value, stay
+`datasheet-flat-qoss-unverified` / `Qrr_double_booking=UNVERIFIED`, and record
+the refusal in `Qrr_decont_reason`.
+
+When VR or Qoss is unavailable, the raw result is likewise labelled
 `datasheet-flat-qoss-unverified` and `Qrr_double_booking=UNVERIFIED`; absence
 of evidence never appears as a successful decontamination.
 
@@ -159,10 +168,30 @@ adjacent `P_coss_*` columns are search/sort conveniences. Staged-switching
 rows namespace their two complete reports as `switcher` and `conductor` in
 the audit payload.
 
-`validate_coss_report()` checks conservation, expected destination, and
-evidence state. Total-watt agreement by itself is not a mechanism validation.
-The unit suite exercises isolated charge/discharge fixtures, partial ZVS, and
-synchronous switching-cell transitions at multiple bus voltages.
+`validate_coss_report()` independently rechecks conservation, the power
+figures against the per-event ledger under the declared accounting owners,
+every destination bucket against the flows that feed it, expected
+destination (absence passes only when there is no dissipated energy to land
+— a perfect ZVS event must not FAIL), and evidence state. Total-watt
+agreement by itself is not a mechanism validation. It runs on **every
+production report** inside `p_coss_eoss` (downgrade-only; the verdict is
+recorded as `independent_validation` in the report conditions), not only in
+tests. The unit suite additionally exercises isolated charge/discharge
+fixtures, partial ZVS, and synchronous switching-cell transitions at
+multiple bus voltages.
+
+A report that FAILs validation or evidence books **NaN** through
+`p_bookable_w` — the same poison as an unavailable model — so a
+physically-impossible mechanism can never improve a ranking while carrying
+a red flag only in a side column. The raw figure stays in `p_accounted_w`
+for audit.
+
+The C(V) curve's 1 MHz measurement frequency is not an evidence-capping
+extrapolation axis: the curve is the quasi-static reversible state
+function, and frequency-dependent Coss loss belongs to the hysteresis
+calibration, which refuses a frequency mismatch outright. Temperature and
+gate bias remain capping axes; the curated Infineon curves carry
+`temperature_c=25.0` via the datasheet blanket characteristics condition.
 
 ## Ownership contract with dcdc-tools
 

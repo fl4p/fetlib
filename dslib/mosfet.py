@@ -32,12 +32,21 @@ def qrr_part_key(specs):
     return f'{mfr}:{mpn}' if mfr and mpn else None
 
 
+_warned_registry_refresh = set()
+
+
 def attach_coss_registry(specs: 'MosfetSpecs', mfr, mpn):
     """Attach the Coss(V) curve and its structured provenance by exact/base MPN.
 
     Specs are built both from the parsed-datasheet pipeline and by unpickling the parts
     DB. Keeping the attach in one helper prevents the former from silently falling back
     to scalar Coss while the latter uses the nonlinear curve.
+
+    A baked copy whose ``curve_registry_id`` belongs to this part's registry lineage
+    (``mfr:MPN:coss-vN``) is treated as a CACHE of the registry entry and refreshed to
+    the current generation (loudly, once per part, when the trace differs). To keep a
+    deliberate LOCAL override, strip or rename ``curve_registry_id`` — a copy carrying
+    the registry's id claims the registry's provenance and will be superseded by it.
     """
     if specs is None:
         return specs
@@ -57,6 +66,19 @@ def attach_coss_registry(specs: 'MosfetSpecs', mfr, mpn):
     def same_curve(a, b):
         return bool(a) and bool(b) and tuple(map(tuple, a)) == tuple(map(tuple, b))
 
+    def registry_lineage(m):
+        # 'infineon:IPP022N12NM6:coss-v1' -> 'infineon:IPP022N12NM6' for ANY
+        # generation of this part's registry entry; None for custom/foreign ids.
+        rid = (m or {}).get('curve_registry_id')
+        if not isinstance(rid, str):
+            return None
+        base, sep, gen = rid.rpartition(':')
+        return base if sep and gen.startswith('coss-v') else None
+
+    from_this_registry = (registry_lineage(meta) is not None
+                          and registry_lineage(meta)
+                          == registry_lineage(registry_meta))
+
     if not has_curve and not has_meta:
         # Registry data is one indivisible evidence object.
         specs.coss_curve = registry_curve
@@ -67,16 +89,39 @@ def attach_coss_registry(specs: 'MosfetSpecs', mfr, mpn):
         if same_curve(curve, registry_curve):
             specs.coss_curve_meta = registry_meta
     elif has_meta and not has_curve:
-        # The registry ID is the only safe way to restore the other half.
-        if meta.get('curve_registry_id') == registry_meta.get('curve_registry_id'):
+        # Any generation of this part's registry lineage restores BOTH halves from the
+        # current registry — an exact-id-only restore left older generations curveless.
+        if from_this_registry:
             specs.coss_curve = registry_curve
+            specs.coss_curve_meta = dict(registry_meta)
     else:
         curve_matches = same_curve(curve, registry_curve)
         meta_matches = (meta.get('curve_registry_id')
                         == registry_meta.get('curve_registry_id'))
-        if curve_matches != meta_matches:
-            # Preserve caller data but make the broken evidence binding impossible to
-            # rank as PASS.
+        if curve_matches and meta_matches:
+            if meta != registry_meta:
+                # Same generation, refreshed metadata content (e.g. a condition field
+                # filled in later) — the id+trace match proves registry origin.
+                specs.coss_curve_meta = dict(registry_meta)
+        elif from_this_registry:
+            # The baked copy is a CACHE of this part's registry entry, not independent
+            # evidence: refresh both halves. Without this, an in-place curve correction
+            # kept serving the superseded trace (downgraded), and a coss-v2 bump kept
+            # serving the v1 curve stamped PASS forever — the worse divergence was the
+            # one that stayed green. Loud (once per part): a hand-edited local curve
+            # that kept the registry id is replaced here — see the docstring for how
+            # to declare a genuine local override.
+            if not curve_matches and (mfr, mpn) not in _warned_registry_refresh:
+                _warned_registry_refresh.add((mfr, mpn))
+                warnings.warn(
+                    '%s %s: baked Coss curve superseded by registry %r; local copy '
+                    'replaced (strip curve_registry_id to keep a local override)'
+                    % (mfr, mpn, registry_meta.get('curve_registry_id')))
+            specs.coss_curve = registry_curve
+            specs.coss_curve_meta = dict(registry_meta)
+        elif curve_matches != meta_matches:
+            # Genuinely custom data cross-wired with registry evidence: preserve caller
+            # data but make the broken binding impossible to rank as PASS.
             specs.coss_curve_meta = dict(
                 meta, evidence_quality='UNVERIFIED',
                 binding_state='unverified-curve-metadata-registry-mismatch')
@@ -105,6 +150,12 @@ def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
     """
     if specs is None:
         return specs
+    # The Coss registry rides along here rather than at the call site in
+    # dslib.field.get_mosfet_specs: field.py's file content IS field_repr_salt(), so
+    # attach wiring placed there invalidates the whole parse cache on every edit, while
+    # mosfet.py is in no cache salt. Idempotent (fill-if-absent), so callers that
+    # already ran attach_coss_registry (dslib.store.load_parts) are unaffected.
+    attach_coss_registry(specs, mfr, mpn)
     try:
         from dslib.qrr_conditions import qrr_conditions_for
     except ImportError:
@@ -377,7 +428,11 @@ class MosfetSpecs:
         from dslib.field import MpnMfr
         part = dslib.store.parts_db.load_obj(MpnMfr(mfr, mpn=mpn))
         assert part.is_fet
-        return part.specs
+        # Same registry attach as load_parts/get_mosfet_specs. Without it, whether this
+        # path saw the curated Coss curve / Qrr conditions depended on which process
+        # last WROTE the pickle, not on the registry — the same specs gave different
+        # loss numbers depending on unrelated DB-write history.
+        return attach_qrr_registries(part.specs, mfr, mpn)
 
     @property
     def V_pl(self):

@@ -1310,6 +1310,23 @@ class DatasheetFields():
 
         # Some datasheet only show Coss at given Vds
         coss_cond = _select_cond_values('Coss', 'Vds') or _select_cond_values('Qoss', 'Vds')
+        # Absolute plausibility floor, deliberately NOT rating-relative: judged against
+        # the full datasheets DB (14,248 Coss/Qoss Vds cond values), the corpus has
+        # legitimate conventions at 25 V on 200-800 V legacy parts and 10 V on 100 V
+        # parts, so any rating-relative band drops real anchors by the hundreds — and
+        # inherits Vds-rating parse corruption as its own precondition. What actually
+        # pollutes this bucket is |Vds| < 5 V: 317x a 'Vds=1' artifact (a mis-bucketed
+        # f=1 MHz-style condition) plus sub-volt Vsd-class strays. p-channel conditions
+        # are negative, hence the magnitude test.
+        if coss_cond:
+            _coss_vds_sane = [v for v in coss_cond if abs(v) >= 5.0]
+            if _coss_vds_sane != coss_cond:
+                warnings.warn(
+                    f"{self.part}: Coss/Qoss Vds condition(s) "
+                    f"{sorted(set(coss_cond) - set(_coss_vds_sane))} below the 5 V "
+                    f"plausibility floor — dropped (mis-bucketed condition, check "
+                    f"the datasheet parse)")
+                coss_cond = _coss_vds_sane
 
         # Gate-charge TABLE test current: the Id condition on the Qg/Qgs/Vpl rows — the
         # current Vplateau and the charge partition were measured at. NOT the ID_25
@@ -1331,8 +1348,8 @@ class DatasheetFields():
                           f"({lo}..{hi}) — dropped to NaN (check the datasheet parse)")
             return math.nan
 
-        from dslib.mosfet import MosfetSpecs, attach_coss_registry, attach_qrr_registries
-        specs = MosfetSpecs(
+        from dslib.mosfet import MosfetSpecs, attach_qrr_registries
+        return attach_qrr_registries(MosfetSpecs(
             Vds_max=ds.get_max_or_min_or_typ('Vds'),  # TODO rename 'VdsBR'
             Rds_on=rds_on * 1e-3,
             Id=Id,
@@ -1357,11 +1374,7 @@ class DatasheetFields():
             # back to the flat datasheet value for every part. See attach_qrr_registries.
             # The datasheet's OWN parsed test point goes in as the lowest-precedence
             # source; curated entries still win. See qrr_test_conditions.
-        )
-        attach_coss_registry(specs, self.part.mfr, self.part.mpn)
-        return attach_qrr_registries(
-            specs, self.part.mfr, self.part.mpn,
-            parsed_qrr_cond=self.qrr_test_conditions())
+        ), self.part.mfr, self.part.mpn, parsed_qrr_cond=self.qrr_test_conditions())
 
     def get(self, sym, stat: Union[Tuple[Field.StatLiteral], Field.StatLiteral], required=False):
         if isinstance(stat, str):

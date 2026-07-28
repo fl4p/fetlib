@@ -29,6 +29,14 @@ UNVERIFIED = "UNVERIFIED"
 OWNER_FETLIB = "fetlib-analytic"
 OWNER_EXTERNAL = "external-waveform"
 
+# The one curve-backed model state. Consumers that must distinguish "real Coss(V)
+# evidence" from the scalar guess (e.g. the Qrr decontamination gate) compare against
+# this constant instead of re-typing the string.
+MODEL_STATE_CURVE = "datasheet-coss-curve"
+
+# Scalar-fallback warning dedup, keyed by MPN (see CossEnergyModel.from_mosfet).
+_warned_scalar_fallback = set()
+
 MECH_COMMUTATED = "commutated"
 MECH_CHANNEL_DISCHARGE = "channel-discharge"
 MECH_RESISTIVE_CHARGE = "resistive-charge"
@@ -368,6 +376,14 @@ class CossEnergyModel:
                 v, c_pf = float(row[0]), float(row[1])
                 if not _finite(v) or not _finite(c_pf) or v < 0 or c_pf <= 0:
                     raise ValueError("invalid Coss curve row %r" % (row,))
+                # Curve rows are picofarads. Real power-MOSFET Coss curves live in
+                # ~1..1e5 pF; a curve mistakenly supplied in farads lands 12 orders
+                # below and previously under-reported energy by 1e12, silently. The
+                # populations are separated by a genuine void, so the floor is safe.
+                if not 0.1 <= c_pf <= 1e6:
+                    raise ValueError(
+                        "implausible Coss curve value %g pF in row %r — rows are pF, "
+                        "not farads" % (c_pf, row))
                 rows.append((v, c_pf * 1e-12))
             rows.sort()
             if len(rows) < 2 or rows[0][0] != 0:
@@ -377,18 +393,28 @@ class CossEnergyModel:
             self.curve = tuple(rows)
             self.scalar_coss_f = None
             self.scalar_anchor_v = None
-            self.model_state = "datasheet-coss-curve"
+            self.model_state = MODEL_STATE_CURVE
             self.provenance = self.metadata.get("provenance", "attached Coss(V) curve")
             self.base_evidence_quality = self.metadata.get("evidence_quality", UNVERIFIED)
         else:
             if not _finite(scalar_coss_f) or scalar_coss_f < 0:
                 raise ValueError("no usable Coss(V) curve or scalar Coss")
             if scalar_coss_f == 0:
+                # A parsed Coss of exactly 0 is indistinguishable from this repo's
+                # corrupt-parse class, and it is the BEST possible loss number — the
+                # anti-monotone false-PASS shape. Zero is only accepted when the caller
+                # declares the intent; without that, refuse so the part becomes an
+                # unavailable/NaN report instead of a silent 0 W with minted provenance.
+                if not self.metadata.get("provenance"):
+                    raise ValueError(
+                        "Coss=0 without explicit provenance: a corrupt/zero-parsed Coss "
+                        "is indistinguishable from an intentional zero-Coss fixture; "
+                        "declare one in coss_curve_meta['provenance']")
                 self.curve = None
                 self.scalar_coss_f = 0.0
                 self.scalar_anchor_v = scalar_anchor_v
                 self.model_state = "explicit-zero-coss"
-                self.provenance = self.metadata.get("provenance", "explicit Coss=0 fixture/device")
+                self.provenance = self.metadata["provenance"]
                 self.base_evidence_quality = self.metadata.get("evidence_quality", UNVERIFIED)
                 self._flag_condition_extrapolation()
                 return
@@ -414,18 +440,32 @@ class CossEnergyModel:
         anchor = getattr(mf, "Coss_Vds", None)
         if not _finite(anchor) or anchor <= 0:
             anchor = getattr(mf, "Coss_V0", math.nan)
-        if not curve and coss != 0:
+        # Warn only when the fallback will actually be USED: for Coss=NaN the
+        # constructor raises right after, and a warning claiming a fallback that never
+        # happens misattributes the refusal (the unavailable report carries the real
+        # reason in its provenance).
+        if not curve and _finite(coss) and coss > 0:
             part = getattr(getattr(mf, "part", None), "mpn", "<unknown>")
-            warnings.warn("%s: no Coss(V) curve; using explicitly UNVERIFIED "
-                          "inverse-sqrt scalar fallback" % part)
+            # Once per part per process: the model is constructed several times per
+            # part per run, and the per-MPN message defeats Python's own warn dedup —
+            # a full ranking run drowned in thousands of identical lines.
+            if part not in _warned_scalar_fallback:
+                _warned_scalar_fallback.add(part)
+                warnings.warn("%s: no Coss(V) curve; using explicitly UNVERIFIED "
+                              "inverse-sqrt scalar fallback" % part)
         return cls(curve=curve, scalar_coss_f=coss, scalar_anchor_v=anchor,
                    metadata=meta, operating_frequency_hz=operating_frequency_hz,
                    operating_temperature_c=operating_temperature_c,
                    gate_bias_v=gate_bias_v)
 
     def _flag_condition_extrapolation(self):
+        # frequency_hz is deliberately NOT an evidence-capping axis: the C(V) curve is
+        # the quasi-static reversible state function, and its 1 MHz small-signal
+        # measurement frequency is not extrapolated by running the converter at a
+        # different switching frequency. Frequency-DEPENDENT Coss loss is the
+        # hysteresis calibration's job, and _validate_hysteresis refuses a frequency
+        # mismatch outright. Both frequencies remain side-by-side in `conditions`.
         checks = (
-            ("frequency_hz", self.operating_frequency_hz),
             ("temperature_c", self.operating_temperature_c),
             ("gate_bias_v", self.gate_bias_v),
         )
@@ -472,7 +512,11 @@ class CossEnergyModel:
             dx = remaining - vmax
             q += cmax * dx
             e += cmax * (remaining ** 2 - vmax ** 2) / 2.0
-            flag = "voltage_v:curve-max-%g->%g-constant-C-extension" % (vmax, remaining)
+            # One flag per model, keyed on the curve limit only: a per-voltage flag
+            # grew without bound across calls at varying voltages. Flags are cumulative
+            # model state — production builds a fresh model per evaluation; a reused
+            # model keeps flags from earlier queries (conservative direction).
+            flag = "voltage_v:curve-max-%g-exceeded:constant-C-extension" % vmax
             if flag not in self.extrapolation_flags:
                 self.extrapolation_flags.append(flag)
         return q, e
@@ -570,12 +614,28 @@ class CossLossReport:
     extrapolation_flags: Tuple[str, ...]
     waveform: Tuple[Dict[str, object], ...]
 
+    @property
+    def p_bookable_w(self) -> float:
+        """The power a ranking may book: ``p_accounted_w``, unless this report FAILed.
+
+        A FAILed mechanism (impossible hysteresis calibration, broken ledger) must
+        poison the ranking exactly like a missing model does — NaN — not contribute a
+        physically-impossible number with a red flag in a side column. `unavailable`
+        and FAIL previously behaved oppositely; this is the one accessor consumers
+        book from.
+        """
+        if FAIL in (self.validation_status, self.evidence_quality):
+            return math.nan
+        return self.p_accounted_w
+
     def as_dict(self) -> Dict[str, object]:
         d = asdict(self)
-        # Compatibility fields used by existing CSV/debug consumers.
+        # Compatibility fields used by existing CSV/debug consumers. P_coss is the
+        # BOOKABLE power (NaN on FAIL); the raw accounted figure stays in
+        # p_accounted_w for audit.
         d["Qoss"] = self.qoss_final_c if self.qoss_final_c else self.qoss_initial_c
         d["Eoss"] = self.eoss_stored_peak_j
-        d["P_coss"] = self.p_accounted_w
+        d["P_coss"] = self.p_bookable_w
         return d
 
 
@@ -878,7 +938,13 @@ def evaluate_coss_transition(model: CossEnergyModel, transition: CossTransition,
 
 def validate_coss_report(report: CossLossReport, *,
                          expected_destination: Optional[str] = None) -> str:
-    """Independently recompute the energy ledger and preserve three-state severity."""
+    """Independently recompute the energy ledger and preserve three-state severity.
+
+    Checks, beyond the five-term event identity: the power figures must reproduce the
+    per-event ledger under the declared accounting owners (a zeroed or rescaled
+    ``p_accounted_w`` with an intact energy quintet must not validate), and every
+    destination bucket must equal the sum of the flows that claim to feed it.
+    """
     if report.validation_status == FAIL or report.evidence_quality == FAIL:
         return FAIL
     terms = (
@@ -897,9 +963,51 @@ def validate_coss_report(report: CossLossReport, *,
         return UNVERIFIED
     if abs(report.conservation_residual_j_per_event - residual) > tolerance:
         return FAIL
+
+    # Power identities: energies are the source of truth, powers are derived.
+    count = report.events_per_cycle * report.device_count
+    f = report.switching_frequency_hz
+    if not _finite(f) or f <= 0 or not _finite(count) or count <= 0:
+        return UNVERIFIED
+    comm_booked = (0.0 if report.commutation_accounting_owner == OWNER_EXTERNAL
+                   else report.dissipated_commutation_j_per_event * f * count)
+    hyst_e = report.dissipated_hysteresis_j_per_event
+    hyst_booked = (0.0 if (report.hysteresis_accounting_owner == OWNER_EXTERNAL
+                           or not _finite(hyst_e))
+                   else hyst_e * f * count)
+    if not _close(report.p_accounted_w, comm_booked + hyst_booked,
+                  rel=1e-6, abs_=1e-15):
+        return FAIL
+    if (report.commutation_accounting_owner != OWNER_EXTERNAL
+            and _finite(report.p_commutation_w)
+            and not _close(report.p_commutation_w,
+                           report.dissipated_commutation_j_per_event * f * count,
+                           rel=1e-6, abs_=1e-15)):
+        return FAIL
+
+    # Destination buckets and flows must agree in BOTH directions — a bucket with no
+    # feeding flows and a flow with no bucket entry are equally broken ledgers (the
+    # one-directional check read stripped buckets as fine).
+    by_dest: Dict[str, float] = {}
+    for flow in report.energy_flows_j_per_event:
+        dest = flow.get("destination")
+        e = flow.get("energy_j")
+        if dest is None or not _finite(e):
+            return UNVERIFIED
+        by_dest[str(dest)] = by_dest.get(str(dest), 0.0) + float(e)
+    for dest in set(by_dest) | set(report.destination_buckets_j_per_event):
+        if not _close(report.destination_buckets_j_per_event.get(dest, 0.0),
+                      by_dest.get(dest, 0.0), rel=1e-6, abs_=1e-15):
+            return FAIL
+
     if expected_destination is not None:
         if expected_destination not in report.destination_buckets_j_per_event:
-            return FAIL
+            # A perfect event (zero dissipation, e.g. full ZVS) legitimately has no
+            # bucket; absence is only a failure when there IS dissipated energy that
+            # had to land somewhere. Better input must not read as a worse verdict.
+            d = report.dissipated_commutation_j_per_event
+            if not _finite(d) or d > 1e-15:
+                return FAIL
     if (report.validation_status == UNVERIFIED
             or report.evidence_quality == UNVERIFIED):
         return UNVERIFIED
@@ -982,6 +1090,12 @@ def _reconcile_cell_flows(*reports: CossLossReport
             else:
                 ordinary.append(flow)
 
+    # Match tolerance is tied to the CELL's energy scale, the same scale the caller's
+    # FAIL threshold uses. A fixed absolute floor (the old 1e-12 J) silently merged ANY
+    # disagreement — including 2x — once the cell's energies were small enough, so the
+    # far tail could never FAIL.
+    scale = max([1e-30] + [r.eoss_stored_peak_j for r in reports
+                           if _finite(r.eoss_stored_peak_j)])
     mismatch = 0.0
     for (source, destination), flows in cross.items():
         discharged = [float(f["energy_j"]) for f in flows
@@ -992,7 +1106,8 @@ def _reconcile_cell_flows(*reports: CossLossReport
         # Sampled waveforms legitimately emit one mirrored pair per interval.
         # Reconcile the complete event transfer, not the arbitrary sample count.
         matched = (bool(discharged) and bool(charged)
-                   and _close(discharged_total, charged_total))
+                   and _close(discharged_total, charged_total,
+                              rel=1e-6, abs_=1e-9 * scale))
         if matched:
             ordinary.append(dict(
                 source=source, destination=destination,

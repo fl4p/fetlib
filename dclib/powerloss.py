@@ -31,10 +31,13 @@ import warnings
 from typing import Tuple
 
 from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
+from dataclasses import replace as dc_replace
+
 from dclib.coss_loss import (
-    CossEnergyModel, CossTransition, OWNER_FETLIB, PASS, UNVERIFIED,
+    CossEnergyModel, CossTransition, MODEL_STATE_CURVE, OWNER_FETLIB, PASS, UNVERIFIED,
     buck_hs_hard_transition, buck_ls_hard_transition,
     evaluate_coss_transition, scale_coss_report_dict, unavailable_coss_report,
+    validate_coss_report,
 )
 from dslib.mosfet import Qgs2_Qgs_ratio_estimate, MosfetSpecs, GateDrive
 from dslib.spec_models import DcDcLoadParams
@@ -270,34 +273,50 @@ def p_coss_eoss(dc: DcDcLoadParams, mf: MosfetSpecs, *,
     is labelled UNVERIFIED. Buck HS/LS callers below pass role-specific transitions.
     """
     transition = transition or buck_hs_hard_transition(dc.Vi)
+    # Broken per-part timing metadata refuses THIS part (unavailable/NaN report), it
+    # does not abort a 6000-part run — main catches only GateLoopInfeasible, and one
+    # part's bad measured waveform is not a config error. Config-wide errors (NaN
+    # dc.f/Vi) still raise out of evaluate_coss_transition below, which is correct.
+    timing_error = None
     if (transition.turn_on_time_s is not None
             or transition.waveform_covered_until_s is not None):
         if (transition.turn_on_time_s is None
                 or transition.waveform_covered_until_s is None):
-            raise ValueError("timed Coss transition has incomplete timing metadata")
-        deadtime_duration = (
-            transition.turn_on_time_s - transition.segments[0].t0_s)
-        if not math.isclose(
-                deadtime_duration, dc.tDead, rel_tol=1e-6,
-                abs_tol=max(1e-15, abs(dc.tDead) * 1e-9)):
-            raise ValueError(
-                "timed Coss waveform duration %g s does not match configured "
-                "deadtime %g s" % (deadtime_duration, dc.tDead))
+            timing_error = "timed Coss transition has incomplete timing metadata"
+        else:
+            deadtime_duration = (
+                transition.turn_on_time_s - transition.segments[0].t0_s)
+            if not math.isclose(
+                    deadtime_duration, dc.tDead, rel_tol=1e-6,
+                    abs_tol=max(1e-15, abs(dc.tDead) * 1e-9)):
+                timing_error = (
+                    "timed Coss waveform duration %g s does not match configured "
+                    "deadtime %g s" % (deadtime_duration, dc.tDead))
     temp = Tj if Tj is not None and math.isfinite(Tj) else None
-    try:
-        model = CossEnergyModel.from_mosfet(
-            mf, operating_frequency_hz=dc.f,
-            operating_temperature_c=temp, gate_bias_v=gate_bias_v)
-    except ValueError as e:
-        report = unavailable_coss_report(transition, dc.f, str(e))
+    if timing_error is not None:
+        report = unavailable_coss_report(transition, dc.f, timing_error)
     else:
-        report = evaluate_coss_transition(
-            model, transition, switching_frequency_hz=dc.f,
-            temperature_c=temp, gate_bias_v=gate_bias_v, hysteresis=hysteresis)
+        try:
+            model = CossEnergyModel.from_mosfet(
+                mf, operating_frequency_hz=dc.f,
+                operating_temperature_c=temp, gate_bias_v=gate_bias_v)
+        except ValueError as e:
+            report = unavailable_coss_report(transition, dc.f, str(e))
+        else:
+            report = evaluate_coss_transition(
+                model, transition, switching_frequency_hz=dc.f,
+                temperature_c=temp, gate_bias_v=gate_bias_v, hysteresis=hysteresis)
+            # The independent recompute runs on every production report, not only in
+            # tests; it can only downgrade (validate returns PASS solely when the
+            # report already claims PASS). The verdict is recorded either way.
+            verdict = validate_coss_report(report)
+            report.conditions['independent_validation'] = verdict
+            if verdict != report.validation_status:
+                report = dc_replace(report, validation_status=verdict)
     if detail:
         return report
     qoss = max(report.qoss_initial_c, report.qoss_final_c)
-    return report.p_accounted_w, qoss
+    return report.p_bookable_w, qoss
 
 
 def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan,
@@ -364,7 +383,7 @@ def dcdc_buck_hs(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     coss_report = p_coss_eoss(
         dc, mf, transition=coss_transition, hysteresis=coss_hysteresis,
         Tj=Tj, gate_bias_v=gd.Voff, detail=True)
-    P_coss = coss_report.p_accounted_w
+    P_coss = coss_report.p_bookable_w
 
     return SwitchPowerLoss(
         P_cl=i_rms2 * rds,  # conduction loss
@@ -449,6 +468,15 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
         mf, vr, operating_frequency_hz=dc.f,
         operating_temperature_c=temp, gate_bias_v=gd.Voff, detail=True)
     q_vr = qoss_detail['qoss_c']
+    # QRR_QOSS_FRACTION was calibrated against measured Coss(V) curves; feeding it the
+    # 1/sqrt(V) scalar guess is out-of-calibration and anti-monotone in the optimistic
+    # direction: the WORSE a corrupt scalar Coss overstates the die (the DB's silent
+    # unit-slip class), the MORE Qrr is deleted and the BETTER the part ranks, until the
+    # 100%-consumption cliff. So any Qoss-fraction subtraction — flat path here, 1pt fit
+    # below via qoss_vr — requires a curve-backed Qoss; everything else keeps the full
+    # flat Qrr and stays explicitly UNVERIFIED.
+    qoss_subtractable = (math.isfinite(q_vr)
+                         and qoss_detail['model_state'] == MODEL_STATE_CURVE)
     Qrr_base, qrr_src = mf.Qrr, 'datasheet-flat-qoss-unverified'
     qrr_detail = dict(q0=0.0, decontaminated=False,
                       qoss_vr=None if math.isnan(q_vr) else q_vr,
@@ -460,7 +488,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
                       qoss_provenance=qoss_detail['provenance'],
                       qoss_extrapolation_flags=qoss_detail['extrapolation_flags'],
                       qoss_conditions=qoss_detail['conditions'])
-    if math.isfinite(q_vr):
+    if qoss_subtractable:
         try:
             Qrr_base = calibration_qrr(mf.Qrr, q_vr)
             qrr_detail.update(
@@ -472,6 +500,11 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             qrr_src = 'datasheet-flat-decontaminated'
         except LMFitError as e:
             qrr_detail['decontamination_reason'] = str(e)
+    elif math.isfinite(q_vr):
+        qrr_detail['decontamination_reason'] = (
+            'Qoss(VR) model is %r, not a datasheet curve; refusing the '
+            'out-of-calibration global-fraction subtraction'
+            % qoss_detail['model_state'])
     if qrr_didt is not None:
         assert math.isfinite(qrr_didt) and qrr_didt > 0, ('qrr_didt', qrr_didt)
         # Qoss at the datasheet's REVERSE TEST voltage, so the single-point fit can be
@@ -480,7 +513,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
         try:
             op_detail = mf.Qrr_op(
                 IF=dc.Io_min, didt=qrr_didt, Tj=25.0, detail=True,
-                qoss_vr=None if math.isnan(q_vr) else q_vr)
+                qoss_vr=q_vr if qoss_subtractable else None)
             # detail=True is a mapping by contract; assert it rather than let a future
             # signature slip put a bare float into Qrr_base and multiply on quietly.
             assert isinstance(op_detail, dict), op_detail
@@ -509,8 +542,9 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
             # consumer that adds it back recreates the double-count.
             #
             # It only bites where there is evidence to remove: q0 comes from the part's
-            # own two-di/dt rows (2pt) or QRR_QOSS_FRACTION*Qoss(VR) (1pt, when Coss and
-            # VR are both available). With neither, q0 is 0 and this is the old number —
+            # own two-di/dt rows (2pt) or QRR_QOSS_FRACTION*Qoss(VR) (1pt, only when a
+            # CURVE-backed Qoss and VR are both available — see qoss_subtractable
+            # above). With neither, q0 is 0 and this is the old number —
             # `decontaminated` says which, and it is NOT a claim of correctness, only of
             # what was subtracted.
             Qrr_base = float(qrr_detail['qrr_diffusion'])
@@ -552,7 +586,7 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
     coss_report = p_coss_eoss(
         dc, mf, transition=coss_transition, hysteresis=coss_hysteresis,
         Tj=Tj, gate_bias_v=gd.Voff, detail=True)
-    P_coss = coss_report.p_accounted_w
+    P_coss = coss_report.p_bookable_w
 
     return SwitchPowerLoss(
         P_cl=(1 - dc.D_buck) * dc.Io_mean_squared_on * rds,
@@ -1033,6 +1067,8 @@ def tests():
     gd = GateDrive(1e-6, 12, Von=12, fallback_V_pl=4)
     mf = MosfetSpecs(100, 10e-3, 100e-9, 40e-9, 40e-9, 120e-9, 10e-9, Qsw=2e-9,
                      Qgs=2e-9, Qgs2=2e-9 * Qgs2_Qgs_ratio_estimate, Coss=0)
+    # An undeclared Coss=0 is refused as indistinguishable from a corrupt parse.
+    mf.coss_curve_meta = dict(provenance='explicit zero-Coss analytic fixture')
 
     loss = dcdc_buck_hs(dcdc, mf, gd=gd, Tj=25)
     assert loss.P_cl == (10 ** 2) * 10e-3 * .5

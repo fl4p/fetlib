@@ -83,7 +83,10 @@ def test_calibration_point_reproduces_the_datasheet_minus_the_capacitive_share()
     assert op.get_cond('P_rr')['Qrr_q0_basis'] == 'two-point-Qrr-fit'
     assert op.get_cond('P_rr')['Qrr_double_booking'] == 'exactly-once'
     assert op.get_cond('P_rr')['Qrr_qoss_vr'] is not None
-    assert op.get_cond('P_rr')['Qrr_qoss_model_state'] == 'scalar-inverse-sqrt-fallback'
+    # attach_qrr_registries also attaches the curated Coss curve (IPP022N12NM6 is in
+    # the registry), so the flat-path subtraction here is curve-backed — which is
+    # exactly what keeps it legitimate under the curve-gate.
+    assert op.get_cond('P_rr')['Qrr_qoss_model_state'] == 'datasheet-coss-curve'
     assert op.get_cond('P_rr')['Qrr_qoss_provenance']
 
 
@@ -453,6 +456,48 @@ def test_pipeline_built_specs_carry_the_registries():
     assert mf.qrr_points, "get_mosfet_specs must attach dslib/qrr_points rows"
     # and the model is actually reachable on that object
     assert mf.Qrr_op(IF=DS_IF, didt=DS_DIDT) > 0
+
+
+def test_coss_vds_condition_floor_drops_strays_keeps_real():
+    """Calibration for the Coss_Vds plausibility floor (|Vds| >= 5 V, deliberately NOT
+    rating-relative — a rating-relative band measured against the full DB dropped
+    ~480 parts' legitimate 25 V/10 V legacy anchors and inherited Vds-rating parse
+    corruption). Known-bad: the 'Vds=1' mis-bucketed-condition artifact (317x in the
+    DB) and Vsd-class sub-volt strays must be dropped; known-good: 25 V on a 500 V
+    legacy part and 10 V on a 100 V part must survive and be the value SERVED."""
+    import pytest
+    f = lambda sym, v, unit=None, cond=None: Field(
+        sym, min=math.nan, typ=v, max=math.nan, unit=unit, cond=cond)
+
+    def base(vds, rds=2.2):
+        return [
+            f('Vds', vds, 'V'), f('Rds_on', rds, 'mOhm'), f('Qg', 100, 'nC'),
+            f('tRise', 10, 'ns'), f('tFall', 15, 'ns'),
+            f('Qgd', 15, 'nC'), f('Qgs', 30, 'nC'), f('Qg_th', 15, 'nC'),
+            f('Vpl', 5.0, 'V'), f('Vsd', 0.9, 'V'),
+        ]
+
+    stray = DatasheetFields(mfr=MFR, mpn=MPN, fields=base(120) + [
+        f('Coss', 2400, 'pF', cond=dict(Vds=1.0))])
+    with pytest.warns(UserWarning, match='plausibility floor'):
+        mf = stray.get_mosfet_specs()
+    assert not mf.Coss_Vds
+
+    mixed = DatasheetFields(mfr=MFR, mpn=MPN, fields=base(120) + [
+        f('Coss', 2400, 'pF', cond=dict(Vds=60.0)),
+        f('Coss', 5000, 'pF', cond=dict(Vds=1.0))])
+    with pytest.warns(UserWarning, match='plausibility floor'):
+        mf2 = mixed.get_mosfet_specs()
+    assert mf2.Coss_Vds == 60.0
+
+    # The corpus classes a rating-relative band wrongly killed: legacy 25 V anchor on
+    # a 500 V part (ratio 0.05) and 10 V on a 100 V part — both must be served.
+    legacy = DatasheetFields(mfr=MFR, mpn=MPN, fields=base(500, rds=50) + [
+        f('Coss', 780, 'pF', cond=dict(Vds=25.0))])
+    assert legacy.get_mosfet_specs().Coss_Vds == 25.0
+    toshiba = DatasheetFields(mfr=MFR, mpn=MPN, fields=base(100) + [
+        f('Coss', 1200, 'pF', cond=dict(Vds=10.0))])
+    assert toshiba.get_mosfet_specs().Coss_Vds == 10.0
 
 
 if __name__ == "__main__":

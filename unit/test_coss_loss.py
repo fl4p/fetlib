@@ -63,6 +63,27 @@ def test_1_qoss_and_eoss_integrate_the_nonlinear_curve_not_one_table_coss():
     assert s.eoss_j == pytest.approx(2 * (0.5 * 1e-9 * 100.0 ** 2))
 
 
+def test_1b_zero_coss_is_refused_unless_declared():
+    """Coss=0 is the best possible loss number, and a zero-parsed Coss is
+    indistinguishable from the corrupt-parse class. An undeclared zero must become an
+    unavailable/NaN result — never a silent 0 W with minted 'explicit fixture'
+    provenance the code never verified."""
+    corrupt = SimpleNamespace(Coss=0.0, Coss_Vds=50.0, coss_curve=None,
+                              coss_curve_meta=None, part=None)
+    with pytest.raises(ValueError, match="Coss=0 without explicit provenance"):
+        CossEnergyModel.from_mosfet(corrupt)
+    assert math.isnan(qoss_at(corrupt, 60.0))
+
+    declared = SimpleNamespace(
+        Coss=0.0, Coss_Vds=50.0, coss_curve=None,
+        coss_curve_meta=dict(provenance="explicit zero-Coss analytic fixture"),
+        part=None)
+    m = CossEnergyModel.from_mosfet(declared)
+    assert m.model_state == "explicit-zero-coss"
+    assert m.provenance == "explicit zero-Coss analytic fixture"
+    assert m.at(60.0).qoss_c == 0.0 and m.at(60.0).eoss_j == 0.0
+
+
 def test_2_topology_mechanism_states_source_recovery_and_destination():
     hs = evaluate(buck_hs_hard_transition(72, evidence_quality=PASS), 72)
     ls = evaluate(buck_ls_hard_transition(72, evidence_quality=PASS), 72)
@@ -162,6 +183,11 @@ def test_3_reversible_eoss_and_hysteresis_are_separate_conditioned_terms():
         model(), transition, switching_frequency_hz=F,
         temperature_c=25.0, gate_bias_v=0.0, hysteresis=impossible)
     assert bad.validation_status == FAIL
+    # A FAILed report books NaN — the same poison as an unavailable model — never the
+    # physically-impossible figure; the raw number stays in p_accounted_w for audit.
+    assert math.isnan(bad.p_bookable_w)
+    assert math.isfinite(bad.p_accounted_w)
+    assert math.isnan(bad.as_dict()["P_coss"])
 
 
 def _mosfet_for_qrr():
@@ -213,15 +239,24 @@ def test_4_qrr_keeps_qoss_accounting_separate_from_evidence_and_fit_state():
     assert rr["Qrr_double_booking"] == "exactly-once"
     assert rr["qrr_nofit"]
 
+    # Known-bad calibration for the subtraction gate: the 0.1 global fraction was
+    # calibrated against measured Coss(V) curves, and a scalar-guess Qoss lets a corrupt
+    # Coss delete Qrr optimistically. The gate must keep the FULL flat value (direction,
+    # not just firing), refuse the exactly-once claim, and put the refusal on record.
     scalar = _mosfet_for_qrr()
     scalar.coss_curve = None
     scalar.coss_curve_meta = None
     scalar_rr = dcdc_buck_ls(
         dc, scalar, gd, Qrr_temp_rise=1.0, Tj=25).get_cond("P_rr")
-    assert scalar_rr["Qrr_double_booking"] == "exactly-once"
+    assert scalar_rr["Qrr_src"] == "datasheet-flat-qoss-unverified"
+    assert scalar_rr["Qrr_q0"] == 0
+    assert scalar_rr["Qrr_decont"] is False
+    assert scalar_rr["Qrr"] == pytest.approx(scalar.Qrr)
+    assert scalar_rr["Qrr_double_booking"] == UNVERIFIED
     assert scalar_rr["Qrr_double_booking_evidence"] == UNVERIFIED
     assert scalar_rr["Qrr_qoss_evidence"] == UNVERIFIED
     assert scalar_rr["Qrr_qoss_model_state"] == "scalar-inverse-sqrt-fallback"
+    assert "not a datasheet curve" in scalar_rr["Qrr_decont_reason"]
 
     extrapolated = _mosfet_for_qrr()
     extrapolated.coss_curve = [(0, 4000, 0), (40, 1200, 0)]
@@ -254,16 +289,19 @@ def test_5_conditions_provenance_and_extrapolation_are_machine_readable():
 
     moved = model(f=80e3, temp=100.0)
     assert moved.evidence_quality == UNVERIFIED
-    assert any(x.startswith("frequency_hz:") for x in moved.extrapolation_flags)
+    # The switching frequency is NOT an extrapolation axis for the quasi-static C(V)
+    # curve: frequency-dependent Coss loss belongs to the hysteresis calibration,
+    # which refuses a frequency mismatch outright. Temperature still caps evidence.
+    assert not any(x.startswith("frequency_hz:") for x in moved.extrapolation_flags)
     assert any(x.startswith("temperature_c:") for x in moved.extrapolation_flags)
 
     # Beyond the graph is allowed only as a labelled constant-C extension.
     moved.at(120)
     assert any("constant-C-extension" in x for x in moved.extrapolation_flags)
 
-    missing_frequency = model(f=None)
-    assert missing_frequency.evidence_quality == UNVERIFIED
-    assert "frequency_hz:operating-unknown" in missing_frequency.extrapolation_flags
+    missing_temperature = model(temp=None)
+    assert missing_temperature.evidence_quality == UNVERIFIED
+    assert "temperature_c:operating-unknown" in missing_temperature.extrapolation_flags
 
 
 def test_5_registry_curve_and_provenance_attach_atomically_and_serialize():
@@ -285,7 +323,13 @@ def test_5_registry_curve_and_provenance_attach_atomically_and_serialize():
     assert conditions["curve_registry_id"] == registry_meta["curve_registry_id"]
     assert conditions["datasheet_revision"] == "2.1"
     assert conditions["digitization_method"] == "raster-dark-pixel-column-trace"
-    assert "temperature_c:measurement-unknown" in attached.extrapolation_flags
+    # PASS is reachable with SHIPPED registry data at matching conditions: the curated
+    # meta carries the datasheet's blanket Tj=25 °C, and the per-entry source_document
+    # names the actual sheet instead of a shared "Infineon datasheet" literal.
+    assert attached.extrapolation_flags == []
+    assert attached.evidence_quality == PASS
+    assert registry_meta["temperature_c"] == 25.0
+    assert "IPP024N08NF2S" in registry_meta["source_document"]
 
     custom_curve = [(0, 1234, 0), (80, 234, 0)]
     curve_only = SimpleNamespace(coss_curve=custom_curve, coss_curve_meta=None)
@@ -304,6 +348,27 @@ def test_5_registry_curve_and_provenance_attach_atomically_and_serialize():
     attach_coss_registry(cross_wired, "infineon", "IPP024N08NF2S")
     assert cross_wired.coss_curve_meta["evidence_quality"] == UNVERIFIED
     assert cross_wired.coss_curve_meta["binding_state"].startswith("unverified-")
+
+    # Registry-lineage refresh — the two staleness shapes that used to stay green.
+    # (a) An older-generation baked copy (coss-v0 id + superseded trace) refreshes
+    #     BOTH halves to the current registry; it must not keep serving the old curve.
+    stale_meta = dict(registry_meta, curve_registry_id="infineon:IPP024N08NF2S:coss-v0")
+    stale = SimpleNamespace(coss_curve=custom_curve, coss_curve_meta=stale_meta)
+    attach_coss_registry(stale, "infineon", "IPP024N08NF2S")
+    assert stale.coss_curve == registry_curve
+    assert stale.coss_curve_meta == registry_meta
+    # (b) Same id, superseded trace (an in-place correction): the REGISTRY curve must
+    #     survive with full provenance — direction matters, not just that a guard fired.
+    superseded = SimpleNamespace(coss_curve=custom_curve,
+                                 coss_curve_meta=dict(registry_meta))
+    attach_coss_registry(superseded, "infineon", "IPP024N08NF2S")
+    assert superseded.coss_curve == registry_curve
+    assert superseded.coss_curve_meta["evidence_quality"] == PASS
+    # (c) Older-generation meta with the curve missing restores both halves too.
+    old_meta_only = SimpleNamespace(coss_curve=None, coss_curve_meta=dict(stale_meta))
+    attach_coss_registry(old_meta_only, "infineon", "IPP024N08NF2S")
+    assert old_meta_only.coss_curve == registry_curve
+    assert old_meta_only.coss_curve_meta == registry_meta
 
 
 def test_6_device_multiplicity_and_event_count_are_explicit():
@@ -446,10 +511,15 @@ def test_7_deadtime_deadline_interpolates_rebound_and_binds_production():
     assert production.get_cond("P_coss")["turn_on_time_s"] == pytest.approx(100e-9)
     wrong_deadtime = DcDcLoadParams(
         vi=72, vo=27, f=F, io=20, ripple_factor=0.2, tDead=50e-9)
-    with pytest.raises(ValueError, match="does not match configured deadtime"):
-        dcdc_buck_hs(
-            wrong_deadtime, _mosfet_for_qrr(), gd, Tj=25,
-            coss_transition=partial)
+    # A per-part timing mismatch refuses THIS part — unavailable/NaN report, poisoned
+    # total — instead of raising out of the per-part loop and aborting a 6000-part run
+    # (main catches only GateLoopInfeasible).
+    refused = dcdc_buck_hs(
+        wrong_deadtime, _mosfet_for_qrr(), gd, Tj=25, coss_transition=partial)
+    assert math.isnan(refused.P_coss) and math.isnan(refused.buck_hs())
+    refused_rep = refused.get_cond("P_coss")
+    assert refused_rep["accounting_scope"] == "unavailable"
+    assert "does not match configured deadtime" in refused_rep["provenance"]
 
     shifted = CossTransition.partial_zvs(
         "shifted-origin", ((50e-9, 72.0), (250e-9, 0.0)),
@@ -464,9 +534,11 @@ def test_7_deadtime_deadline_interpolates_rebound_and_binds_production():
     mislabeled = replace(
         shifted, model_state="measured-deadtime-waveform",
         turn_on_time_s=90e-9)
-    with pytest.raises(ValueError, match="does not match configured deadtime"):
-        dcdc_buck_hs(
-            dc, _mosfet_for_qrr(), gd, Tj=25, coss_transition=mislabeled)
+    mislabeled_loss = dcdc_buck_hs(
+        dc, _mosfet_for_qrr(), gd, Tj=25, coss_transition=mislabeled)
+    assert math.isnan(mislabeled_loss.P_coss)
+    assert "does not match configured deadtime" in \
+        mislabeled_loss.get_cond("P_coss")["provenance"]
 
 
 def test_8_report_contains_the_required_audit_fields():
@@ -572,6 +644,76 @@ def test_9_validator_recomputes_ledger_and_fail_evidence_is_monotonic():
         switching_frequency_hz=F, temperature_c=25, gate_bias_v=0,
         hysteresis=failed_hysteresis)
     assert hysteresis_failure.validation_status == FAIL
+
+    # The validator checks more than the five-term identity: a zeroed or rescaled
+    # power figure with an intact energy quintet used to validate.
+    assert validate_coss_report(replace(report, p_accounted_w=0.0)) == FAIL
+    assert validate_coss_report(replace(
+        report, p_commutation_w=2 * report.p_commutation_w)) == FAIL
+    # ... and destination buckets must equal the flows that claim to feed them.
+    bucket_key = next(iter(report.destination_buckets_j_per_event))
+    padded = dict(report.destination_buckets_j_per_event)
+    padded[bucket_key] = padded[bucket_key] + 1e-6
+    assert validate_coss_report(replace(
+        report, destination_buckets_j_per_event=padded)) == FAIL
+
+
+def test_9_validator_runs_in_production_and_zero_dissipation_zvs_passes():
+    """The independent recompute is wired into p_coss_eoss (recorded in conditions),
+    and a PERFECT full-ZVS event — zero dissipation, hence no channel bucket — must
+    not FAIL an expected_destination check: better input, better verdict."""
+    dc = DcDcLoadParams(vi=72, vo=27, f=F, io=20, ripple_factor=0.2, tDead=100e-9)
+    gd = GateDrive(rg_total=5, rg_total_dis=3, Von=10, Voff=0, fallback_V_pl=4)
+    loss = dcdc_buck_hs(dc, _mosfet_for_qrr(), gd, Tj=25)
+    assert loss.get_cond("P_coss")["conditions"]["independent_validation"] in (
+        PASS, FAIL, UNVERIFIED)
+
+    channel = device_energy_endpoint("hs", "channel")
+    perfect = CossTransition.partial_zvs(
+        "full-zvs", ((0.0, 72.0), (100e-9, 0.0)),
+        turn_on_time_s=100e-9, channel_destination=channel,
+        evidence_quality=PASS)
+    got = evaluate(perfect, 72)
+    assert got.dissipated_commutation_j_per_event == pytest.approx(0.0, abs=1e-18)
+    assert channel not in got.destination_buckets_j_per_event
+    assert validate_coss_report(got, expected_destination=channel) != FAIL
+    # ... while a real dissipating event with the bucket MISSING still fails.
+    hard = evaluate(buck_hs_hard_transition(72, evidence_quality=PASS), 72)
+    stripped = {k: v for k, v in hard.destination_buckets_j_per_event.items()
+                if k != channel}
+    assert validate_coss_report(
+        replace(hard, destination_buckets_j_per_event=stripped,
+                energy_flows_j_per_event=tuple(
+                    f for f in hard.energy_flows_j_per_event
+                    if f["destination"] != channel)),
+        expected_destination=channel) == FAIL
+
+
+def test_9_cell_far_tail_mismatch_fails_not_averages():
+    """A 2x cross-device disagreement at picojoule scale used to be silently merged
+    (fixed 1e-12 J absolute tolerance in _close), averaged into one flow, and
+    contributed ZERO residual — the far tail could never FAIL. The match tolerance is
+    now tied to the cell's own energy scale."""
+    from dclib.coss_loss import _reconcile_cell_flows
+    base = evaluate(buck_hs_hard_transition(72, evidence_quality=PASS), 72)
+    pair = dict(source="device:hs:coss", destination="device:ls:coss")
+    discharging = replace(
+        base, eoss_stored_peak_j=1.0e-12, energy_flows_j_per_event=(
+            dict(pair, energy_j=5.0e-13, kind="recovered-transfer"),))
+    charging = replace(
+        base, eoss_stored_peak_j=1.0e-12, energy_flows_j_per_event=(
+            dict(pair, energy_j=1.0e-12, kind="stored-transfer"),))
+    flows, mismatch = _reconcile_cell_flows(discharging, charging)
+    # The 2x disagreement is a residual now, and both audit views are retained.
+    assert mismatch == pytest.approx(5.0e-13)
+    assert sum(1 for f in flows if f["kind"] == "cell-coss-transfer") == 0
+    # An agreeing pair still collapses to the single physical transfer.
+    agreeing = replace(
+        charging, energy_flows_j_per_event=(
+            dict(pair, energy_j=5.0e-13, kind="stored-transfer"),))
+    flows2, mismatch2 = _reconcile_cell_flows(discharging, agreeing)
+    assert mismatch2 == 0.0
+    assert sum(1 for f in flows2 if f["kind"] == "cell-coss-transfer") == 1
 
 
 def test_10_external_waveform_owner_disables_analytic_add_on_and_ring_esr_is_absent():

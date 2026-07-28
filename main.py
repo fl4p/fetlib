@@ -643,7 +643,11 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
                 P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
-                P_coss_state=ls.get_cond('P_coss').get('model_state'),
+                # curve_model_state, not model_state: the latter is the TRANSITION label
+                # ('hard-switch-default' for every production row, unavailable included)
+                # while curve_model_state is what discriminates datasheet-curve vs
+                # scalar-guess vs unavailable — the distinction this column exists for.
+                P_coss_state=ls.get_cond('P_coss').get('curve_model_state'),
                 P_coss_evidence=ls.get_cond('P_coss').get('evidence_quality'),
                 P_coss_validation=ls.get_cond('P_coss').get('validation_status'),
                 P_coss_audit=coss_audit_json(ls.get_cond('P_coss')),
@@ -660,16 +664,56 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         # the switcher is fast, low Qsw, higher Rds(on), Id(pulsed) sufficiently high
         # the conductor is slower, low Rds(on). needs a separate gate drive signal during turn-off
 
-        # rank best switchers and conductors
-        low_sw = sorted(parts_loss, key=lambda pml: (pml[2].P_sw + pml[2].P_coss) if pml[2].P_sw > 0 else 9e9)[:5000]
-        low_cl = sorted(parts_loss, key=lambda pml: (pml[2].P_cl + pml[2].P_coss) if pml[2].P_cl > 0 else 9e9)[:5000]
+        # rank best switchers and conductors. NaN-safe by construction: an
+        # unavailable/FAILed-Coss part carries P_coss=NaN by contract, and a NaN sort
+        # key makes sorted() order undefined — a NaN part could land first, best_psw
+        # went NaN, and the 6x prune silently died (NaN comparisons are always False).
+        # Refused parts get an unranked_rows entry instead of vanishing.
+        def _staged_key(gate, p):
+            return p if gate > 0 and math.isfinite(p) else 9e9
+
+        low_sw = sorted(parts_loss, key=lambda pml: _staged_key(
+            pml[2].P_sw, pml[2].P_sw + pml[2].P_coss))[:5000]
+        low_cl = sorted(parts_loss, key=lambda pml: _staged_key(
+            pml[2].P_cl, pml[2].P_cl + pml[2].P_coss))[:5000]
+
+        low_cl_ranked = []
+        for ds2, fet_specs2, ls2 in low_cl:
+            if math.isfinite(ls2.P_cl + ls2.P_gd + ls2.P_coss):
+                low_cl_ranked.append((ds2, fet_specs2, ls2))
+            else:
+                unranked_rows.append(dict(
+                    mpn=ds2.part.mfr[:3] + ' ' + ds2.part.mpn,
+                    housing=ds2.part.package,
+                    Vds_max=ds2.get_max_or_min_or_typ('Vds', False),
+                    Id=fet_specs2.Id,
+                    reason='staged conductor: %s NaN' % '+'.join(
+                        n for n, v in (('P_cl', ls2.P_cl), ('P_gd', ls2.P_gd),
+                                       ('P_coss', ls2.P_coss)) if math.isnan(v)),
+                    errors=', '.join(ds2.all_errors()),
+                ))
+        low_cl = low_cl_ranked
 
         sc_best = {}
         best = 9e9
-        best_psw = low_sw[0][2].P_sw + low_sw[0][2].P_gd + low_sw[0][2].P_coss
+        best_psw = min((l.P_sw + l.P_gd + l.P_coss for _, _, l in low_sw
+                        if math.isfinite(l.P_sw + l.P_gd + l.P_coss)),
+                       default=math.nan)
 
         for ds, fet_specs, ls in low_sw:
             p_sw = ls.P_sw + ls.P_gd + ls.P_coss
+            if not math.isfinite(p_sw):
+                unranked_rows.append(dict(
+                    mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
+                    housing=ds.part.package,
+                    Vds_max=ds.get_max_or_min_or_typ('Vds', False),
+                    Id=fet_specs.Id,
+                    reason='staged switcher: %s NaN' % '+'.join(
+                        n for n, v in (('P_sw', ls.P_sw), ('P_gd', ls.P_gd),
+                                       ('P_coss', ls.P_coss)) if math.isnan(v)),
+                    errors=', '.join(ds.all_errors()),
+                ))
+                continue
             if p_sw > best_psw * 6:
                 continue
 
@@ -732,8 +776,8 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                                 ls.get_cond('P_coss').get('accounting_scope'),
                                 ls3.get_cond('P_coss').get('accounting_scope')),
                             P_coss_state='%s + %s' % (
-                                ls.get_cond('P_coss').get('model_state'),
-                                ls3.get_cond('P_coss').get('model_state')),
+                                ls.get_cond('P_coss').get('curve_model_state'),
+                                ls3.get_cond('P_coss').get('curve_model_state')),
                             P_coss_evidence='%s + %s' % (
                                 ls.get_cond('P_coss').get('evidence_quality'),
                                 ls3.get_cond('P_coss').get('evidence_quality')),
@@ -769,8 +813,9 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         if unranked_rows:
             un_fn = out_fn.replace('-HS-inp', '-HS-unranked-inp')
             write_csv(pd.DataFrame(unranked_rows), un_fn, sort_by=['mpn'])
-            print('>>> %d parts EXCLUDED from the HS ranking: no gate-loop solution at the '
-                  'configured gate drive:' % len(unranked_rows))
+            print('>>> %d parts EXCLUDED from the HS ranking (per-row reason: gate-loop '
+                  'infeasible, or a NaN loss component in the staged pass):'
+                  % len(unranked_rows))
             for r in unranked_rows[:10]:
                 print('      %-28s %s' % (r['mpn'], r['reason']))
             if len(unranked_rows) > 10:
@@ -942,7 +987,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
                 P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
-                P_coss_state=ls.get_cond('P_coss').get('model_state'),
+                P_coss_state=ls.get_cond('P_coss').get('curve_model_state'),
                 P_coss_evidence=ls.get_cond('P_coss').get('evidence_quality'),
                 P_coss_validation=ls.get_cond('P_coss').get('validation_status'),
                 P_coss_audit=coss_audit_json(ls.get_cond('P_coss')),
