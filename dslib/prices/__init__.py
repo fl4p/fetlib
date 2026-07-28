@@ -104,6 +104,10 @@ class PartOffers:
         self.fetched_at = fetched_at
         self.url = url
         self.status = status
+        # audit trail: catalog MPN(s) that actually priced this part when a match
+        # tier beyond exact equality was used (suffixed/base-number matches). Old
+        # pickled records may lack the attribute -- read with getattr.
+        self.matched_mpns = None
 
     @property
     def key(self):

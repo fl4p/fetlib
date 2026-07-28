@@ -156,12 +156,54 @@ def test_dk_mfr_mismatch_is_indeterminate_never_catalog_miss():
         parse_digikey_offers('infineon', 'X1', raw)
 
 
-def test_dk_prefix_fallback_rejects_digit_continuation():
-    # X10 is a DIFFERENT part than X1, not a packaging variant of it: the response
+def test_dk_suffix_fallback_allowlist_only():
+    from dslib.prices.digikey_api import _suffix_extends_mpn
+    # known packaging suffixes and separator-led carrier codes extend the MPN
+    assert _suffix_extends_mpn('NTMFS5C628NLT1G', 'NTMFS5C628NL')
+    assert _suffix_extends_mpn('SIR104LDP-T1-RE3', 'SIR104LDP')
+    assert _suffix_extends_mpn('IRFB4110TRPBF', 'IRFB4110')
+    # digit continuations and bare letter continuations are DIFFERENT parts
+    assert not _suffix_extends_mpn('X10', 'X1')
+    assert not _suffix_extends_mpn('X1A', 'X1')     # re-review P1: not a variant
+    assert not _suffix_extends_mpn('IRFB4110G', 'IRFB4110')
+
+
+def test_dk_prefix_fallback_rejects_digit_and_letter_continuation():
+    # X10/X1A are DIFFERENT parts than X1, not packaging variants: the response
     # holds no evidence about X1 at all -> catalog_miss (review finding P1)
-    raw = _dk_raw(products=[_dk_product(mpn='X10', variations=[_dk_var()])])
-    rec = parse_digikey_offers('infineon', 'X1', raw)
-    assert rec.status == 'catalog_miss' and not rec.offers
+    for other in ('X10', 'X1A'):
+        raw = _dk_raw(products=[_dk_product(mpn=other, variations=[_dk_var()])])
+        rec = parse_digikey_offers('infineon', 'X1', raw)
+        assert rec.status == 'catalog_miss' and not rec.offers
+
+
+def test_dk_matched_mpn_persisted_for_audit():
+    raw = _dk_raw(products=[_dk_product(mpn='NTMFS5C628NLT1G', mfr_name='onsemi',
+                                        variations=[_dk_var()])])
+    rec = parse_digikey_offers('onsemi', 'NTMFS5C628NL', raw)
+    assert rec.status == 'ok' and rec.matched_mpns == ['NTMFS5C628NLT1G']
+    exact = parse_digikey_offers('onsemi', 'NTMFS5C628NLT1G', raw)
+    assert exact.matched_mpns is None  # equality matches carry no audit note
+
+
+def test_dk_missing_schema_fields_raise_never_negative():
+    # a matched product missing product_variations (or a variation missing
+    # standard_pricing) is a SCHEMA anomaly: raise -> caller writes nothing;
+    # an explicitly empty pricing list is a real, empty offer (re-review P2)
+    p = _dk_product(variations=None)
+    p.pop('product_variations')
+    with pytest.raises(ValueError):
+        parse_digikey_offers('infineon', 'X1', _dk_raw(exact=[p]))
+    v = _dk_var()
+    v['standard_pricing'] = None
+    with pytest.raises(ValueError):
+        parse_digikey_offers('infineon', 'X1',
+                             _dk_raw(exact=[_dk_product(variations=[v])]))
+    v2 = _dk_var(pricing=[])
+    v2['standard_pricing'] = []
+    rec = parse_digikey_offers('infineon', 'X1',
+                               _dk_raw(exact=[_dk_product(variations=[v2])]))
+    assert rec.status == 'no_eligible_offer'
 
 
 def test_dk_base_product_number_tier_matches():
@@ -300,6 +342,51 @@ def test_aggregate_merges_duplicate_and_cross_brand_rows():
     assert rec.fetched_at == t1  # oldest contributing envelope (conservative)
 
 
+# ------------------------------------------------------------------ DK batch
+def _batch_raw(details):
+    return {'fetched_at': NOW.isoformat(), 'details': details, 'errors': []}
+
+
+def _batch_detail(mpn='X1', mfr_name='Infineon Technologies', sku='DK1',
+                  packaging='Cut Tape', pricing=None, direct_ship=False,
+                  moq=1, stock=500):
+    return {'manufacturer_part_number': mpn, 'digi_key_part_number': sku,
+            'manufacturer': {'value': mfr_name}, 'packaging': {'value': packaging},
+            'supplier_direct_ship': direct_ship, 'minimum_order_quantity': moq,
+            'quantity_available': stock, 'product_url': 'https://dk/x1',
+            'search_locale_used': {'currency': 'USD'},
+            'standard_pricing': pricing or [{'break_quantity': 1, 'unit_price': 1.0}]}
+
+
+def test_batch_parse_prices_matched_part():
+    from dslib.prices.digikey_api import parse_digikey_batch
+    raw = _batch_raw([_batch_detail(),
+                      _batch_detail(sku='DK2', packaging='Digi-Reel®'),   # excluded
+                      _batch_detail(sku='DK3', direct_ship=True),         # excluded
+                      _batch_detail(mpn='OTHER', sku='DK4')])             # not ours
+    rec = parse_digikey_batch('infineon', 'X1', raw)
+    assert rec.status == 'ok' and [o.sku for o in rec.offers] == ['DK1']
+    assert rec.best_price(1)[0] == 1.0
+
+
+def test_batch_parse_unmatched_returns_none_never_negative():
+    # the batch error list does not name failing MPNs -> unmatched parts must fall
+    # through to the keyword path (which owns catalog_miss), never write a negative
+    from dslib.prices.digikey_api import parse_digikey_batch
+    assert parse_digikey_batch('infineon', 'X1', _batch_raw([])) is None
+    # same-MPN, wrong manufacturer: also None
+    raw = _batch_raw([_batch_detail(mfr_name='Vishay Intertech')])
+    assert parse_digikey_batch('infineon', 'X1', raw) is None
+
+
+def test_batch_parse_suffix_tier_and_audit():
+    from dslib.prices.digikey_api import parse_digikey_batch
+    raw = _batch_raw([_batch_detail(mpn='X1TR', mfr_name='onsemi')])
+    rec = parse_digikey_batch('onsemi', 'X1', raw)
+    assert rec.status == 'ok' and rec.offers[0].sku == 'DK1'
+    assert parse_digikey_batch('onsemi', 'X9', raw) is None  # X1TR does not extend X9
+
+
 # ------------------------------------------------------------------ history
 def test_history_appends_changes_only_and_samples_stock_at_changes(tmp_path):
     from dslib.prices.history import read_history, record_history
@@ -323,6 +410,20 @@ def test_history_appends_changes_only_and_samples_stock_at_changes(tmp_path):
     assert [r[5] for r in rows] == [1.0, 0.5, 1.1, 0.6]
     assert rows[-1][7] == 9  # stock sampled at the change point
     assert 0 not in [r[5] for r in rows]
+
+
+def test_history_hash_tolerates_none_packaging_and_dup_skus(tmp_path):
+    # sorting offer tuples mixing None packaging with strings raised TypeError; the
+    # crash happened AFTER prices_db.add succeeded, leaving the record fresh-skipped
+    # and its history unwritable until expiry (re-review P2)
+    from dslib.prices.history import read_history, record_history
+    hp = str(tmp_path / 'hist.sqlite3')
+    rec = _rec(offers=[_offer([(1, 1.0)], sku='', packaging=None),
+                       _offer([(1, 2.0)], sku='', packaging='Tube'),
+                       _offer([(10, 0.5)], sku='S1', packaging=None, moq=None)])
+    assert record_history([rec], path=hp) == 1
+    assert record_history([rec], path=hp) == 0  # and the hash is still stable
+    assert len(read_history('infineon', 'X1', path=hp)) == 3
 
 
 def test_history_negative_status_is_a_datapoint(tmp_path):

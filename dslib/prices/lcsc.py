@@ -182,7 +182,10 @@ async def _probe(brand_names=None):
             continue
         r0 = rows[0]
         brand_names_seen = {r.get('brandNameEn') for r in rows}
-        id_ok = all(mfr_tag(bn) == mfr_tag(name) for bn in brand_names_seen if bn)
+        # every sampled row must carry a NONEMPTY brand name that maps to the same
+        # canonical tag -- filtering empties out of the all() would let a page of
+        # blank brandNameEn rows probe as id-match=True
+        id_ok = all(bn and mfr_tag(bn) == mfr_tag(name) for bn in brand_names_seen)
         parsed = parse_lcsc_row(r0)
         print('PROBE %s (%d): %d rows, brandNameEn=%r id-match=%s' %
               (name, brand_id, len(rows), sorted(brand_names_seen), id_ok))

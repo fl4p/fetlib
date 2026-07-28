@@ -69,9 +69,14 @@ def _conn(path=None) -> sqlite3.Connection:
 
 
 def _content_hash(rec: PartOffers) -> str:
+    # optional fields normalized for the sort: packaging/moq may be None and sku may
+    # repeat (DigiKey defaults a missing SKU to ''), and sorting tuples that mix None
+    # with str/int raises TypeError -- which, after prices_db.add already succeeded,
+    # would leave the record fresh-skipped and its history unwritable until expiry
     payload = dict(
         status=rec.status, currency=rec.currency,
-        offers=sorted((o.sku, o.packaging, o.moq, o.ladder) for o in rec.offers),
+        offers=sorted((o.sku or '', o.packaging or '', o.moq or 0, o.ladder)
+                      for o in rec.offers),
     )
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
