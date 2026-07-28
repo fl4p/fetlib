@@ -34,9 +34,9 @@ Run a --limit smoke test first and read the rate it reports before starting the 
 import argparse
 import json
 import os
+import subprocess
 import sys
 import time
-import traceback
 import warnings
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -82,7 +82,31 @@ def main():
     ap.add_argument('--limit', type=int, default=0, help='only the first N parts')
     ap.add_argument('--state', default=DEFAULT_STATE)
     ap.add_argument('--restart', action='store_true', help='ignore the resume state')
+    ap.add_argument('--no-tabula-watchdog', action='store_true',
+                    help='do not supervise the Tabula GUI server during the sweep. On by '
+                         'default because a sweep is exactly the sustained load that '
+                         'wedges it (~2 h observed, twice in one sweep: 500s, then '
+                         'unreachable while pgrep still shows it alive); each wedge '
+                         'inflates s/part with backoff retries and climbs the failure '
+                         'count until someone restarts the app.')
     args = ap.parse_args()
+
+    # Supervise Tabula for the lifetime of THIS process. The watchdog only engages if the
+    # server (or the app) was already up -- on a machine not using the GUI server it
+    # refuses and exits, so this spawn is a no-op there rather than a surprise launch.
+    #
+    # Deliberately NO atexit.terminate: --watch-pid already makes the watchdog exit on
+    # its own within one probe interval of this process ending, and an explicit terminate
+    # RACED an in-flight restart on the first smoke test -- it killed the watchdog after
+    # `open -a` but before the come-up check, leaving a relaunched-but-unverified Tabula
+    # that never started serving. A <=30 s straggler is harmless; a half-finished restart
+    # is not.
+    if not args.no_tabula_watchdog:
+        subprocess.Popen(
+            [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                          'tabula_watchdog.py'),
+             '--watch-pid', str(os.getpid())],
+            stdout=sys.stderr, stderr=subprocess.STDOUT)
 
     db = datasheets_db.load()
     before_fields = _n_fields(db)
