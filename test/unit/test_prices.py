@@ -288,6 +288,24 @@ def test_lookup_excludes_and_counts_foreign_currency_and_stale(db):
     assert 'other-currency 1' in s and 'stale 1' in s
 
 
+def test_lookup_joins_whitespace_and_case_variant_mpns(db):
+    # live gap: 48 price keys never filled a row because LCSC lists 'BSC070N10NS3G'
+    # where discovery ranks 'BSC070N10NS3 G' (and 'aot412' vs 'AOT412') -- the join
+    # normalizes case+whitespace on both sides; store keys stay raw
+    db.add([_rec(mpn='BSC070N10NS3G', distributor=LCSC,
+                 offers=[_offer([(100, 0.4)], sku='C7')]),
+            _rec(mfr='ao', mpn='aot412', offers=[_offer([(100, 1.1)])])])
+    lu = PriceLookup(qty=100)
+    assert lu.get('infineon', 'BSC070N10NS3 G').price == 0.4
+    assert lu.get('ao', 'AOT412').price == 1.1
+
+
+def test_dk_equality_tier_ignores_whitespace_and_case():
+    raw = _dk_raw(products=[_dk_product(mpn='BSC070N10NS3G', variations=[_dk_var()])])
+    rec = parse_digikey_offers('infineon', 'BSC070N10NS3 G', raw)
+    assert rec.status == 'ok' and rec.best_price(1)[0] == 1.0
+
+
 def test_lookup_picks_cheapest_across_distributors(db):
     db.add([_rec(offers=[_offer([(100, 0.5)])]),
             _rec(distributor=LCSC, offers=[_offer([(100, 0.3)], sku='C1')])])
@@ -325,6 +343,31 @@ def test_parse_lcsc_row_ladder_and_key():
     assert key == ('infineon', 'IPB019N08N3 G', LCSC, 'USD')
     assert offer.ladder == [(5, 1.2), (100, 0.9)] and offer.moq == 5
     assert offer.sku == 'C111111'
+
+
+def test_parse_lcsc_all_invalid_pricing_drops_row_and_brand_guard_fires():
+    # all-invalid entries (renamed/nulled fields) must behave like the mixed case:
+    # row dropped -- and the brand-level guard must count PARSED rows, so systematic
+    # drift raises instead of silently aging the DB out with zero new records
+    import asyncio
+    import dslib.discovery.lcsc as dlcsc
+    import dslib.prices.lcsc as plcsc
+    bad_row = dict(LCSC_ROW, productPriceList=[{'tier': 5, 'price': 1.2}])
+    assert parse_lcsc_row(bad_row) is None
+
+    async def fake_raw(brand_id):
+        return {'fetched_at': NOW.isoformat(), 'rows': [bad_row] * 3}
+
+    def run(monkey_target):
+        return asyncio.run(plcsc._fetch_all_brand_rows(brand_names=['NCE']))
+
+    orig = dlcsc.fetch_brand_rows_raw
+    dlcsc.fetch_brand_rows_raw = fake_raw
+    try:
+        with pytest.raises(RuntimeError, match='schema drift'):
+            run(None)
+    finally:
+        dlcsc.fetch_brand_rows_raw = orig
 
 
 def test_parse_lcsc_row_missing_price_key_raises():
@@ -658,6 +701,22 @@ def test_history_hash_tolerates_none_packaging_and_dup_skus(tmp_path):
     assert record_history([rec], path=hp) == 1
     assert record_history([rec], path=hp) == 0  # and the hash is still stable
     assert len(read_history('infineon', 'X1', path=hp)) == 3
+
+
+def test_fresh_gate_matches_requested_currency_after_substitution(monkeypatch, db,
+                                                                  tmp_path):
+    # a USD query DigiKey answered in EUR lives under the (..., 'EUR') key; probing
+    # only the (..., 'USD') key re-spent quota on that part EVERY run inside max_age
+    import dslib.prices.digikey_api as dk
+    monkeypatch.setattr(dk, 'prices_db', db)
+    monkeypatch.setattr('dslib.prices.history._PATH', str(tmp_path / 'h.sqlite3'))
+
+    eur = _rec(currency='EUR', offers=[_offer([(1, 0.9)])])
+    eur.requested_currency = 'USD'  # what the query asked for
+    db.add([eur])
+
+    n = dk.fetch_digikey_prices([('infineon', 'X1')])  # USD run: must fresh-skip
+    assert n['fresh_skip'] == 1 and n.get('fetched', 0) == 0
 
 
 def test_fresh_skip_heals_missing_history(monkeypatch, db, tmp_path):

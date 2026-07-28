@@ -42,6 +42,15 @@ def utc_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
 
 
+def norm_mpn(mpn: str) -> str:
+    """Join-key normalization: casefold + strip ALL whitespace. Suppliers and
+    discovery disagree on both -- LCSC lists 'BSC070N10NS3G' where Infineon
+    discovery has 'BSC070N10NS3 G', and 'aot412' vs 'AOT412' (48 uniquely-mapping
+    live keys never filled a CSV row before this). Store keys keep the RAW MPN;
+    only lookups and match tiers normalize."""
+    return ''.join(mpn.split()).lower()
+
+
 class Offer:
     """One orderable variation (DigiKey: Cut Tape / Tape&Reel / ...; LCSC: the listing).
 
@@ -108,6 +117,11 @@ class PartOffers:
         # tier beyond exact equality was used (suffixed/base-number matches). Old
         # pickled records may lack the attribute -- read with getattr.
         self.matched_mpns = None
+        # the currency the QUERY asked for (DigiKey may substitute the actual one,
+        # which is the key/label): the freshness gate must match on this, or a
+        # substituted response re-spends quota every run inside max_age. Old pickled
+        # records lack it -- read with getattr, fall back to `currency`.
+        self.requested_currency = None
 
     @property
     def key(self):
@@ -173,7 +187,7 @@ class PriceLookup:
         self._now = utc_now()
         self._by_part: Dict[Tuple[str, str], List[PartOffers]] = {}
         for rec in prices_db.load().values():
-            self._by_part.setdefault((rec.mfr, rec.mpn), []).append(rec)
+            self._by_part.setdefault((rec.mfr, norm_mpn(rec.mpn)), []).append(rec)
         self._n = dict(hit=0, miss=0, negative=0, stale=0, other_currency=0,
                        under_ladder=0)
         self._skipped = dict(negative=0, stale=0, other_currency=0, under_ladder=0)
@@ -191,7 +205,7 @@ class PriceLookup:
         return result
 
     def _get_uncounted(self, mfr: str, mpn: str) -> Optional[PriceResult]:
-        recs = self._by_part.get((mfr, mpn))
+        recs = self._by_part.get((mfr, norm_mpn(mpn)))
         if not recs:
             self._n['miss'] += 1
             return None

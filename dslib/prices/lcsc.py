@@ -62,11 +62,13 @@ def parse_lcsc_row(row: dict) -> Optional[Tuple[Tuple[str, str, str, str], Offer
     pricing = row['productPriceList']
     ladder = [(p['ladder'], p['usdPrice']) for p in pricing
               if p.get('ladder') and p.get('usdPrice')]
-    if ladder and len(ladder) < len(pricing):
-        # same integrity rule as the DigiKey parsers: a mixed valid/malformed price
-        # list must not persist a PARTIAL ladder (a dropped break silently mis-prices
-        # at some qty). Logged and dropped; the brand-level schema-drift guard in
-        # _fetch_all_brand_rows catches the systematic case.
+    if pricing and len(ladder) < len(pricing):
+        # same integrity rule as the DigiKey parsers: malformed entries must never
+        # yield a PARTIAL ladder (mixed case) nor pass silently (all-invalid case --
+        # renamed/nulled fields would otherwise just age the DB out with zero new
+        # records and no signal). Logged and dropped; the brand-level schema-drift
+        # guard in _fetch_all_brand_rows catches the systematic case because it
+        # counts rows that actually PARSE, not rows with a truthy price list.
         print('lcsc %s %s: %d/%d price entries malformed, dropping row (no partial '
               'ladder)' % (row.get('brandNameEn'), mpn, len(pricing) - len(ladder),
                            len(pricing)))
@@ -135,11 +137,14 @@ async def _fetch_all_brand_rows(brand_names=None) -> List[Tuple[dict, datetime.d
             continue
         fetched_at = datetime.datetime.fromisoformat(raw['fetched_at'])
         rows = raw['rows']
-        priced = [r for r in rows if r.get('productPriceList')]
+        # count rows that actually PARSE into a priced offer -- a truthy
+        # productPriceList full of renamed/nulled fields is exactly the drift this
+        # guard exists for, and truthiness counted it as 'priced'
+        priced = [r for r in rows if r.get('productModel') and parse_lcsc_row(r)]
         if rows and not priced:
             raise RuntimeError(
-                'lcsc schema drift? brand %s (%d): %d rows, NONE has productPriceList'
-                % (name, brand_id, len(rows)))
+                'lcsc schema drift? brand %s (%d): %d rows, NONE parses into a '
+                'priced offer' % (name, brand_id, len(rows)))
         for r in rows:
             bn = r.get('brandNameEn') or ''
             if bn and '_' in mfr_tag(bn) and ' ' in bn:

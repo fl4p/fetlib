@@ -236,7 +236,8 @@ def _suffix_extends_mpn(candidate: str, mpn: str) -> bool:
     (NTMFS5C628NL -> NTMFS5C628NLT1G). Everything else -- digit continuations
     (X1 -> X10), letter continuations (X1 -> X1A), unknown separator-led
     continuations (X1 -> X1-A) -- is treated as a DIFFERENT part."""
-    c, m = candidate.lower(), mpn.lower()
+    from dslib.prices import norm_mpn
+    c, m = norm_mpn(candidate), norm_mpn(mpn)
     return c.startswith(m) and c[len(m):] in PACKAGING_SUFFIXES
 
 
@@ -246,12 +247,15 @@ def _iter_products(raw_response: dict, mfr: str, mpn: str):
     manufacturer is missing or maps to a different mfr_tag are skipped with a warning
     -- if that rejects EVERY candidate, IndeterminateMatch is raised (see above);
     catalog_miss is reserved for a response with no candidate at all."""
+    from dslib.prices import norm_mpn
     hits = raw_response.get('products') or []
+    m = norm_mpn(mpn)  # whitespace/case-insensitive: ranked 'BSC070N10NS3 G' must
+    #                    match catalog 'BSC070N10NS3G' (join/fill-rate review finding)
     products = (raw_response.get('exact_matches')
                 or [p for p in hits
-                    if (p.get('manufacturer_product_number') or '').lower() == mpn.lower()]
+                    if norm_mpn(p.get('manufacturer_product_number') or '') == m]
                 or [p for p in hits
-                    if ((p.get('base_product_number') or {}).get('name') or '').lower() == mpn.lower()]
+                    if norm_mpn(((p.get('base_product_number') or {}).get('name')) or '') == m]
                 or [p for p in hits
                     if _suffix_extends_mpn(p.get('manufacturer_product_number') or '', mpn)])
     accepted = 0
@@ -346,6 +350,7 @@ def parse_digikey_offers(mfr: str, mpn: str, raw: dict,
                      offers=offers, fetched_at=fetched_at, url=url, status=status)
     # audit trail for the match tiers: which catalog MPN(s) actually priced this part
     rec.matched_mpns = [m for m in matched_mpns if m.lower() != mpn.lower()] or None
+    rec.requested_currency = requested_currency  # freshness gate matches on THIS
     return rec
 
 
@@ -411,9 +416,11 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
     when nothing matches -- the batch phase NEVER writes negative records (its error
     list does not name the failing MPN reliably), unmatched parts fall through to the
     keyword path which owns catalog_miss semantics."""
+    from dslib.prices import norm_mpn
     details = raw['details']
+    m = norm_mpn(mpn)
     matched = ([d for d in details
-                if (d.get('manufacturer_part_number') or '').lower() == mpn.lower()]
+                if norm_mpn(d.get('manufacturer_part_number') or '') == m]
                or [d for d in details
                    if _suffix_extends_mpn(d.get('manufacturer_part_number') or '', mpn)])
     offers: List[Offer] = []
@@ -476,6 +483,7 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
                      url=url, status='ok')
     # same audit contract as the keyword parser: which catalog MPN(s) priced this part
     rec.matched_mpns = [m for m in matched_mpns if m.lower() != mpn.lower()] or None
+    rec.requested_currency = requested_currency
     return rec
 
 
@@ -621,13 +629,23 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
     n = dict(fetched=0, catalog_miss=0, no_eligible_offer=0, indeterminate=0,
              errors=0, fresh_skip=0, quota_stop=0)
 
+    # freshness gate matches on the REQUESTED currency: a USD query that DigiKey
+    # answered in EUR lives under the (..., 'EUR') key, and probing only the
+    # (..., 'USD') key re-spent quota on that part every run inside max_age
+    dk_by_part: Dict[Tuple[str, str], List[PartOffers]] = {}
+    for rec in prices_db.load().values():
+        if rec.distributor == DIGIKEY:
+            dk_by_part.setdefault((rec.mfr, rec.mpn), []).append(rec)
+
     todo = []
     fresh = []
     for mfr, mpn in parts:
-        existing = prices_db.load_obj((mfr, mpn, DIGIKEY, currency))
-        if existing is not None and (now - existing.fetched_at) <= max_age:
+        existing = [r for r in dk_by_part.get((mfr, mpn), ())
+                    if (getattr(r, 'requested_currency', None) or r.currency) == currency
+                    and (now - r.fetched_at) <= max_age]
+        if existing:
             n['fresh_skip'] += 1
-            fresh.append(existing)
+            fresh.extend(existing)
         else:
             todo.append((mfr, mpn))
 
