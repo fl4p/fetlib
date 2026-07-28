@@ -374,10 +374,9 @@ def run(args: RunArgs, cargs, name):
             # (7d) skip for free, so repeat runs only top up what aged out.
             from dslib.prices import interleave_top
             from dslib.prices.digikey_api import fetch_digikey_prices
-            n = args.price_top_n or (len(hs_rank) + len(ls_rank))  # 0 = uncapped
-            top = interleave_top([hs_rank, ls_rank], n)
+            top = interleave_top([hs_rank, ls_rank], args.price_top_n)  # <=0: uncapped
             summary = fetch_digikey_prices(top)
-            print('digikey top-%d fetch: %s' % (n, summary))
+            print('digikey top-%d fetch: %s' % (len(top), summary))
             if summary.get('fetched'):
                 print('re-emitting CSVs with the freshly fetched prices')
                 _generate()
@@ -686,7 +685,11 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 reason=e.msg,
                 errors=', '.join(ds.all_errors()),
             ))
-            ds.errors.append('gate loop: ' + e.msg)
+            # dedupe: _generate() runs TWICE under --fetch-prices (re-emit after the
+            # top-N fetch) on the same ds objects, and this exception is
+            # deterministic -- a plain append duplicated the message on pass 2
+            if ('gate loop: ' + e.msg) not in ds.errors:
+                ds.errors.append('gate loop: ' + e.msg)
             continue
 
         parts_loss.append((ds, fet_specs, loss_spec))

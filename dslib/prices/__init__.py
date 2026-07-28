@@ -346,7 +346,10 @@ def interleave_top(rankings: List[List[Tuple[str, str]]], n: int) -> List[Tuple[
     """The n best DISTINCT parts drawn round-robin from several rankings (HS and LS
     lists rank different loss mechanisms -- pure best-of-one would starve the other).
     Order within the result follows rank, so a quota-limited fetch prices the most
-    interesting parts first."""
+    interesting parts first. n <= 0 means UNCAPPED (the priceTopN=0 contract lives
+    here, not in a caller-side idiom that a direct call would miss)."""
+    if n <= 0:
+        n = sum(len(r) for r in rankings)
     out, seen = [], set()
     i = 0
     while len(out) < n and any(i < len(r) for r in rankings):
@@ -360,44 +363,8 @@ def interleave_top(rankings: List[List[Tuple[str, str]]], n: int) -> List[Tuple[
     return out
 
 
-def fetch_prices_for_parts(parts: List[Tuple[str, str]], currency: str = 'USD',
-                           max_age='7d') -> Dict[str, dict]:
-    """Fetch-phase orchestrator for the ranked candidates.
-
-    LCSC brand-catalog harvest first (async, own browser lifecycle), then the DigiKey
-    per-MPN loop (sync; fail-fast setup validation inside). Each phase reports a
-    summary; a phase failure is loud but does not zero out the other phase's writes.
-    """
-    import asyncio
-    summaries = {}
-
-    from dslib.prices.lcsc import harvest_lcsc_prices
-
-    async def _lcsc_phase():
-        # this asyncio.run phase owns its browser: it must not leak a context keyed to
-        # this (about-to-die) event loop into a later phase (dslib/fetch.py:152 asserts)
-        from dslib.fetch import close_browser
-        try:
-            return await harvest_lcsc_prices(max_age=max_age)
-        finally:
-            await close_browser()
-
-    try:
-        summaries['lcsc'] = asyncio.run(_lcsc_phase())
-    except Exception as e:
-        print('LCSC price harvest FAILED (continuing with DigiKey):', e)
-        summaries['lcsc'] = {'error': str(e)}
-
-    from dslib.prices.digikey_api import fetch_digikey_prices
-    try:
-        summaries['digikey'] = fetch_digikey_prices(parts, currency=currency,
-                                                    max_age=max_age)
-    except Exception as e:
-        # loud but non-fatal: a dead DigiKey phase (quota exhausted, creds, OAuth) must
-        # not cost the run its CSVs -- columns still fill from the store's records
-        print('DigiKey price fetch FAILED (columns fill from existing records):', e)
-        summaries['digikey'] = {'error': str(e)}
-
-    for phase, s in summaries.items():
-        print('price fetch [%s]: %s' % (phase, s))
-    return summaries
+# NOTE deliberately no fetch_prices_for_parts(parts) convenience orchestrator here:
+# the old one fetched DigiKey for an ARBITRARY candidate list in caller order, which
+# is exactly the quota misuse the top-priceTopN flow in main.py replaced. Compose
+# run_lcsc_harvest() + interleave_top(rankings, n) + digikey_api.fetch_digikey_prices
+# instead, so the ranking decides where quota goes.

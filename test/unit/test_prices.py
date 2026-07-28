@@ -311,6 +311,9 @@ def test_interleave_top_round_robin_distinct():
     assert interleave_top([hs, ls], 100) == [
         ('m', 'A'), ('m', 'B'), ('m', 'D'), ('m', 'C'), ('m', 'E')]
     assert interleave_top([[], []], 5) == []
+    # n <= 0 = UNCAPPED (the priceTopN=0 contract lives in the function itself)
+    assert interleave_top([hs, ls], 0) == interleave_top([hs, ls], 100)
+    assert interleave_top([hs, ls], -3) == interleave_top([hs, ls], 100)
 
 
 def test_family_mpn_infineon_packing_codes():
