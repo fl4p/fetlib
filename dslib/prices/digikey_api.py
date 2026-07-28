@@ -161,7 +161,8 @@ def _build_client(key: _Key) -> None:
 
 
 def _dk_keyword_search_raw(mpn: str, currency: str = 'USD',
-                           key: Optional[_Key] = None) -> dict:
+                           key: Optional[_Key] = None,
+                           mfr: Optional[str] = None) -> dict:
     """One keyword search on one key, returned as a plain dict envelope with the ORIGIN
     timestamp and the key's remaining DAILY quota (X-RateLimit-Remaining). Raises
     DkRateLimited after a failed burst backoff; plain exceptions for everything else.
@@ -174,11 +175,18 @@ def _dk_keyword_search_raw(mpn: str, currency: str = 'USD',
     if key.client is None:
         _build_client(key)
 
+    from dslib.prices import family_mpn
+    # search by the ordering-code FAMILY BASE where one exists (Infineon packing
+    # suffixes): a keyword search for the exact consolidated code returns only that
+    # orderable variant, hiding stocked siblings (AKSA1 with 0 stock vs XKSA1 in
+    # stock); the base returns the whole family and the match tiers pick it apart
+    keywords = family_mpn(mfr, mpn) if mfr else mpn
+
     retried_auth = retried_burst = False
     while True:
         try:
             data, status, headers = key.client['api'].keyword_search_with_http_info(
-                key.client_id, body=KeywordRequest(keywords=mpn, limit=10),
+                key.client_id, body=KeywordRequest(keywords=keywords, limit=10),
                 authorization=key.client['auth'],
                 x_digikey_locale_site='US', x_digikey_locale_language='en',
                 x_digikey_locale_currency=currency)
@@ -251,11 +259,19 @@ def _iter_products(raw_response: dict, mfr: str, mpn: str):
     manufacturer is missing or maps to a different mfr_tag are skipped with a warning
     -- if that rejects EVERY candidate, IndeterminateMatch is raised (see above);
     catalog_miss is reserved for a response with no candidate at all."""
-    from dslib.prices import norm_mpn
+    from dslib.prices import family_mpn, norm_mpn
     hits = raw_response.get('products') or []
     m = norm_mpn(mpn)  # whitespace/case-insensitive: ranked 'BSC070N10NS3 G' must
     #                    match catalog 'BSC070N10NS3G' (join/fill-rate review finding)
-    products = (raw_response.get('exact_matches')
+    fam = family_mpn(mfr, mpn)
+    # ordering-code FAMILY (Infineon packing suffixes) comes BEFORE the equality
+    # tier: it is a superset of equality (the queried code is its own family member),
+    # and equality-first would match just the ranked AKSA1 hit and hide the stocked
+    # XKSA1 sibling the base-keyword query was made to retrieve
+    family = (fam != m and [p for p in hits
+                            if family_mpn(mfr, p.get('manufacturer_product_number') or '') == fam])
+    products = (family
+                or raw_response.get('exact_matches')
                 or [p for p in hits
                     if norm_mpn(p.get('manufacturer_product_number') or '') == m]
                 or [p for p in hits
@@ -420,11 +436,14 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
     when nothing matches -- the batch phase NEVER writes negative records (its error
     list does not name the failing MPN reliably), unmatched parts fall through to the
     keyword path which owns catalog_miss semantics."""
-    from dslib.prices import norm_mpn
+    from dslib.prices import family_mpn, norm_mpn
     details = raw['details']
     m = norm_mpn(mpn)
-    matched = ([d for d in details
-                if norm_mpn(d.get('manufacturer_part_number') or '') == m]
+    fam = family_mpn(mfr, mpn)
+    matched = ((fam != m and [d for d in details
+                              if family_mpn(mfr, d.get('manufacturer_part_number') or '') == fam])
+               or [d for d in details
+                   if norm_mpn(d.get('manufacturer_part_number') or '') == m]
                or [d for d in details
                    if _suffix_extends_mpn(d.get('manufacturer_part_number') or '', mpn)])
     offers: List[Offer] = []
@@ -722,7 +741,8 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
             if wait > 0:
                 time.sleep(wait)
             try:
-                raw = _dk_keyword_search_raw(job[1], currency=currency, key=key)
+                raw = _dk_keyword_search_raw(job[1], currency=currency, key=key,
+                                             mfr=job[0])
             except DkAuthFailed as e:
                 # auth-bad key: retire GLOBALLY and re-queue the job for a healthy
                 # key -- this job is fine, the KEY is broken

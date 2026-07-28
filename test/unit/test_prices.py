@@ -301,6 +301,37 @@ def test_lookup_joins_whitespace_and_case_variant_mpns(db):
     assert lu.get('ao', 'AOT412').price == 1.1
 
 
+def test_family_mpn_infineon_packing_codes():
+    from dslib.prices import family_mpn
+    # ordering siblings consolidate; other mfrs and non-packing tails do not
+    assert family_mpn('infineon', 'IPP023N10N5AKSA1') == 'ipp023n10n5'
+    assert family_mpn('infineon', 'IPP023N10N5XKSA1') == 'ipp023n10n5'
+    assert family_mpn('infineon', 'BSC040N08NS5ATMA1') == 'bsc040n08ns5'
+    assert family_mpn('infineon', 'BSC070N10NS3 G') == 'bsc070n10ns3g'  # no packing tail
+    assert family_mpn('onsemi', 'FDMS86368AKSA1X') == 'fdms86368aksa1x'  # infineon-only
+
+
+def test_lookup_joins_infineon_ordering_siblings(db):
+    # the live case: ranked IPP023N10N5AKSA1 has a DK record with 0 stock, while the
+    # stocked sibling XKSA1 has its own record -- the family join must surface both
+    db.add([_rec(mpn='IPP023N10N5AKSA1',
+                 offers=[_offer([(1, 2.0)], stock=0, sku='A')]),
+            _rec(mpn='IPP023N10N5XKSA1',
+                 offers=[_offer([(1, 1.8)], stock=4000, sku='X')])])
+    lu = PriceLookup(qty=1)
+    assert lu.get('infineon', 'IPP023N10N5AKSA1').sku == 'X'  # cheapest in family
+    assert lu.stocks('infineon', 'IPP023N10N5AKSA1') == {DIGIKEY: 4000}
+
+
+def test_dk_family_tier_matches_ordering_sibling():
+    # query made with the family base returns the sibling; the family tier accepts it
+    raw = _dk_raw(products=[_dk_product(mpn='IPP023N10N5XKSA1',
+                                        variations=[_dk_var(stock=4000)])])
+    rec = parse_digikey_offers('infineon', 'IPP023N10N5AKSA1', raw)
+    assert rec.status == 'ok' and rec.matched_mpns == ['IPP023N10N5XKSA1']
+    assert rec.total_stock() == 4000
+
+
 def test_dk_equality_tier_ignores_whitespace_and_case():
     raw = _dk_raw(products=[_dk_product(mpn='BSC070N10NS3G', variations=[_dk_var()])])
     rec = parse_digikey_offers('infineon', 'BSC070N10NS3 G', raw)
@@ -634,7 +665,7 @@ def test_keyword_pool_retires_auth_bad_key_and_requeues(monkeypatch, db):
     k1.limiter_lock, k2.limiter_lock = __import__('threading').Lock(), __import__('threading').Lock()
     k1.next_slot = k2.next_slot = 0.0
 
-    def fake_raw(mpn, currency='USD', key=None):
+    def fake_raw(mpn, currency='USD', key=None, mfr=None):
         if key.label == 'k1':
             raise dk.DkAuthFailed(mpn, 'k1xxxx')
         return {'fetched_at': NOW.isoformat(),

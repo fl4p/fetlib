@@ -52,6 +52,27 @@ def norm_mpn(mpn: str) -> str:
     return ''.join(mpn.split()).casefold()
 
 
+# Infineon ordering codes: the trailing block is a PACKING code ([A]mmo-pack/tube vs
+# [X]=tape&reel, then a package/pack-size letter, then SA1/MA1/TA1/UA1...) -- the die
+# is identical across the family. Discovery consolidates them (discover_parts
+# normal_mpn strips these), so the ranked spelling is whichever code discovery saw
+# first, while the distributor may only stock a SIBLING (IPP023N10N5AKSA1 with 0
+# stock vs IPP023N10N5XKSA1 in stock).
+_INFINEON_PACKING = __import__('re').compile(r'(.{6,}?)[ax][ktu][sm]a\d$')
+
+
+def family_mpn(mfr: str, mpn: str) -> str:
+    """Consolidation key: norm_mpn plus manufacturer-scoped ordering-suffix stripping
+    (currently Infineon packing codes only). Used to JOIN and QUERY across ordering
+    siblings; store keys and record MPNs stay raw."""
+    m = norm_mpn(mpn)
+    if mfr == 'infineon':
+        match = _INFINEON_PACKING.fullmatch(m)
+        if match:
+            return match.group(1)
+    return m
+
+
 class Offer:
     """One orderable variation (DigiKey: Cut Tape / Tape&Reel / ...; LCSC: the listing).
 
@@ -196,7 +217,11 @@ class PriceLookup:
         self._now = utc_now()
         self._by_part: Dict[Tuple[str, str], List[PartOffers]] = {}
         for rec in prices_db.load().values():
-            self._by_part.setdefault((rec.mfr, norm_mpn(rec.mpn)), []).append(rec)
+            # family key: ordering siblings (Infineon AKSA1/XKSA1/... packing codes)
+            # consolidate, matching discovery's normal_mpn consolidation -- a ranked
+            # AKSA1 row must surface the stocked XKSA1 sibling's offers
+            self._by_part.setdefault((rec.mfr, family_mpn(rec.mfr, rec.mpn)),
+                                     []).append(rec)
         self._n = dict(hit=0, miss=0, negative=0, stale=0, other_currency=0,
                        under_ladder=0)
         self._skipped = dict(negative=0, stale=0, other_currency=0, under_ladder=0)
@@ -214,7 +239,7 @@ class PriceLookup:
         return result
 
     def _get_uncounted(self, mfr: str, mpn: str) -> Optional[PriceResult]:
-        recs = self._by_part.get((mfr, norm_mpn(mpn)))
+        recs = self._by_part.get((mfr, family_mpn(mfr, mpn)))
         if not recs:
             self._n['miss'] += 1
             return None
@@ -260,7 +285,7 @@ class PriceLookup:
         (currency match, fresh, status ok). Informational -- stock never gates a
         price. Distributors with no stock report are absent, never 0."""
         out: Dict[str, int] = {}
-        for rec in self._by_part.get((mfr, norm_mpn(mpn)), ()):
+        for rec in self._by_part.get((mfr, family_mpn(mfr, mpn)), ()):
             if rec.currency != self.currency or rec.status != 'ok' \
                     or rec.age(self._now) > self.max_age:
                 continue
