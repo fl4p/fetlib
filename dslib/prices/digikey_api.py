@@ -670,7 +670,12 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
 def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
                          max_age='7d', workers_per_key: int = 4,
                          min_interval: float = 0.52,
-                         quota_floor: int = 25, use_batch: bool = True) -> Dict[str, int]:
+                         quota_floor: int = 25, use_batch: bool = False) -> Dict[str, int]:
+    # use_batch defaults OFF: DigiKey API support (2026-07-28) confirmed
+    # BatchProductDetails is DEPRECATED and will not be enabled for new users; the
+    # supported product (Product Information V4) has no batch equivalent. The batch
+    # path is kept for apps with legacy enablement -- it probes and fails open --
+    # but by default we skip even the probe requests.
     """Fetch across ALL configured keys (see discover_keys): each key gets its own
     worker pool behind its own rate limiter (`min_interval` between request starts,
     0.52s ~= 115/min, just under the per-key 120/min burst limit). Skips parts whose
