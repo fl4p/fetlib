@@ -170,6 +170,89 @@ COSS_CURVES = {
         (43.18, 447, 19.06), (50, 339.4, 15.68), (50.43, 335.5, 15.5), (63.61, 282.5, 12.46),
         (79.74, 249, 11.37),
     ],
+    # Infineon ISC040N10NM7 Rev 1.0 (2025-10), Diagram 11 (VGS=0, f=1 MHz) -- 100 V
+    # OptiMOS7 fugu2 LS candidate; first M7-template curve, unlocked by the dsdig
+    # block-scoped anchor repair (unit+condition stated once per table block).
+    # PDF datasheets/infineon/ISC040N10NM7ATMA1.pdf p.9. Anchors @50V: Coss=1170pF
+    # (-0.6%), Crss=13pF (-4.0%, within the 8% export gate; 0.5 pF absolute),
+    # Ciss=2800pF (+0.4%). Qoss(0-50V)=91.0nC vs 91nC Table (-0.0%).
+    ("infineon", "ISC040N10NM7"): [
+        (0, 3061, 550.8), (0.09456, 3061, 550.8), (1.058, 2959, 434.3), (2.022, 2718, 293.9),
+        (7.032, 2413, 176.6), (15.51, 2036, 82.23), (28.42, 1661, 29.69), (37.48, 1450, 18.14),
+        (50, 1163, 12.49), (53.48, 1105, 11.87), (71.4, 786.8, 10.54), (78.91, 675.3, 10.36),
+        (83.54, 599.6, 10.36), (99.92, 550.8, 10.36),
+    ],
+    # Infineon IPP014N08NM6 Rev 2.01, Diagram 11 (VGS=0, f=1 MHz) -- 80 V OptiMOS6, fugu3 top candidate.
+    # PDF datasheets/infineon/IPP014N08NM6AKSA1.pdf p.8. Anchors @40V: Coss=3700pF (-0.5%), Crss=84pF (+0.9%), Ciss=11000pF (-2.4%).
+    # Qoss(full range)=301.6nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IPP014N08NM6"): [
+        (0, 13510, 2057), (0.6977, 13300, 1877), (3.362, 11770, 1242), (7.211, 10410, 900.7),
+        (14.32, 8535, 503.6), (20.09, 7324, 318.3), (26.16, 6003, 204.2), (31.64, 4996, 139.3),
+        (37.7, 4033, 95.05), (40, 3680, 84.74), (46.59, 2837, 60.99), (61.09, 2398, 38.55),
+        (80.04, 2187, 31.59),
+    ],
+    # Infineon IPP016N08NF2S Rev 2.11, Diagram 11 (VGS=0, f=1 MHz) -- 80 V StrongIRFET2, fugu3.
+    # PDF datasheets/infineon/IPP016N08NF2SAKMA1.pdf p.8. Anchors @40V: Coss=1900pF (+0.3%), Crss=83pF (-1.7%), Ciss=12000pF (-0.4%).
+    # Qoss(full range)=197.1nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IPP016N08NF2S"): [
+        (0, 11770, 2628), (0.6977, 11070, 2398), (2.178, 9073, 1877), (6.175, 7668, 1261),
+        (16.09, 5647, 552), (22.61, 4095, 273.1), (26.6, 3256, 164.9), (32.23, 2221, 114.2),
+        (35.63, 2026, 96.52), (40, 1906, 81.57), (51.17, 1636, 64.84), (63.17, 1492, 59.16),
+        (80.04, 1404, 58.26),
+    ],
+    # Infineon IPP082N10NF2S Rev 2.11, Diagram 11 (VGS=0, f=1 MHz) -- 100 V StrongIRFET2, fugu3.
+    # PDF datasheets/infineon/IPP082N10NF2SAKMA1.pdf p.8. Anchors @50V: Coss=320pF (+0.7%), Crss=15pF (-1.3%), Ciss=2000pF (-0.7%).
+    # Qoss(full range)=38.1nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IPP082N10NF2S"): [
+        (0, 1812, 431.9), (0.6871, 1711, 385), (1.982, 1392, 249), (8.273, 1081, 143.5),
+        (17.71, 840.1, 84.68), (31.59, 623.4, 36.65), (37.88, 507.1, 24.25), (45.84, 380.7, 16.42),
+        (50, 322.3, 14.81), (50.46, 316.8, 14.64), (54.53, 295.7, 13.51), (73.04, 243.3, 10.99),
+        (100.1, 212, 10.37),
+    ],
+    # Infineon IQD020N10NM5SC Rev ?, Diagram 11 (VGS=0, f=1 MHz) -- 100 V OptiMOS5 source-down, fugu2.
+    # PDF datasheets/infineon/IQD020N10NM5SCATMA1.pdf p.8. Anchors @50V: Coss=1000pF (+4.1%), Crss=42pF (-1.1%), Ciss=7300pF (-0.1%).
+    # Qoss(full range)=125.0nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IQD020N10NM5SC"): [
+        (0, 6103, 1776), (0.09456, 6103, 1776), (0.8654, 5727, 1544), (2.022, 4672, 1040),
+        (7.418, 3622, 594.2), (17.25, 2772, 302.6), (33.24, 1941, 101.3), (41.72, 1448, 53.59),
+        (50, 1041, 41.55), (50.58, 1027, 41.02), (69.08, 837.9, 33.04), (99.92, 719.2, 31.4),
+    ],
+    # Infineon IRF100PW219 Rev 2.01, Diagram 11 (VGS=0, f=1 MHz) -- 100 V StrongIRFET2, fugu2.
+    # PDF datasheets/infineon/IRF100PW219XKSA1.pdf p.9. Anchors @50V: Coss=1800pF (+0.2%), Crss=80pF (-1.0%), Ciss=12000pF (-1.1%).
+    # Qoss(full range)=212.5nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IRF100PW219"): [
+        (0, 10010, 2405), (0.09456, 10010, 2405), (0.8654, 9357, 2136), (2.022, 7632, 1421),
+        (8.959, 5816, 811.3), (13.01, 5253, 639.6), (20.14, 4432, 425.5), (32.28, 3495, 201.6),
+        (42.11, 2488, 102.2), (48.27, 1962, 83.36), (49.43, 1833, 80.58), (50, 1803, 79.22),
+        (51.55, 1742, 76.57), (60.99, 1600, 63.53), (69.08, 1445, 57.37), (99.92, 1262, 52.7),
+    ],
+    # Infineon IPP057N15NM6 Rev 1.01, Diagram 11 (VGS=0, f=1 MHz) -- 150 V OptiMOS6, fugu3.
+    # PDF datasheets/infineon/IPP057N15NM6AKSA1.pdf p.8. Anchors @75V: Coss=990pF (-0.9%), Crss=15pF (-3.0%), Ciss=3100pF (+0.4%).
+    # Qoss(full range)=131.4nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IPP057N15NM6"): [
+        (0, 3389, 480.9), (0.1418, 3389, 480.9), (1.298, 3276, 457), (5.634, 2718, 331),
+        (9.681, 2373, 248), (15.46, 2180, 167.8), (21.24, 1968, 115.5), (28.76, 1871, 71.79),
+        (44.95, 1526, 32.87), (64.31, 1183, 17.84), (75, 981.2, 14.55), (76.17, 964.7, 14.3),
+        (82.53, 800.3, 13.14), (88.6, 631, 12.28), (95.53, 464.8, 11.47), (101.6, 405.8, 11.09),
+        (117.2, 354.2, 10.36), (121, 354.2, 10.18), (125, 336.6, 10.01), (149.9, 298.9, 9.679),
+    ],
+    # Infineon IPP029N15NM6 Rev ?, Diagram 11 (VGS=0, f=1 MHz) -- 150 V OptiMOS6, fugu3.
+    # PDF datasheets/infineon/IPP029N15NM6AKSA1.pdf p.8. Anchors @75V: Coss=2300pF (+1.4%), Crss=25pF (+0.2%), Ciss=7600pF (-0.9%).
+    # Qoss(full range)=308.7nC; qoss table validation pass (vint via PDF fallback).
+    ("infineon", "IPP029N15NM6"): [
+        (0, 8058, 1124), (0.1418, 8058, 1124), (1.009, 7789, 1086), (4.478, 6685, 842.1),
+        (9.681, 5546, 569.8), (15.46, 5095, 379.1), (19.8, 4680, 284.1), (28.76, 4373, 154.1),
+        (46.97, 3506, 59.55), (60.27, 2959, 35.78), (73.56, 2413, 25.92), (75, 2333, 25.05),
+        (83.68, 1808, 21.5), (89.75, 1402, 20.09), (95.53, 1068, 19.09), (99.58, 964.7, 18.45),
+        (111.1, 856.6, 17.24), (114.9, 856.6, 16.95), (125, 786.8, 16.38), (149.9, 710.6, 15.57),
+    ],
+    # IQD020N10NM5CGSC (gate-source-clamp variant) shares the identical digitized
+    # curve/anchors with IQD020N10NM5SC above -- same die, separate base MPN.
+    ("infineon", "IQD020N10NM5CGSC"): [
+        (0, 6103, 1776), (0.09456, 6103, 1776), (0.8654, 5727, 1544), (2.022, 4672, 1040),
+        (7.418, 3622, 594.2), (17.25, 2772, 302.6), (33.24, 1941, 101.3), (41.72, 1448, 53.59),
+        (50, 1041, 41.55), (50.58, 1027, 41.02), (69.08, 837.9, 33.04), (99.92, 719.2, 31.4),
+    ],
 }
 
 # Structured conditions and source identity travel with the curve instead of being
@@ -224,6 +307,43 @@ COSS_CURVE_SOURCE = {
         datasheet_revision="2.1 (2016-10-03)", source_figure="Diagram 11", source_page=8,
         digitization_method="dsdig-auto-vector-adaptive-knots",
         validation_method="export gate: Coss/Crss/Ciss@50V anchors <2% + human overlay"),
+    ("infineon", "ISC040N10NM7"): dict(
+        datasheet_revision="1.0 (2025-10)", source_figure="Diagram 11", source_page=9,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <8% (Crss -4.0%) "
+                          "+ Qoss(0-50V) table -0.0% + human overlay"),
+    ("infineon", "IPP014N08NM6"): dict(
+        datasheet_revision="2.01", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@40V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IPP016N08NF2S"): dict(
+        datasheet_revision="2.11", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@40V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IPP082N10NF2S"): dict(
+        datasheet_revision="2.11", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IQD020N10NM5SC"): dict(
+        datasheet_revision="?", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IRF100PW219"): dict(
+        datasheet_revision="2.01", source_figure="Diagram 11", source_page=9,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IPP057N15NM6"): dict(
+        datasheet_revision="1.01", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@75V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IPP029N15NM6"): dict(
+        datasheet_revision="?", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@75V anchors <8% + Qoss table + human overlay"),
+    ("infineon", "IQD020N10NM5CGSC"): dict(
+        datasheet_revision="1.1", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-auto-vector-adaptive-knots",
+        validation_method="export gate: Coss/Crss/Ciss@50V anchors <8% + Qoss table + human overlay"),
 }
 
 
@@ -331,6 +451,50 @@ CISS_CURVES = {
     # IPP083N10N5 Rev 2.1, 100 V -- Ciss 2100pF@50V (digitized +0.2%).
     ("infineon", "IPP083N10N5"): [
         (0, 2586), (3.51, 2306), (41.11, 2104), (50, 2104), (79.74, 2104),
+    ],
+    # ISC040N10NM7 Rev 1.0, 100 V -- Ciss 2800pF@50V (digitized +0.4%).
+    ("infineon", "ISC040N10NM7"): [
+        (0, 3332), (0.09456, 3332), (0.8654, 3276), (2.022, 3061),
+        (13.01, 2860), (50, 2812), (99.92, 2812),
+    ],
+    # IPP014N08NM6 Rev 2.01 -- Ciss 11000pF@40V (digitized -2.4%).
+    ("infineon", "IPP014N08NM6"): [
+        (0, 12700), (4.842, 11950), (21.13, 10900), (40, 10740),
+        (80.04, 10740),
+    ],
+    # IPP016N08NF2S Rev 2.11 -- Ciss 12000pF@40V (digitized -0.4%).
+    ("infineon", "IPP016N08NF2S"): [
+        (0, 14360), (0.6977, 14360), (23.05, 11950), (40, 11950),
+        (80.04, 11770),
+    ],
+    # IPP082N10NF2S Rev 2.11 -- Ciss 2000pF@50V (digitized -0.7%).
+    ("infineon", "IPP082N10NF2S"): [
+        (0, 2387), (0.6871, 2359), (2.537, 2177), (33.07, 1986),
+        (50, 1986), (100.1, 1964),
+    ],
+    # IQD020N10NM5SC Rev ? -- Ciss 7300pF@50V (digitized -0.1%).
+    ("infineon", "IQD020N10NM5SC"): [
+        (0, 8942), (0.09456, 8942), (0.8654, 8829), (2.022, 8284),
+        (13.01, 7578), (35.17, 7294), (50, 7294), (99.92, 7294),
+    ],
+    # IRF100PW219 Rev 2.01 -- Ciss 12000pF@50V (digitized -1.1%).
+    ("infineon", "IRF100PW219"): [
+        (0, 14310), (0.09456, 14310), (1.058, 14060), (3.563, 12920),
+        (6.839, 12920), (39.02, 11870), (50, 11870), (99.92, 11870),
+    ],
+    # IPP057N15NM6 Rev 1.01 -- Ciss 3100pF@75V (digitized +0.4%).
+    ("infineon", "IPP057N15NM6"): [
+        (0, 3628), (0.1418, 3628), (4.767, 3506), (25, 3167),
+        (75, 3113), (149.9, 3113),
+    ],
+    # IPP029N15NM6 Rev ? -- Ciss 7600pF@75V (digitized -0.9%).
+    ("infineon", "IPP029N15NM6"): [
+        (0, 8624), (0.1418, 8624), (8.814, 8196), (39.17, 7529),
+        (75, 7529), (149.9, 7529),
+    ],
+    ("infineon", "IQD020N10NM5CGSC"): [
+        (0, 8942), (0.09456, 8942), (0.8654, 8829), (2.022, 8284),
+        (13.01, 7578), (35.17, 7294), (50, 7294), (99.92, 7294),
     ],
 }
 
