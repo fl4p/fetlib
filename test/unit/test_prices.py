@@ -301,6 +301,18 @@ def test_lookup_joins_whitespace_and_case_variant_mpns(db):
     assert lu.get('ao', 'AOT412').price == 1.1
 
 
+def test_interleave_top_round_robin_distinct():
+    from dslib.prices import interleave_top
+    hs = [('m', 'A'), ('m', 'B'), ('m', 'C')]
+    ls = [('m', 'B'), ('m', 'D'), ('m', 'E')]
+    # round-robin by rank, distinct, capped -- quota-limited fetches hit the most
+    # interesting parts of BOTH rankings first
+    assert interleave_top([hs, ls], 4) == [('m', 'A'), ('m', 'B'), ('m', 'D'), ('m', 'C')]
+    assert interleave_top([hs, ls], 100) == [
+        ('m', 'A'), ('m', 'B'), ('m', 'D'), ('m', 'C'), ('m', 'E')]
+    assert interleave_top([[], []], 5) == []
+
+
 def test_family_mpn_infineon_packing_codes():
     from dslib.prices import family_mpn
     # ordering siblings consolidate; other mfrs and non-packing tails do not

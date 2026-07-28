@@ -19,6 +19,7 @@ from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict, round_to_n, isnum
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, Substrate
+from dslib.housing import normalize as normalize_housing
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields, field_repr_salt, merge_keeping_absent_symbols
 from dslib.mosfet import GateDrive
@@ -86,12 +87,14 @@ def main_yaml():
                              '(restores pre-2026-07 opportunistic harvesting of non-needed '
                              'fields into the DB; slower -- adds a Tabula pass per covered part)')
     parser.add_argument('--fetch-prices', action='store_true',
-                        help='fetch distributor prices for the ranked candidates before CSV '
-                             'generation: DigiKey API (creds from env or data/.digikey-api; '
-                             'the FIRST run opens a browser for OAuth) + LCSC brand-catalog '
-                             'harvest. Results persist in data/prices-lib.sqlite3 (~7d fresh). '
-                             'Without this flag the price_usd column is still filled from '
-                             'whatever that store already holds (stale records suppressed).')
+                        help='fetch distributor prices: LCSC brand-catalog harvest for the '
+                             'whole corpus BEFORE the CSVs, then a DigiKey fetch for the top '
+                             'priceTopN (default 100) of the fresh ranking, after which the '
+                             'CSVs are re-emitted (creds: env or data/.digikey-api*; a NEW '
+                             "key's first run opens a browser for OAuth). Results persist in "
+                             'data/prices-lib.sqlite3 (~7d fresh). Without this flag the '
+                             'price columns still fill from whatever the store holds (stale '
+                             'records suppressed).')
     parser.add_argument('--price-qty', type=int, metavar='N',
                         help='qty basis for the price_usd/price_src columns (cheapest offer '
                              'evaluated at the largest ladder break <= max(N, MOQ), then x '
@@ -124,7 +127,8 @@ def main_yaml():
         conf = yaml.safe_load(fh)
 
     args = RunArgs(topology=conf['topology'],
-                   substrates=conf['substrates'], packages=conf['packages'],
+                   substrates=conf['substrates'],
+                   packages=conf['packages'],
                    vdsRange=conf['vdsRange'],
                    dcdc=DcdcArgs(
                        controlFet=ControlFetArgs(**conf['controlFet']),
@@ -148,6 +152,9 @@ def main_yaml():
                    # A/B'd at different qty bases from one config, no re-fetch)
                    price_qty=cargs.price_qty if cargs.price_qty is not None
                              else int(conf.get('priceQty', 100)),
+                   # how many of THIS run's best-ranked parts get a DigiKey fetch
+                   # (quota-bound); 0 = uncapped. LCSC is always corpus-wide.
+                   price_top_n=int(conf.get('priceTopN', 100)),
                 )
 
     # CLI override for the YAML knob, so the two rankings can be A/B'd from one config.
@@ -215,12 +222,16 @@ class RunArgs():
                  includeObsolete: bool = False,
                  q: Optional[str] = None,
                  price_qty: int = 100,
+                 price_top_n: int = 100,
                  ):
         assert topology == 'buck'
         self.topology = topology
         # qty basis for the price_usd CSV column (YAML: priceQty). One fixed basis per
         # run keeps rows comparable across parallel counts.
         self.price_qty = int(price_qty)
+        # --fetch-prices DigiKey scope: the top N of this run's ranking (YAML:
+        # priceTopN, 0 = uncapped). LCSC harvest is always corpus-wide.
+        self.price_top_n = int(price_top_n)
 
         if isinstance(substrates, str):
             substrates = set(map(lambda s: s.strip(), substrates.split(',')))
@@ -310,11 +321,16 @@ def run(args: RunArgs, cargs, name):
 
     print('Found       ', len(parts), 'out of', n_pre_select, 'parts are suitable for given DC-DC specs')
     if cargs.fetch_prices:
-        # ranked candidates only: a few hundred parts, right before CSV generation.
-        # Runs its own asyncio phase (LCSC harvest) -- the discovery browser was closed
-        # above, so this opens and closes its own.
-        from dslib.prices import fetch_prices_for_parts
-        fetch_prices_for_parts([(p.mfr, p.mpn) for p in parts])
+        # LCSC only at this point: the brand-catalog harvest is corpus-wide and cheap
+        # (raw lists disk-cached 7d), so every CSV row can price from it. The
+        # quota-bound DigiKey fetch runs AFTER the generators, targeting only the top
+        # of THIS run's ranking (priceTopN) -- see below. Own asyncio phase; the
+        # discovery browser was closed above, this opens and closes its own.
+        from dslib.prices import run_lcsc_harvest
+        try:
+            print('lcsc harvest:', run_lcsc_harvest())
+        except Exception as e:
+            print('LCSC price harvest FAILED (continuing):', e)
     print(', '.join(sorted(set(p.mpn for p in parts))))
     print('Vds_max:   ',
           sorted(set(int(p.specs.Vds_max) for p in parts if p.specs.Vds_max and not math.isnan(p.specs.Vds_max))))
@@ -340,21 +356,31 @@ def run(args: RunArgs, cargs, name):
         else:
             dss = [ds for ds in dss if ds.get_max_or_min_or_typ('Vds') >= args.vdsRange[0]]
 
-        generate_HS_power_loss_csv(dss,
-                                   args=args.dcdc,
-                                   dcdc=dcdc,
-                                   gd=args.dcdc.gateDrive,
-                                   name=name,
-                                   price_qty=args.price_qty,
-                                   )
+        def _generate():
+            hs = generate_HS_power_loss_csv(dss, args=args.dcdc, dcdc=dcdc,
+                                            gd=args.dcdc.gateDrive, name=name,
+                                            price_qty=args.price_qty)
+            ls = generate_LS_power_loss_csv(dss, args=args.dcdc, dcdc=dcdc,
+                                            gd=args.dcdc.gateDrive, name=name,
+                                            price_qty=args.price_qty)
+            return hs, ls
 
-        generate_LS_power_loss_csv(dss,
-                                   args=args.dcdc,
-                                   dcdc=dcdc,
-                                   gd=args.dcdc.gateDrive,
-                                   name=name,
-                                   price_qty=args.price_qty,
-                                   )
+        hs_rank, ls_rank = _generate()
+
+        if cargs.fetch_prices:
+            # DigiKey is quota-bound (1,000/day/key): fetch only the top priceTopN of
+            # THIS run's ranking, best parts first (HS and LS interleaved), then
+            # re-emit the CSVs so the fresh prices land in the columns. Fresh records
+            # (7d) skip for free, so repeat runs only top up what aged out.
+            from dslib.prices import interleave_top
+            from dslib.prices.digikey_api import fetch_digikey_prices
+            n = args.price_top_n or (len(hs_rank) + len(ls_rank))  # 0 = uncapped
+            top = interleave_top([hs_rank, ls_rank], n)
+            summary = fetch_digikey_prices(top)
+            print('digikey top-%d fetch: %s' % (n, summary))
+            if summary.get('fetched'):
+                print('re-emitting CSVs with the freshly fetched prices')
+                _generate()
 
 
 def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False,
@@ -596,6 +622,18 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
     return dss
 
 
+def _rank_order(ranked_parts):
+    """Distinct (mfr, mpn) in rank order; NaN losses sort last, never first."""
+    seen = set()
+    order = []
+    for loss, mfr, mpn in sorted(ranked_parts,
+                                 key=lambda t: t[0] if math.isfinite(t[0]) else 9e9):
+        if (mfr, mpn) not in seen:
+            seen.add((mfr, mpn))
+            order.append((mfr, mpn))
+    return order
+
+
 def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc: DcDcLoadParams, gd: GateDrive,
                                name, price_qty: int = 100):
     assert dss, "No parts to generate"
@@ -606,6 +644,9 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
     result_rows = []  # csv
     unranked_rows = []
+    ranked_parts = []  # (P_tot@1p, mfr, mpn) -- returned in rank order for the
+    #                    top-N price fetch (run() fetches DigiKey for the best
+    #                    parts of THIS ranking, then re-emits the CSVs)
 
     print(set(ds.part.mpn for ds in dss))
     print('computing power loss for %s parts...' % len(dss))
@@ -637,7 +678,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             # invented plateau voltage precisely where we know the parsed one is unusable.
             unranked_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
-                housing=ds.part.package,
+                housing=normalize_housing(ds.part.package),
                 Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Id=fet_specs.Id,
                 Vpl=fet_specs.V_pl,
@@ -675,12 +716,13 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         pr = price_lookup.get(ds.part.mfr, ds.part.mpn)
         stocks = price_lookup.stocks(ds.part.mfr, ds.part.mpn)
+        ranked_parts.append((loss_spec.buck_hs(), ds.part.mfr, ds.part.mpn))
 
         for i in range(1, args.controlFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
             result_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
-                housing=ds.part.package,
+                housing=normalize_housing(ds.part.package),
 
                 Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Rds_max=rds_on_max / i,
@@ -749,7 +791,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             else:
                 unranked_rows.append(dict(
                     mpn=ds2.part.mfr[:3] + ' ' + ds2.part.mpn,
-                    housing=ds2.part.package,
+                    housing=normalize_housing(ds2.part.package),
                     Vds_max=ds2.get_max_or_min_or_typ('Vds', False),
                     Id=fet_specs2.Id,
                     reason='staged conductor: %s NaN' % '+'.join(
@@ -770,7 +812,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             if not math.isfinite(p_sw):
                 unranked_rows.append(dict(
                     mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
-                    housing=ds.part.package,
+                    housing=normalize_housing(ds.part.package),
                     Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                     Id=fet_specs.Id,
                     reason='staged switcher: %s NaN' % '+'.join(
@@ -819,10 +861,12 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                         pr1 = price_lookup.get(ds.part.mfr, ds.part.mpn)
                         pr2 = price_lookup.get(ds2.part.mfr, ds2.part.mpn)
                         pair_priced = pr1 is not None and pr2 is not None
+                        ranked_parts.append((p, ds.part.mfr, ds.part.mpn))
+                        ranked_parts.append((p, ds2.part.mfr, ds2.part.mpn))
 
                         result_rows.append(dict(
                             mpn=f'{ds.part.mpn} || {str(i) + "p " if i > 1 else ""}{ds2.part.mpn}',
-                            housing=ds.part.package + ' & ' + ds2.part.package,
+                            housing=normalize_housing(ds.part.package) + ' & ' + normalize_housing(ds2.part.package),
 
                             Vds_max=f"{fet_specs.Vds}, {fet_specs2.Vds}",
                             Rds_max=fet_specs2.Rds_on * 1000 / i,
@@ -901,6 +945,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             if len(unranked_rows) > 10:
                 print('      ... and %d more, see the CSV' % (len(unranked_rows) - 10))
             print('>>>', un_fn)
+
     else:
         print('skip csv write because only few parts')
 
@@ -911,6 +956,8 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     print('Parts missing Qsw:', len(no_qsw))
     for p in no_qsw:
         print(p.part.mfr, p.part.mpn)
+
+    return _rank_order(ranked_parts)
 
     # report
     # - total datasheets with at least 1 field
@@ -928,6 +975,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
     result_rows = []
     unranked_rows = []
+    ranked_parts = []  # (P_tot@1p, mfr, mpn), see the HS generator
 
     for ds in dss:
         fet_specs = get_fet_specs(ds, args.gateDrive)
@@ -986,7 +1034,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
             trr_ds = fet_specs.trr
             unranked_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + ds.part.mpn,
-                housing=ds.part.package,
+                housing=normalize_housing(ds.part.package),
                 Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Id=fet_specs.Id,
                 # NaN, not None, is how MosfetSpecs stores "absent" for Qrr — testing
@@ -1021,12 +1069,13 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         pr = price_lookup.get(ds.part.mfr, ds.part.mpn)
         stocks = price_lookup.stocks(ds.part.mfr, ds.part.mpn)
+        ranked_parts.append((loss_spec.buck_ls(), ds.part.mfr, ds.part.mpn))
 
         for i in range(1, args.syncFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
             result_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
-                housing=ds.part.package,
+                housing=normalize_housing(ds.part.package),
 
                 Vds_max=ds.get_max_or_min_or_typ('Vds', False),
                 Rds_max=rds_on_max / i,
@@ -1121,6 +1170,8 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         print('skip csv write because only few parts')
 
     # show_summary(dss)
+
+    return _rank_order(ranked_parts)
 
 
 def show_summary(dss: List[DatasheetFields]):

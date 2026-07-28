@@ -158,8 +158,10 @@ async def _fetch_all_brand_rows(brand_names=None) -> List[Tuple[dict, datetime.d
               (name, brand_id, len(rows), len(priced)))
 
     if fallthrough:
-        print('lcsc harvest: brandNameEn values UNKNOWN to mfr_tag (records kept, but '
-              'they will not join with ranked parts):', dict(fallthrough))
+        print('lcsc harvest: brandNameEn values unknown to dslib.mfrs (records tagged '
+              'via the fallback spelling -- they still join parts DISCOVERED from the '
+              'same LCSC lists, e.g. the china brands, but NOT parts of that maker '
+              'discovered elsewhere under another spelling):', dict(fallthrough))
     return rows_with_ts
 
 

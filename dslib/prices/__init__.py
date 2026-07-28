@@ -324,6 +324,42 @@ class PriceLookup:
         return s
 
 
+def run_lcsc_harvest(max_age='7d') -> dict:
+    """The LCSC brand-catalog phase alone, with per-phase browser ownership. Cheap
+    (raw lists are disk-cached 7d) and corpus-wide -- main.py runs it BEFORE the CSV
+    generators so LCSC prices exist for every row, while the quota-bound DigiKey
+    fetch afterwards targets only the top of the fresh ranking."""
+    import asyncio
+
+    async def _phase():
+        from dslib.fetch import close_browser
+        try:
+            return await __import__('dslib.prices.lcsc', fromlist=['harvest_lcsc_prices']
+                                    ).harvest_lcsc_prices(max_age=max_age)
+        finally:
+            await close_browser()
+
+    return asyncio.run(_phase())
+
+
+def interleave_top(rankings: List[List[Tuple[str, str]]], n: int) -> List[Tuple[str, str]]:
+    """The n best DISTINCT parts drawn round-robin from several rankings (HS and LS
+    lists rank different loss mechanisms -- pure best-of-one would starve the other).
+    Order within the result follows rank, so a quota-limited fetch prices the most
+    interesting parts first."""
+    out, seen = [], set()
+    i = 0
+    while len(out) < n and any(i < len(r) for r in rankings):
+        for r in rankings:
+            if i < len(r) and len(out) < n:
+                p = r[i]
+                if p not in seen:
+                    seen.add(p)
+                    out.append(p)
+        i += 1
+    return out
+
+
 def fetch_prices_for_parts(parts: List[Tuple[str, str]], currency: str = 'USD',
                            max_age='7d') -> Dict[str, dict]:
     """Fetch-phase orchestrator for the ranked candidates.

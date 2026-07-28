@@ -137,8 +137,11 @@ a column) and returns `None`, never 0, for unpriced parts.
   `add()` — per-brand batches would last-write-wins on cross-brand duplicates. Price-only path:
   it never feeds `DiscoveredPart`s into discovery. CLI: `python -m dslib.prices.lcsc
   --probe|--harvest|--find-brand NAME` (probe before harvesting after any brand/schema change).
-- **main.py**: `--fetch-prices` runs both fetchers for the post-`select_mosfets` candidates;
-  the `price_usd`/`price_src`/`price_date`/`stock_dk`/`stock_lcsc` CSV columns fill from the
+- **main.py**: `--fetch-prices` runs the LCSC harvest corpus-wide BEFORE the generators, then
+  a DigiKey fetch for the **top `priceTopN`** (YAML, default 100; 0 = uncapped) of the fresh
+  HS+LS ranking (interleaved, best first — quota goes to the interesting parts), then
+  re-emits the CSVs if anything was fetched; the
+  `price_usd`/`price_src`/`price_date`/`stock_dk`/`stock_lcsc` CSV columns fill from the
   store either way
   (`priceQty` YAML knob, default 100; per-row price = price@priceQty × parallel count; staged
   two-device rows price only when BOTH parts have prices). Fill-rate stats print next to each
