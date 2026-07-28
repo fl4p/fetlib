@@ -100,6 +100,16 @@ class LMFitError(ValueError):
     """The datasheet (Qrr, trr) pair is not representable by a Lauritzen-Ma diode."""
 
 
+class LMContaminationDominated(LMFitError):
+    """Two-di/dt rows show Qrr ~flat/falling with di/dt: positive evidence that the
+    measured charge is dominated by the capacitive (Qoss displacement) share. That
+    evidence indicts every SINGLE row too — a raw one-row diffusion fit would book
+    mostly displacement charge as diffusion, double-counting against the Coss bucket.
+    best_lm_fit therefore blocks its 1pt-row rescue on this class, while a plain
+    LMFitError (e.g. super-LM Qrr growth, mixed-Tj rows) still allows it. Holding
+    MORE evidence must never yield a HAPPIER verdict."""
+
+
 def fit_lm(Qrr, trr, IF, didt, tj_fit=25.0):
     """Fit (tau, TM) at the datasheet operating point. Returns a dict with the fitted
     params plus the intermediates (IRRM, td) for reporting/validation.
@@ -290,9 +300,18 @@ def fit_lm_2pt(p_lo, p_hi, tj_fit=25.0):
         except LMFitError:
             hi *= 0.85  # subtraction consumed the pair; walk back into range
     if f_hi is None or f_lo * f_hi > 0:
+        # Classify by the residual's sign: err(q0) = predicted_hi - measured_hi.
+        # Positive everywhere -> the LM form OVER-produces the high row, i.e. the
+        # data's Qrr is ~flat/falling with di/dt -> capacitive share dominates.
+        # Negative everywhere -> the data GROWS faster than LM allows given trr_lo
+        # (super-LM growth, e.g. ISC014N08NM6) -> contamination is NOT the story.
+        if f_lo > 0:
+            raise LMContaminationDominated(
+                "no LM-consistent capacitive offset q0 in [0, min(Qrr)) — the pair "
+                "is contamination-dominated (Qrr ~flat/falling with di/dt)")
         raise LMFitError(
-            "no LM-consistent capacitive offset q0 in [0, min(Qrr)) — the pair "
-            "is contamination-dominated or non-LM (Qrr ~flat/falling with di/dt)")
+            "no LM-consistent capacitive offset q0 in [0, min(Qrr)) — Qrr grows "
+            "faster with di/dt than the LM form allows given trr_lo (super-LM pair)")
     for _ in range(80):
         mid = 0.5 * (lo + hi)
         try:
@@ -409,6 +428,19 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None, part=None):
          q0 = QRR_QOSS_FRACTION*qoss_vr; with qoss_vr=None the fit runs on the
          RAW datasheet Qrr with q0=0.0 and decontaminated=False — the caller
          must surface that (it over-states diffusion charge).
+      3. method='1pt-row' — single-point fit on ONE of the part's own
+         qrr_points rows (highest di/dt that admits a fit), same
+         calibration_qrr decontamination as 1pt. Tried only where 1 and 2
+         both refused, so it never changes a part the other paths serve.
+         Exists for pairs like ISC014N08NM6 whose Qrr grows with di/dt
+         faster than the LM form allows given trr_lo: no constant q0 makes
+         the PAIR consistent, but each row alone is a legitimate 1pt anchor
+         (and row-paired values beat a DB scalar joined to a separately
+         curated condition). The fugu3-style operating di/dt sits at or
+         above the sheet's high row, so the high row is the nearest anchor.
+         NOT tried when the 2pt refusal was LMContaminationDominated: a
+         flat/falling pair is evidence AGAINST every single-row diffusion
+         fit, and more evidence must never yield a happier verdict.
     A 2pt attempt that admits no fit falls back EXPLICITLY
     (fallback_from_2pt carries the reason); no conditions at all raises.
 
@@ -441,29 +473,62 @@ def best_lm_fit(Qrr, trr, cond, qrr_points=None, qoss_vr=None, part=None):
     n_stamp = dict(n_tau=n_res["n_tau"], n_tau_state=n_res["state"],
                    n_tau_source=n_res["source"])
     fallback = None
+    row_rescue_ok = True
     if qrr_points:
         try:
             p_lo, p_hi = _pick_2pt_rows(qrr_points)
             fit = fit_lm_2pt(p_lo, p_hi, tj_fit=float(p_lo.get("Tj", 25.0)))
             return dict(fit, method="2pt", decontaminated=True, **n_stamp)
+        except LMContaminationDominated as e:
+            fallback = str(e)
+            row_rescue_ok = False  # the pair indicts every single row — see the class
         except LMFitError as e:
             fallback = str(e)
-    if cond is None:
-        raise LMFitError(
-            "no reverse-recovery test conditions — add the part to "
-            "dslib/qrr_conditions.py (see fl4p/fetlib#37)"
-            + (f" (2pt path failed first: {fallback})" if fallback else ""))
-    q_cal = calibration_qrr(Qrr, qoss_vr)
-    fit = fit_lm(q_cal, trr, cond.get("IF"), cond.get("didt"),
-                 tj_fit=float(cond.get("Tj", 25.0)))
-    # explicit charge names (same keys as the 2pt path): fit["Qrr"] alone is
-    # ambiguous beside q0 — name what the fit consumed and what was measured
-    out = dict(fit, method="1pt", q0=Qrr - q_cal,
-               qrr_diffusion=q_cal, qrr_measured_equiv=Qrr,
-               decontaminated=qoss_vr is not None, **n_stamp)
-    if fallback:
-        out["fallback_from_2pt"] = fallback
-    return out
+    err_1pt = None
+    if cond is not None:
+        try:
+            q_cal = calibration_qrr(Qrr, qoss_vr)
+            fit = fit_lm(q_cal, trr, cond.get("IF"), cond.get("didt"),
+                         tj_fit=float(cond.get("Tj", 25.0)))
+            # explicit charge names (same keys as the 2pt path): fit["Qrr"] alone is
+            # ambiguous beside q0 — name what the fit consumed and what was measured
+            out = dict(fit, method="1pt", q0=Qrr - q_cal,
+                       qrr_diffusion=q_cal, qrr_measured_equiv=Qrr,
+                       decontaminated=qoss_vr is not None, **n_stamp)
+            if fallback:
+                out["fallback_from_2pt"] = fallback
+            return out
+        except LMFitError as e:
+            err_1pt = str(e)
+    # Row-anchored rescue (method='1pt-row', preference tier 3 — see docstring). Only
+    # reached when every path above refused, so a part served by 2pt or cond-based 1pt
+    # can never silently move here. Highest di/dt first: the nearest anchor to a
+    # converter commutation point, and the row most likely LM-representable raw (ta
+    # shrinks with di/dt for a given charge).
+    if qrr_points and row_rescue_ok:
+        for row in sorted(qrr_points, key=lambda r: r["didt"], reverse=True):
+            try:
+                q_cal = calibration_qrr(row["Qrr"], qoss_vr)
+                fit = fit_lm(q_cal, row["trr"], row["IF"], row["didt"],
+                             tj_fit=float(row.get("Tj", 25.0)))
+            except LMFitError:
+                continue
+            out = dict(fit, method="1pt-row", q0=row["Qrr"] - q_cal,
+                       qrr_diffusion=q_cal, qrr_measured_equiv=row["Qrr"],
+                       decontaminated=qoss_vr is not None,
+                       fit_row=dict(row), **n_stamp)
+            if fallback:
+                out["fallback_from_2pt"] = fallback
+            if err_1pt:
+                out["fallback_from_1pt"] = err_1pt
+            return out
+    if err_1pt is not None:
+        raise LMFitError(err_1pt + (f" (2pt path failed first: {fallback})"
+                                    if fallback else ""))
+    raise LMFitError(
+        "no reverse-recovery test conditions — add the part to "
+        "dslib/qrr_conditions.py (see fl4p/fetlib#37)"
+        + (f" (2pt path failed first: {fallback})" if fallback else ""))
 
 
 def qrr_op(Qrr, trr, cond, IF, didt, Tj=25.0, _fit_cache=None, qoss_vr=None, part=None):

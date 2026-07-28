@@ -54,7 +54,7 @@ def qrr_rankable_at_operating_point(op_requested, qrr_src) -> bool:
 
     ALLOWLIST, not a denylist: when an operating point was requested, a row is rankable
     only if it carries an `op-` state, i.e. one the model actually evaluated there
-    (`op-1pt`, `op-1pt-parsed`, `op-2pt`, `op-zero`). Anything else -- today's
+    (`op-1pt`, `op-1pt-parsed`, `op-2pt`, `op-1pt-row`, `op-zero`). Anything else -- today's
     `datasheet-flat*`, and any state a future edit to dcdc_buck_ls introduces -- is
     excluded. A new low-confidence tier must not become rankable just by not matching one
     hard-coded bad string; unrecognised has to mean unverified, not fine.

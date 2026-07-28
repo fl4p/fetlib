@@ -213,29 +213,33 @@ def test_best_lm_fit_explicit_fallbacks():
 
 def test_pick_2pt_rows_rejects_mixed_tj_and_vr():
     """Mixed-Tj pairs would fold the temperature law into (tau, TM); mixed-VR
-    pairs fold a Qoss(VR) difference into q0 — both must fail loud even though
-    the generated corpus is currently clean."""
+    pairs fold a Qoss(VR) difference into q0 — the PAIR must never be 2pt-fitted.
+    Since the 1pt-row tier exists, such a part is served off ONE well-formed row
+    instead (each row alone is self-consistent); the assert is on WHICH path
+    served and on the refusal reason surviving as provenance, not merely that
+    something fired."""
     mixed_tj = [dict(IPP022_PTS[0]), dict(IPP022_PTS[1], Tj=125.0)]
-    try:
-        qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=mixed_tj)
-    except qrr_model.LMFitError as e:
-        assert "mix Tj" in str(e)
-    else:
-        raise AssertionError("mixed-Tj pair must be rejected")
+    fit = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=mixed_tj)
+    assert fit["method"] == "1pt-row", fit["method"]
+    assert "mix Tj" in fit["fallback_from_2pt"]
+    assert fit["fit_row"]["didt"] == 1000e6  # highest-di/dt anchor
+    assert fit["tj_fit"] == 125.0            # the row's OWN Tj, not the pair's low one
     mixed_vr = [dict(IPP022_PTS[0]), dict(IPP022_PTS[1], VR=40.0)]
-    try:
-        qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=mixed_vr)
-    except qrr_model.LMFitError as e:
-        assert "mix VR" in str(e)
-    else:
-        raise AssertionError("mixed-VR pair must be rejected")
-    # neither points nor conditions -> fail loud
+    fit = qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=mixed_vr)
+    assert fit["method"] == "1pt-row", fit["method"]
+    assert "mix VR" in fit["fallback_from_2pt"]
+    # contamination-dominated pair (Qrr FALLS with di/dt): the evidence indicts every
+    # single row too, so the 1pt-row rescue must NOT fire — with no cond either, the
+    # part fails loud, and the 2pt refusal reason survives into the error.
     try:
         qrr_model.best_lm_fit(155.2e-9, 46.3e-9, None, qrr_points=ISC320_PTS)
+    except qrr_model.LMContaminationDominated:
+        raise AssertionError("contamination class must not escape best_lm_fit raw")
     except qrr_model.LMFitError as e:
         assert "2pt path failed first" in str(e)
+        assert "contamination-dominated" in str(e)
     else:
-        raise AssertionError("best_lm_fit must raise without cond or usable points")
+        raise AssertionError("contamination-dominated points without cond must raise")
 
 
 def test_qrr_op_fugu2_operating_point():
