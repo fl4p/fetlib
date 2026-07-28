@@ -44,6 +44,47 @@ def test_fix_font_failure_continues_to_ocr(monkeypatch, tmp_path):
     assert ds.Qg.typ == 10
 
 
+def test_fix_font_no_output_continues_to_ocr(monkeypatch, tmp_path):
+    """A rung that neither raises nor writes its file (infineon/IRFP3710PBF:
+    fix_font_enc returns without producing output) is a failed rung. The
+    missing derivative surfaces as FileNotFoundError from extract_text's cache
+    dependency, which must be skipped, not propagated."""
+    pdf_path = str(tmp_path / 'PART.pdf')
+    (tmp_path / 'PART.pdf').write_bytes(b'%PDF fixture')
+    methods = []
+
+    monkeypatch.setattr(parse, 'pdf2pdf',
+                        lambda _i, _o, method: methods.append(method))
+
+    def fake_extract_text(path, **_kwargs):
+        if path.endswith('.fix_font_enc.pdf'):
+            raise FileNotFoundError(path)
+        if path.endswith('.r600_ocrmypdf.pdf'):
+            return 'valid repaired text from the OCR fallback', \
+                parse.DataSheetFileMeta('', None, None)
+        return 'bad text', parse.DataSheetFileMeta('', None, None)
+
+    monkeypatch.setattr(parse, 'extract_text', fake_extract_text)
+    monkeypatch.setattr(parse, 'validate_datasheet_text',
+                        lambda _mfr, _mpn, text: text.startswith('valid'))
+    monkeypatch.setattr(parse, 'extract_dates', lambda _text: [])
+    monkeypatch.setattr(
+        parse, 'extract_fields_from_text',
+        lambda *_a, **_k: DatasheetFields(
+            'test', 'PART', fields=[Field('Qg', float('nan'), 10, float('nan'), 'nC')]))
+    monkeypatch.setattr(
+        dslib.v2, 'parse_datasheet',
+        lambda *_a, **_k: DatasheetFields(
+            'test', 'PART', fields=[Field('Qg', float('nan'), 10, float('nan'), 'nC')]))
+    monkeypatch.setattr(parse, 'read_charts', lambda *_a, **_k: [])
+
+    ds = parse.parse_datasheet.__wrapped__(
+        pdf_path, mfr='test', mpn='PART', need_symbols=set())
+
+    assert methods == ['gs', 'fix_font_enc', 'r600_ocrmypdf']
+    assert ds.Qg.typ == 10
+
+
 def test_exhausted_repair_ladder_allows_identity_heuristic_false_negative(
         monkeypatch, tmp_path):
     pdf_path = str(tmp_path / 'IXTH75N10.pdf')

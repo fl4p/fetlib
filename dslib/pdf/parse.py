@@ -834,11 +834,20 @@ def parse_datasheet(pdf_path=None, mfr=None, mpn=None,
                 print(pdf_path, method, 'failed:', type(e).__name__, e)
                 continue
 
+            # A rung can also return WITHOUT raising and WITHOUT writing its
+            # output: fix_font_enc takes this path on some infineon sheets
+            # (IRFP3710PBF) where it neither rejects the fonts nor produces a
+            # file. extract_text is @disk_cache with a file dependency on its
+            # input, so it raises FileNotFoundError for the missing derivative
+            # from cache-key signing -- a no-output rung, not a parse result.
             # Keep extraction and validation outside the fix_font_enc exception
-            # handler. AssertionError/ValueError are expected from that repair
-            # operation, but the same exceptions here indicate parser bugs and
+            # handler: AssertionError/ValueError here indicate parser bugs and
             # must not be hidden by advancing to the next repair rung.
-            candidate_text, _ = extract_text(out_path, try_ocr=False)
+            try:
+                candidate_text, _ = extract_text(out_path, try_ocr=False)
+            except FileNotFoundError:
+                print(pdf_path, method, 'produced no output; skipping')
+                continue
             if len(candidate_text) > len(best_pdf_text):
                 best_pdf_text, best_pdf_path = candidate_text, out_path
             conflict = _conflicting_mpn_token(mpn, candidate_text)
