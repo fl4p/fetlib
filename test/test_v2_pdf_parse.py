@@ -41,6 +41,18 @@ SAMPLES: List[Tuple[str, object, float]] = [
      },
      1e-3),
 
+    # Littelfuse/IXYS sheet with the TO-247 package-dimension table set BESIDE
+    # the electrical table. Its "Min. Max. Min. Max." header must not steal the
+    # Qg(on)/Qgs/Qgd rows below it -- those values sit in the left table's typ
+    # column, which the side header does not span.
+    ('datasheets/littelfuse/IXFT320N10T2-TRL.pdf',
+     {
+         'Qg': (nan, 430.0, nan),
+         'Qgs': (nan, 110.0, nan),
+         'Qgd': (nan, 125.0, nan),
+     },
+     1e-3),
+
     # straightforward onsemi sheet, used as a smoke test
     ('datasheets/onsemi/FDD86367.pdf',
      {

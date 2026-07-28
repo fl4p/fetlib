@@ -928,14 +928,50 @@ def _cond_from_symbol_label(row: TextRow,
 # ---------- bandying it all together ----------
 
 
+def _header_xspan(header: HeaderRow) -> Tuple[float, float]:
+    """Left/right extent of a header's columns (open on the right for a
+    Conditions column that runs to the page edge)."""
+    xs = [x for span in header.cols.values() for x in span]
+    finite = [x for x in xs if math.isfinite(x)]
+    if not finite:
+        return (-math.inf, math.inf)
+    hi = math.inf if any(x == math.inf for x in xs) else max(finite)
+    return (min(finite), hi)
+
+
+def _spans_overlap(a: Tuple[float, float], b: Tuple[float, float]) -> bool:
+    return a[0] < b[1] and b[0] < a[1]
+
+
+def _row_xspan(row: TextRow) -> Optional[Tuple[float, float]]:
+    xs = [w.bbox.cx for w in row.words]
+    return (min(xs), max(xs)) if xs else None
+
+
 def _row_chunks_below_header(headers: List[HeaderRow],
                              rows: List[TextRow],
                              header_idx: int) -> List[TextRow]:
-    """Rows between this header and the next header (exclusive)."""
+    """Rows below this header that belong to its table.
+
+    The band is bounded vertically by the next header AND horizontally by the
+    header's own column span. A package-dimension table set beside the
+    electrical table (littelfuse/IXFT320N10T2: a "Min. Max. Min. Max." header
+    over the TO-247 dimensions at x>=511) has its own header at a different y
+    but a horizontally DISJOINT column span. A purely vertical band lets that
+    side header truncate this header's row range and swallow rows it cannot
+    explain -- the Qgs/Qgd rows then read no value. So the terminating next
+    header and each row's membership are both gated on horizontal overlap,
+    which is a no-op for the full-width headers of a single-column sheet.
+    """
     h_row = headers[header_idx].row
+    cur_span = _header_xspan(headers[header_idx])
+    header_ids = {id(h.row) for h in headers}
+
     end_y = -math.inf
-    if header_idx + 1 < len(headers):
-        end_y = headers[header_idx + 1].row.bbox.y2
+    for j in range(header_idx + 1, len(headers)):
+        if _spans_overlap(cur_span, _header_xspan(headers[j])):
+            end_y = headers[j].row.bbox.y2
+            break
 
     out: List[TextRow] = []
     seen_header = False
@@ -946,7 +982,10 @@ def _row_chunks_below_header(headers: List[HeaderRow],
             continue
         if end_y > -math.inf and r.bbox.cy <= end_y:
             break
-        if r is h_row:
+        if id(r) in header_ids:
+            continue
+        rs = _row_xspan(r)
+        if rs is not None and not _spans_overlap(cur_span, rs):
             continue
         out.append(r)
     return out
