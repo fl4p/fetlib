@@ -12,7 +12,7 @@ import traceback
 from functools import wraps
 from os.path import expanduser
 from threading import Thread, Lock, RLock
-from typing import Callable, Optional, Tuple, Union
+from typing import Callable, Optional
 
 import psutil
 
@@ -81,8 +81,24 @@ def _lazy_timedelta(ttl):
 home = expanduser("~")
 data_dir = os.path.dirname(__file__) + "/../data"
 cache_dir = os.path.realpath(data_dir + "/cache")
-ran_housekeeping = False
 logger = get_logger()
+
+# HOW DISK-CACHE EVICTION ACTUALLY WORKS -- read before adding a sweeper here.
+#
+# There is none, by design. `disk_cache` stores `(value, now() + ttl, meta)` per entry and
+# `_try_read` refuses anything past its own `exp`, so every entry governs its own lifetime
+# and a stale one is simply never served. Nothing deletes files; `data/cache/` therefore
+# grows without bound (~17 GB) and is reclaimed deliberately, not on a timer.
+#
+# A blanket age-based sweep over this tree is NOT the fix, however tempting the disk usage
+# makes it look: read_parts_datasheets is `@disk_cache(ttl='999d', ...)` (main.py), so an
+# N-day sweeper deletes entries the decorator considers valid for years and buys a
+# multi-day Tabula/OCR re-parse of ~6k datasheets. This file used to carry exactly such a
+# sweeper -- `_disk_cache_housekeeping(days_max=7)`, reachable only from an influx helper
+# that no longer had callers, and non-recursive besides, so it had never deleted a single
+# nested entry. It was removed rather than "fixed", because fixing it as written was the
+# destructive option. To reclaim space, prune whole subtrees on purpose with
+# `delete_disk_cache_tree(prefix)` -- see apps/disk_cache_report.py.
 
 
 def get_parquet_engine():
@@ -149,53 +165,6 @@ def mkdir_p(path):
 def touch(fname, times=None):
     with open(fname, 'a'):
         os.utime(fname, times)
-
-
-def _disk_cache_housekeeping(days_max=7):
-    global ran_housekeeping
-    if ran_housekeeping:
-        return
-
-    _now = time.time()
-
-    if os.path.exists(cache_dir):
-        for f in os.listdir(cache_dir):
-            # noinspection PyBroadException
-            try:
-                fp = cache_dir + '/' + f
-                ft = max(os.path.getmtime(fp), os.path.getatime(fp))
-                if (_now - ft) // (24 * 3600) >= days_max:
-                    os.unlink(fp)
-            except:
-                pass
-    ran_housekeeping = True
-
-
-def _get_cache_file(host, db, q, index_format: Union[Tuple[str], str], prefix=None):
-    h = hashlib.sha224(
-        (((host + ":") if host is not None else '') + db + ">" + q + str(index_format)).encode('utf-8')).hexdigest()
-    if prefix:
-        h = re.sub(r'[^\w_. -]', '_', prefix) + '_' + h
-    return cache_dir + "/" + h + ".pkl"
-
-
-def read_influx_cache(**kwargs):
-    try:
-        cache_file = _get_cache_file(**kwargs)
-        if os.path.exists(cache_file):
-            touch(cache_file)
-            df = pd.read_pickle(cache_file)
-            return df
-        else:
-            return None
-    except EOFError:
-        return None
-    finally:
-        _disk_cache_housekeeping()
-
-
-def write_influx_cache(df, **kwargs):
-    df.to_pickle(_get_cache_file(**kwargs))
 
 
 def _get_fn(key, ext):
