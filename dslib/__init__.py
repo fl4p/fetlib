@@ -2,6 +2,25 @@ import math
 import os.path
 
 
+FULL_CSV_ONLY_COLUMNS = {
+    'Qrr_src',
+    'Qrr_q0_nC',
+    'Qrr_q0_basis',
+    'Qrr_double_booking',
+    'Qrr_double_booking_evidence',
+    'Qrr_qoss_vr_nC',
+    'Qrr_qoss_model_state',
+    'Qrr_qoss_evidence',
+    'Qrr_qoss_provenance',
+    'Qrr_qoss_extrapolation_flags',
+    'P_coss_scope',
+    'P_coss_state',
+    'P_coss_evidence',
+    'P_coss_validation',
+    'P_coss_audit',
+}
+
+
 def write_csv(df: 'pd.DataFrame', path: str, sort_by=['P_tot', 'Vds_max', 'mfr', 'mpn'], power_value_digits=2) -> None:
     by = list(sort_by)
     for b in list(by):
@@ -22,7 +41,8 @@ def write_csv(df: 'pd.DataFrame', path: str, sort_by=['P_tot', 'Vds_max', 'mfr',
         if col.startswith('P_') or col.startswith('FoM'):
             df.loc[:, col] = df.loc[:, col].map(lambda v: round_to_n(v, power_value_digits) if isinstance(v, float) else v)
 
-    return df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
+    display_df = df.drop(columns=FULL_CSV_ONLY_COLUMNS, errors='ignore')
+    return display_df.to_csv(path, index=False, float_format=lambda f: round_to_n(f, 3))
 
 
 def get_datasheets_path(mfr=None, mpn=None):

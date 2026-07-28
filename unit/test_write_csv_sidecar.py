@@ -12,7 +12,7 @@ import sys
 import pandas as pd
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from dslib import write_csv
+from dslib import FULL_CSV_ONLY_COLUMNS, write_csv
 
 VI, F = 72.0, 40e3
 QRR_EFF_NC = 123.456789  # deliberately > 3 s.f. of information
@@ -21,8 +21,14 @@ P_RR = VI * F * QRR_EFF_NC * 1e-9
 
 def _write(tmp_path):
     df = pd.DataFrame([
-        dict(mpn="a", P_tot=1.234567, P_rr=P_RR, Qrr_eff=QRR_EFF_NC),
-        dict(mpn="b", P_tot=0.765432, P_rr=P_RR / 3, Qrr_eff=QRR_EFF_NC / 3),
+        dict(mpn="a", P_tot=1.234567, P_rr=P_RR, Qrr_eff=QRR_EFF_NC,
+             Qrr_src="op-2pt", Qrr_q0_nC=12.3456789,
+             Coss_provenance="curve:test:a",
+             P_coss_audit='{"state":"ok"}'),
+        dict(mpn="b", P_tot=0.765432, P_rr=P_RR / 3, Qrr_eff=QRR_EFF_NC / 3,
+             Qrr_src="datasheet-flat", Qrr_q0_nC=4.1152263,
+             Coss_provenance="scalar:Coss=900 pF @ 50 V (Coss_Vds)",
+             P_coss_audit='{"state":"ok"}'),
     ])
     path = str(tmp_path / "fets.csv")
     write_csv(df, path)
@@ -52,3 +58,51 @@ def test_sidecar_and_display_share_the_sort_order(tmp_path):
     path, full = _write(tmp_path)
     assert (pd.read_csv(path)["mpn"].tolist()
             == pd.read_csv(full)["mpn"].tolist() == ["b", "a"])  # sorted by P_tot
+
+
+def test_coss_provenance_is_in_display_and_full_csv(tmp_path):
+    path, full = _write(tmp_path)
+    display = pd.read_csv(path).set_index("mpn")
+    audit = pd.read_csv(full).set_index("mpn")
+
+    assert "Coss_provenance" not in FULL_CSV_ONLY_COLUMNS
+    assert display.loc["a", "Coss_provenance"] == "curve:test:a"
+    assert audit.loc["a", "Coss_provenance"] == "curve:test:a"
+    assert display.loc["b", "Coss_provenance"] == (
+        "scalar:Coss=900 pF @ 50 V (Coss_Vds)"
+    )
+
+
+def test_audit_columns_only_appear_in_full_csv(tmp_path):
+    expected_full_only = {
+        "Qrr_src",
+        "Qrr_q0_nC",
+        "Qrr_q0_basis",
+        "Qrr_double_booking",
+        "Qrr_double_booking_evidence",
+        "Qrr_qoss_vr_nC",
+        "Qrr_qoss_model_state",
+        "Qrr_qoss_evidence",
+        "Qrr_qoss_provenance",
+        "Qrr_qoss_extrapolation_flags",
+        "P_coss_scope",
+        "P_coss_state",
+        "P_coss_evidence",
+        "P_coss_validation",
+        "P_coss_audit",
+    }
+    assert FULL_CSV_ONLY_COLUMNS == expected_full_only
+
+    df = pd.DataFrame([
+        dict(mpn="audit-part", P_tot=1.0,
+             **{column: f"{column}-value" for column in expected_full_only})
+    ])
+    path = str(tmp_path / "audit.csv")
+    full = str(tmp_path / "audit.full.csv")
+    write_csv(df, path)
+
+    display_columns = set(pd.read_csv(path).columns)
+    full_columns = set(pd.read_csv(full).columns)
+
+    assert expected_full_only.isdisjoint(display_columns)
+    assert expected_full_only <= full_columns

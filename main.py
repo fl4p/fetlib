@@ -14,7 +14,7 @@ import pandas as pd
 import dslib.manual_fields
 from dclib.powerloss import (dcdc_buck_hs, dcdc_buck_ls, ls_commutation_didt,
                              qrr_rankable_at_operating_point, GateLoopInfeasible)
-from dclib.coss_loss import coss_audit_json
+from dclib.coss_loss import coss_audit_json, coss_provenance_summary
 from discover_parts import discover_mosfets
 from dslib import write_csv, dotdict, round_to_n, isnum
 from dslib.cache import disk_cache
@@ -752,6 +752,8 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_sw=ls.P_sw,
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
+                Coss_provenance=coss_provenance_summary(
+                    ls.get_cond('P_coss')),
                 P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
                 # curve_model_state, not model_state: the latter is the TRANSITION label
                 # ('hard-switch-default' for every production row, unavailable included)
@@ -898,6 +900,11 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                             P_sw=ls.P_sw,
                             P_gd=ls.P_gd + ls3.P_gd,
                             P_coss=ls.P_coss + ls3.P_coss,
+                            Coss_provenance='switcher=[%s] | conductor=[%s]' % (
+                                coss_provenance_summary(
+                                    ls.get_cond('P_coss')),
+                                coss_provenance_summary(
+                                    ls3.get_cond('P_coss'))),
                             P_coss_scope='%s + %s' % (
                                 ls.get_cond('P_coss').get('accounting_scope'),
                                 ls3.get_cond('P_coss').get('accounting_scope')),
@@ -1133,6 +1140,8 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_rr=ls.P_rr,
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
+                Coss_provenance=coss_provenance_summary(
+                    ls.get_cond('P_coss')),
                 P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
                 P_coss_state=ls.get_cond('P_coss').get('curve_model_state'),
                 P_coss_evidence=ls.get_cond('P_coss').get('evidence_quality'),

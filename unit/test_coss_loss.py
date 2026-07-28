@@ -14,7 +14,7 @@ from dclib.coss_loss import (
     OWNER_EXTERNAL, PASS, ROLE_HS, ROLE_LS, TOPOLOGY_SYNCHRONOUS_BUCK,
     UNVERIFIED,
     buck_hard_switching_cell, buck_hs_hard_transition, buck_ls_hard_transition,
-    coss_audit_json,
+    coss_audit_json, coss_provenance_summary,
     device_energy_endpoint, evaluate_coss_switching_cell,
     evaluate_coss_transition, validate_coss_report,
 )
@@ -82,6 +82,70 @@ def test_1b_zero_coss_is_refused_unless_declared():
     assert m.model_state == "explicit-zero-coss"
     assert m.provenance == "explicit zero-Coss analytic fixture"
     assert m.at(60.0).qoss_c == 0.0 and m.at(60.0).eoss_j == 0.0
+
+
+def test_1c_csv_provenance_names_curve_source_and_effective_scalar_anchor():
+    curve_summary = coss_provenance_summary(dict(
+        curve_model_state="datasheet-coss-curve",
+        provenance="digitized trace with table-anchor validation",
+        conditions=dict(
+            curve_registry_id="infineon:TEST:coss-v1",
+            source_document="TEST datasheet rev 1",
+            source_figure="Diagram 11",
+        ),
+    ))
+    assert curve_summary == (
+        "curve:infineon:TEST:coss-v1; "
+        "source=TEST datasheet rev 1, Diagram 11; "
+        "digitized trace with table-anchor validation"
+    )
+
+    explicit = SimpleNamespace(
+        Coss=1810e-12, Coss_Vds=50.0, Coss_V0=50.0,
+        coss_curve=None, coss_curve_meta=None,
+        part=SimpleNamespace(mpn="EXPLICIT-ANCHOR"))
+    explicit_model = CossEnergyModel.from_mosfet(explicit)
+    explicit_summary = coss_provenance_summary(dict(
+        Coss=explicit.Coss,
+        Coss_Vds=explicit.Coss_Vds,
+        curve_model_state=explicit_model.model_state,
+        provenance=explicit_model.provenance,
+        conditions=explicit_model.conditions,
+    ))
+    assert explicit_model.conditions["scalar_anchor_v"] == 50.0
+    assert explicit_model.conditions["scalar_anchor_source"] == "Coss_Vds"
+    assert explicit_summary == (
+        "scalar:Coss=1810 pF @ 50 V (Coss_Vds); model=1/sqrt(V); "
+        "single datasheet Coss anchor; assumed Coss(V) proportional to 1/sqrt(V)"
+    )
+
+    inferred = SimpleNamespace(
+        Coss=900e-12, Coss_Vds=None, Coss_V0=60.0,
+        coss_curve=None, coss_curve_meta=None,
+        part=SimpleNamespace(mpn="INFERRED-ANCHOR"))
+    inferred_model = CossEnergyModel.from_mosfet(inferred)
+    assert inferred_model.conditions["scalar_anchor_v"] == 60.0
+    assert inferred_model.conditions["scalar_anchor_source"] == "inferred Vds/2"
+    assert "(inferred Vds/2)" in coss_provenance_summary(dict(
+        Coss=inferred.Coss,
+        Coss_Vds=inferred.Coss_Vds,
+        curve_model_state=inferred_model.model_state,
+        provenance=inferred_model.provenance,
+        conditions=inferred_model.conditions,
+    ))
+
+    signed = SimpleNamespace(
+        Coss=700e-12, Coss_Vds=-50.0, Coss_V0=50.0,
+        coss_curve=None, coss_curve_meta=None,
+        part=SimpleNamespace(mpn="SIGNED-ANCHOR"))
+    signed_model = CossEnergyModel.from_mosfet(signed)
+    assert signed_model.conditions["scalar_anchor_v"] == 50.0
+    assert signed_model.conditions["scalar_anchor_source"] == "abs(Coss_Vds)"
+
+    assert coss_provenance_summary(dict(
+        curve_model_state="unavailable",
+        provenance="no usable Coss(V) curve or scalar Coss",
+    )) == "unavailable:no usable Coss(V) curve or scalar Coss"
 
 
 def test_2_topology_mechanism_states_source_recovery_and_destination():

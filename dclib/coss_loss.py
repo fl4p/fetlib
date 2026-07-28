@@ -435,11 +435,21 @@ class CossEnergyModel:
     def from_mosfet(cls, mf, *, operating_frequency_hz=None,
                     operating_temperature_c=None, gate_bias_v=0.0) -> "CossEnergyModel":
         curve = getattr(mf, "coss_curve", None)
-        meta = getattr(mf, "coss_curve_meta", None) or {}
+        meta = dict(getattr(mf, "coss_curve_meta", None) or {})
         coss = getattr(mf, "Coss", math.nan)
-        anchor = getattr(mf, "Coss_Vds", None)
+        raw_anchor = getattr(mf, "Coss_Vds", None)
+        anchor = raw_anchor
         if not _finite(anchor) or anchor <= 0:
             anchor = getattr(mf, "Coss_V0", math.nan)
+        if not curve and _finite(anchor):
+            if _finite(raw_anchor) and raw_anchor > 0:
+                anchor_source = "Coss_Vds"
+            elif (_finite(raw_anchor) and raw_anchor < 0
+                  and _close(float(anchor), abs(float(raw_anchor)), rel=1e-9)):
+                anchor_source = "abs(Coss_Vds)"
+            else:
+                anchor_source = "inferred Vds/2"
+            meta["scalar_anchor_source"] = anchor_source
         # Warn only when the fallback will actually be USED: for Coss=NaN the
         # constructor raises right after, and a warning claiming a fallback that never
         # happens misattributes the refusal (the unavailable report carries the real
@@ -561,6 +571,8 @@ class CossEnergyModel:
             source_page=self.metadata.get("source_page"),
             digitization_method=self.metadata.get("digitization_method"),
             validation_method=self.metadata.get("validation_method"),
+            scalar_anchor_v=self.scalar_anchor_v,
+            scalar_anchor_source=self.metadata.get("scalar_anchor_source"),
         )
 
 
@@ -1198,6 +1210,69 @@ def scale_coss_report_dict(report: Dict[str, object], multiplier: int) -> Dict[s
         if isinstance(value, (int, float)):
             d[key] = value * multiplier
     return d
+
+
+def coss_provenance_summary(report: Dict[str, object]) -> str:
+    """Compact display-CSV provenance for the Coss model that was actually used."""
+
+    def display_number(value) -> str:
+        if not _finite(value):
+            return "unknown"
+        value = float(value)
+        if value == 0:
+            return "0"
+        rounded = round(
+            value, -int(math.floor(math.log10(abs(value)))) + 2)
+        return format(rounded, "g")
+
+    state = str(report.get("curve_model_state") or "unknown")
+    provenance = str(report.get("provenance") or "provenance unavailable")
+    conditions = report.get("conditions")
+    conditions = conditions if isinstance(conditions, dict) else {}
+
+    if state == MODEL_STATE_CURVE:
+        registry_id = conditions.get("curve_registry_id") or "attached"
+        source = ", ".join(
+            str(value) for value in (
+                conditions.get("source_document"),
+                conditions.get("source_figure"),
+            ) if value
+        )
+        fields = ["curve:%s" % registry_id]
+        if source:
+            fields.append("source=%s" % source)
+        fields.append(provenance)
+        return "; ".join(fields)
+
+    if state in ("scalar-inverse-sqrt-fallback", "explicit-zero-coss"):
+        coss_pf = (float(report["Coss"]) * 1e12
+                   if _finite(report.get("Coss")) else math.nan)
+        anchor = conditions.get("scalar_anchor_v")
+        anchor_source = conditions.get("scalar_anchor_source")
+        raw_anchor = report.get("Coss_Vds")
+        # Backward-compatible formatting for older reports that predate the effective
+        # anchor fields. New reports always take the branch above.
+        if not _finite(anchor) and _finite(raw_anchor):
+            anchor = abs(float(raw_anchor))
+        if not anchor_source and _finite(raw_anchor):
+            anchor_source = ("Coss_Vds" if float(raw_anchor) > 0
+                             else "abs(Coss_Vds)")
+        model = ("explicit zero" if state == "explicit-zero-coss"
+                 else "1/sqrt(V)")
+        return (
+            "scalar:Coss=%s pF @ %s V (%s); model=%s; %s"
+            % (
+                display_number(coss_pf),
+                display_number(anchor),
+                anchor_source or "anchor source unknown",
+                model,
+                provenance,
+            )
+        )
+
+    if state == "unavailable":
+        return "unavailable:%s" % provenance
+    return "%s:%s" % (state, provenance)
 
 
 def coss_audit_json(report) -> str:
