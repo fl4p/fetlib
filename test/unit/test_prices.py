@@ -687,6 +687,17 @@ def test_browser_lifecycle_two_sequential_asyncio_runs():
     assert not fetch.browser_contexts
 
 
+def test_aggregate_duplicate_sku_newest_envelope_wins_any_order():
+    # a stale ladder must never beat fresher data by input order (review finding)
+    t1, t2 = NOW - datetime.timedelta(days=3), NOW
+    old = dict(LCSC_ROW, productPriceList=[{'ladder': 5, 'usdPrice': 0.5}])
+    new = dict(LCSC_ROW, productPriceList=[{'ladder': 5, 'usdPrice': 1.0}])
+    for order in ([(old, t1), (new, t2)], [(new, t2), (old, t1)]):
+        rec = aggregate_lcsc_offers(order)[0]
+        assert rec.offers[0].ladder == [(5, 1.0)]  # the t2 ladder, both orders
+        assert rec.fetched_at == t1  # record ts stays the oldest contributor
+
+
 def test_aggregate_then_single_add_keeps_union(db):
     recs = aggregate_lcsc_offers([(LCSC_ROW, NOW),
                                   (dict(LCSC_ROW, productCode='C2'), NOW)])

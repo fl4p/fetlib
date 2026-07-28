@@ -100,13 +100,17 @@ def aggregate_lcsc_offers(rows_with_ts: List[Tuple[dict, datetime.datetime]]
             continue
         key, offer = parsed
         g = grouped.setdefault(key, {'offers': {}, 'fetched_at': fetched_at})
-        g['offers'].setdefault(offer.sku, offer)  # dedupe by SKU, first wins
+        # dedupe by SKU, NEWEST envelope wins -- first-wins let a stale ladder from an
+        # older cache generation beat fresher data purely by brand/input order
+        prev = g['offers'].get(offer.sku)
+        if prev is None or fetched_at > prev[1]:
+            g['offers'][offer.sku] = (offer, fetched_at)
         if fetched_at < g['fetched_at']:
-            g['fetched_at'] = fetched_at
+            g['fetched_at'] = fetched_at  # record ts stays the OLDEST contributor
     return [
         PartOffers(mfr=key[0], mpn=key[1], distributor=LCSC, currency='USD',
-                   offers=list(g['offers'].values()), fetched_at=g['fetched_at'],
-                   url=None, status='ok')
+                   offers=[o for o, _ in g['offers'].values()],
+                   fetched_at=g['fetched_at'], url=None, status='ok')
         for key, g in grouped.items()
     ]
 
