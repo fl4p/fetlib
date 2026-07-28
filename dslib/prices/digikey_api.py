@@ -556,7 +556,15 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
                     key.dead = True
                     batch_keys.pop(0)
                     continue
-                raise
+                # anything unexpected (5xx, network, SDK decode): batch is an
+                # OPTIONAL optimization and must fail OPEN -- retire the key from
+                # the batch set only (keyword-alive) and let the raw-is-None branch
+                # hand everything to the keyword path; re-raising here aborted the
+                # whole DigiKey fetch over a batch-only hiccup
+                print('digikey batch: unexpected error on key %s, retiring from '
+                      'batch only: %r' % (key.label, e))
+                batch_keys.pop(0)
+                continue
         if raw is None:
             # no batch-capable key left. Everything not yet attempted goes back to the
             # keyword phase VERBATIM -- dropping or counting it here undercounted 50

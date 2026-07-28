@@ -531,6 +531,22 @@ def test_batch_phase_401_not_subscribed_retires_key_from_batch_only(monkeypatch,
     assert n['fetched'] == 1 and left == [] and not k1.dead
 
 
+def test_batch_phase_unexpected_error_fails_open_to_keyword(monkeypatch, db):
+    # batch is an optional optimization: a 5xx/network/decode error must not abort
+    # the DigiKey fetch -- the key leaves the batch set (keyword-alive) and all
+    # parts go to the keyword path
+    todo = [('infineon', 'X1'), ('infineon', 'X2')]
+    k1 = _FakeKey('k1')
+
+    def boom(mpns):
+        raise RuntimeError('connection reset by peer')  # no .status at all
+
+    n, left = _run_batch_phase(monkeypatch, db, todo, [k1], {'k1': boom})
+    assert left == todo and n['fetched'] == 0 and n['quota_stop'] == 0
+    assert not k1.dead  # keyword still gets to use it
+    assert db.count() == 0
+
+
 def test_batch_phase_quota_death_returns_all_unattempted(monkeypatch, db):
     # 100 parts: chunk 1 prices 40, leaves 10 unmatched; chunk 2 kills the only key.
     # EVERYTHING unpriced (10 + 50) must come back for the keyword phase; the batch
