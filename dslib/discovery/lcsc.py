@@ -10,7 +10,7 @@ from pyquery import PyQuery
 
 from dslib import mfr_tag
 from dslib.cache import disk_cache
-from dslib.discovery import DiscoveredPart, MosfetBasicSpecs
+from dslib.discovery import DiscoveredPart, MosfetBasicSpecs, parse_mosfet_polarity
 from dslib.fetch import fetch_datasheet, get_browser_page
 
 brands = {
@@ -22,7 +22,7 @@ brands = {
     "Siliup": 15945,
     # "AGMSEMI": 15179, # weird
     # "UMW": 11853, # fake MPNs?
-    "HXY": 13437,
+    # "HXY": 13437, # untrustworthy datasheets (same curves for most parts)
     "GOFORD": 11545,  # currently parse problems. gone?
     "Suzhou Good-Ark Elec": 979,
     "MCC": 889,
@@ -155,7 +155,12 @@ async def discover_mosfets_brand(brand_id: Union[int, str]):
             continue
 
         # spn = r['productCode']
-        p_channel = 'p-channel' in (r.get('productNameEn') or '').lower()
+        product_name = r.get('productNameEn') or ''
+        try:
+            polarity = parse_mosfet_polarity(product_name)
+        except ValueError:
+            polarity = None
+        p_channel = polarity == 'P'
         pm = {p['paramNameEn']: p['paramValueEnForSearch'] for p in r["paramVOList"] or []}
         vds_max = pm.get("Drain to Source Voltage") or math.nan
         rds_max = pm.get("RDS(on)") or math.nan
@@ -168,6 +173,7 @@ async def discover_mosfets_brand(brand_id: Union[int, str]):
 
         try:
             specs = MosfetBasicSpecs(
+                polarity=polarity,
                 Vds_max=vds_max,
                 Rds_on_10v_max=rds_max,
                 ID_25=id,
@@ -181,6 +187,7 @@ async def discover_mosfets_brand(brand_id: Union[int, str]):
         except Exception as e:
             print('%s %s failed to create mosfetBasicSpecs: %s' % (mfr_tag(r['brandNameEn']), r['productModel'], e))
             specs = MosfetBasicSpecs(
+                polarity=polarity,
                 Vds_max=vds_max,
                 Rds_on_10v_max=math.nan,
                 ID_25=id,

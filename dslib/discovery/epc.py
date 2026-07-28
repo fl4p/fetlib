@@ -25,6 +25,9 @@ async def epc_gan():
             package=row['Package(mm)'],
             ds_url=f'https://epc-co.com/epc/documents/datasheets/{mpn}_datasheet.pdf',
             specs=MosfetBasicSpecs(
+                # EPC's downloaded table is specifically its enhancement-mode
+                # eGaN FET family.
+                polarity='N',
                 substrate='GaN',
                 Vds_max=float(row['VDSmax']),
                 Rds_on_10v_max=float(str(row['MaxRDS(on)(mΩ)@5VGS']).split(',')[0]) * 1e-3,

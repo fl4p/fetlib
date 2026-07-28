@@ -2,7 +2,8 @@ import math
 
 import pandas as pd
 
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
+from dslib.discovery import (MosfetBasicSpecs, DiscoveredPart, download_parts_list,
+                             parse_mosfet_polarity)
 
 
 async def ti_mosfets():
@@ -25,12 +26,18 @@ async def ti_mosfets():
     link_reg = re.compile(r'=HYPERLINK\("(?P<url>.+)", "(?P<text>.+)"\)')
 
     for i, row in df.iterrows():
+        try:
+            polarity = parse_mosfet_polarity(row['Type'])
+        except ValueError:
+            # Power blocks and other compound products are not one MOSFET.
+            continue
         parts.append(DiscoveredPart(
             mfr='ti',
             mpn=link_reg.match(row['Product or Part number']).groupdict().get('text'),
             # mpn2=row['Product'],
             ds_url=link_reg.match(row['PDF datasheet']).groupdict().get('url'),
             specs=MosfetBasicSpecs(
+                polarity=polarity,
                 Vds_max=row['VDS (V)'],
                 Rds_on_10v_max=row['Rds(on) at VGS=10 V (max) (mΩ)'] * 1e-3,
                 ID_25=row['ID - continuous drain current at TA=25°C (A)'],

@@ -1,7 +1,31 @@
 import math
 import warnings
+from typing import Literal, Optional
 
 from dslib import isnum, rel_err, round_to_n_dec
+
+Polarity = Literal['N', 'P']
+
+
+def mosfet_polarity(Vds: float) -> Optional[Polarity]:
+    """Infer MOSFET channel polarity from the signed drain voltage rating."""
+    if Vds is None or math.isnan(Vds) or Vds == 0:
+        return None
+    return 'P' if Vds < 0 else 'N'
+
+
+def normalize_mosfet_polarity(polarity: Optional[Polarity],
+                              Vds: float) -> Optional[Polarity]:
+    """Validate an explicit polarity against Vds, or infer it when omitted."""
+    if polarity not in (None, 'N', 'P'):
+        raise ValueError("polarity must be 'N', 'P', or None, got %r" % (polarity,))
+    inferred = mosfet_polarity(Vds)
+    if polarity is not None and inferred is not None and polarity != inferred:
+        raise ValueError(
+            "polarity %r conflicts with signed Vds=%r (implies %r)"
+            % (polarity, Vds, inferred))
+    return polarity or inferred
+
 
 # Rds_on[mOhm] * Qg[nC]. See the assert in MosfetSpecs.__init__ for how these were chosen.
 # Asserted in two places (once in SI units) -- keep them derived from here, not re-typed.
@@ -204,7 +228,8 @@ class MosfetSpecs:
                  Rg=math.nan, Id=math.nan, part=None, coss_curve=None,
                  coss_curve_meta=None,
                  Id_gc=math.nan, gfs_min=math.nan, gfs_typ=math.nan, Id_gfs=math.nan,
-                 Vgs_th=math.nan, Id_vsd=math.nan):
+                 Vgs_th=math.nan, Id_vsd=math.nan,
+                 polarity: Optional[Polarity] = None):
         """
 
         :param Vds_max: Vds break-down voltage (also referred as `BVdss` or `V (BR)DSS`), in volt
@@ -222,11 +247,14 @@ class MosfetSpecs:
         :param Vsd: body diode forward voltage
         :param Coss: output capacity (eff. energy related)
         :param Coss_Vds: Vds at which Coss was calculated or measured (test condition)
+        :param polarity: channel polarity ("N" or "P"); inferred from signed Vds when omitted
         """
         self.part = part
         if Vds_max and not math.isnan(Vds_max) and int(Vds_max) == Vds_max:
             Vds_max = int(Vds_max)
         self.Vds: float = Vds_max
+        self.polarity: Optional[Polarity] = normalize_mosfet_polarity(
+            polarity, self.Vds)
 
         if isinstance(Rds_on, str):
             if Rds_on.endswith('mOhm'):
@@ -421,6 +449,12 @@ class MosfetSpecs:
         self.Id_gfs = Id_gfs if Id_gfs is not None else math.nan
         self.Vgs_th = Vgs_th if Vgs_th is not None else math.nan
         self.Id_vsd = Id_vsd if Id_vsd is not None else math.nan
+
+    def __setstate__(self, state):
+        """Backfill polarity when loading MosfetSpecs pickled before it existed."""
+        self.__dict__.update(state)
+        self.polarity = normalize_mosfet_polarity(
+            state.get('polarity'), self.Vds)
 
     @staticmethod
     def from_mpn(mpn, mfr) -> 'MosfetSpecs':

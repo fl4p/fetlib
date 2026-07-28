@@ -3,7 +3,8 @@ import math
 import pandas as pd
 
 from dslib import mfr_tag
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
+from dslib.discovery import (MosfetBasicSpecs, DiscoveredPart, download_parts_list,
+                             parse_mosfet_polarity)
 from dslib.field import parse_field_value
 
 
@@ -36,6 +37,7 @@ async def aosmd_medium_voltage_mosfets():
 
         try:
             parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+                polarity=parse_mosfet_polarity(row['Polarity']),
                 Vds_max=parse_field_value(vds),
                 Rds_on_10v_max=rds_on,
                 Qg_max=math.nan,

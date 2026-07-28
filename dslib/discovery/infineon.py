@@ -3,7 +3,7 @@ import re
 
 import requests
 
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart
+from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, parse_mosfet_polarity
 
 PRODUCT_TABLE_URL = 'https://www.infineon.com/dataApi/en/product-table/mosfet-finder0.product-table.en.json'
 
@@ -58,6 +58,7 @@ async def infineon_mosfets():
         qg_10v = _find_param(params_by_name, 'QG', '10V') or _find_param(params_by_name, 'QG')
         id_25 = _find_param(params_by_name, 'ID')
         vgs_th = _find_param(params_by_name, 'VGS(th)')
+        polarity = _find_param(params_by_name, 'Polarity')
 
         for opn in item['opns']:
             if not opn.get('opnName'):
@@ -69,6 +70,8 @@ async def infineon_mosfets():
                     mpn2=item.get('ispnName'),
                     ds_url=ds_url,
                     specs=MosfetBasicSpecs(
+                        polarity=parse_mosfet_polarity(
+                            (polarity or {}).get('valueChar')),
                         substrate='SiC' if 'CoolSiC' in technology else 'Si',  # infineon no GaN
                         Vds_max=_num(vds, 'valueMax', 'valueNumber'),
                         Rds_on_10v_max=_num(rds_10v, 'valueMax', 'valueNumber') * 1e-3,
@@ -80,7 +83,10 @@ async def infineon_mosfets():
                         Vgs_th_max=_num(vgs_th, 'valueMax'),
                         source=['infineon_products'],
                     ),
-                    package=(opn.get('packageDetails') or {}).get('packageNameMarketing') or opn.get('packageNameMarketingOpn'),
+                    package=((opn.get('packageDetails') or {}).get('packageNameMarketing')
+                             or opn.get('packageNameMarketingOpn')
+                             or opn.get('packageNameOpn')
+                             or (opn.get('packageDetails') or {}).get('packageName')),
                 ))
             except Exception as e:
                 # e.g. dual complementary N+P-channel parts (like IRF7329) mix both channels'

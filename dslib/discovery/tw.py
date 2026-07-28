@@ -3,7 +3,8 @@ import math
 import pandas as pd
 
 from dslib import mfr_tag
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
+from dslib.discovery import (MosfetBasicSpecs, DiscoveredPart, download_parts_list,
+                             parse_mosfet_polarity)
 
 
 async def taiwansemi_nfets():
@@ -24,6 +25,7 @@ async def taiwansemi_nfets():
         mpn = str(row['Part Number'])
         ds_url = row.Datasheet
         parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+            polarity=parse_mosfet_polarity(row['Type']),
             Vds_max=float(row['VDS (V)']),
             Rds_on_10v_max=float(row['RDS(ON) @ 10V Max. (mΩ)']) * 1e-3,
             Qg_max=math.nan,

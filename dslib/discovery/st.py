@@ -60,6 +60,9 @@ async def st_mosfets():
                                         ds_url=ds_url,
                                         package=v['Package'],
                                         specs=MosfetBasicSpecs(
+                                            # All three downloaded ST categories are
+                                            # explicitly titled "STPOWER N-channel".
+                                            polarity='N',
                                             Vds_max=float(v['VDSS']),
                                             Rds_on_10v_max=float(v.get('RDS(on)', math.nan)),
                                             ID_25=float(v.get('Drain Current (Dc)', math.nan)),

@@ -1,6 +1,7 @@
 import math
 
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
+from dslib.discovery import (MosfetBasicSpecs, DiscoveredPart, download_parts_list,
+                             parse_mosfet_polarity)
 
 
 async def toshiba_mosfets():
@@ -28,12 +29,18 @@ async def toshiba_mosfets():
 
     parts = []
     for i in range(1, len(list(ws.rows))):
+        try:
+            polarity = parse_mosfet_polarity(cols['Polarity'][i].value)
+        except ValueError:
+            # Complementary N+P packages do not have one scalar polarity.
+            continue
         parts.append(DiscoveredPart(
             mfr='toshiba',
             mpn=cols['Part Number'][i].value,
             # mpn2=row['Product'],
             ds_url=cols['Datasheet'][i].hyperlink and cols['Datasheet'][i].hyperlink.target,
             specs=MosfetBasicSpecs(
+                polarity=polarity,
                 Vds_max=float(cols['VDSS(V)'][i].value or 'nan'),
                 Rds_on_10v_max=float(cols['RDS(ON)Max(\u03a9)|VGS|=10V'][i].value or 'nan'),  # ohm
                 ID_25=float(cols['ID(A)'][i].value or 'nan'),

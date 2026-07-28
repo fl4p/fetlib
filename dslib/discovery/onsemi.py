@@ -3,7 +3,8 @@ import pandas as pd
 import re
 
 from dslib import mfr_tag
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
+from dslib.discovery import (MosfetBasicSpecs, DiscoveredPart, download_parts_list,
+                             parse_mosfet_polarity)
 from dslib.field import parse_field_value
 
 
@@ -76,8 +77,14 @@ async def onsemi_mosfets():
         df = pd.read_csv(fn)
 
         for i, row in df.iterrows():
-            if row['Channel Polarity'] == 'Complementary' or row['Configuration'] != 'Single' or 'Q1' in str(row[
-                                                                                                                 'RDS(on) Max @ VGS = 10 V  (mΩ)']):
+            try:
+                polarity = parse_mosfet_polarity(row['Channel Polarity'])
+            except ValueError:
+                # Complementary N+P devices cannot be represented by one
+                # MosfetBasicSpecs polarity.
+                continue
+            if str(row['Configuration']).strip(' ,') != 'Single' or 'Q1' in str(row[
+                    'RDS(on) Max @ VGS = 10 V  (mΩ)']):
                 continue
             mfr = mfr_tag('onsemi')
             mpn = str(row['Product Group'])
@@ -86,21 +93,37 @@ async def onsemi_mosfets():
             if m:
                 ds_fn = m[0]
             ds_url = f'https://www.onsemi.com/download/data-sheet/pdf/{ds_fn}-d.pdf'
-            vgs_th = parse_field_value(row['Vgs(th) Max (V)'].strip('±'))
-            rds_on = parse_field_value(row['RDS(on) Max @ VGS = 10 V  (mΩ)']) * 1e-3
+
+            # onsemi's CSV exporter leaves a literal trailing comma inside
+            # every cell ("3, ", "-30, "). Strip only that export artifact;
+            # parse_field_value still owns signs, decimals, and missing values.
+            def value(column):
+                raw = str(row[column]).strip('±, ')
+                # One current row redundantly includes the column's voltage
+                # unit ("80V"). Keep this workaround local to onsemi.
+                if column == 'V(BR)DSS Min (V)':
+                    raw = re.sub(r'\s*[Vv]\s*$', '', raw)
+                return parse_field_value(raw)
+
+            vgs_th = value('Vgs(th) Max (V)')
+            rds_on = value('RDS(on) Max @ VGS = 10 V  (mΩ)') * 1e-3
 
             if mpn == 'NTMFS0D7N03CGT1G':
                 rds_on = 0.65e-3  # mistake
 
             if mpn == 'BSS138-G':
-                row['Id Max (A)'] = float(row['Id Max (A)']) / 1000
+                bss_id = value('Id Max (A)')
+                # Older exports mislabeled 220 mA as 220 A; current exports
+                # already say 0.22 A.
+                row['Id Max (A)'] = bss_id / 1000 if bss_id > 1 else bss_id
 
             parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
-                Vds_max=parse_field_value(str(row['V(BR)DSS Min (V)']).strip('±')),
+                polarity=polarity,
+                Vds_max=value('V(BR)DSS Min (V)'),
                 Rds_on_10v_max=rds_on if rds_on > 0.1e-3 else math.nan,
                 Qg_max=math.nan,
-                Qg_typ=parse_field_value(row['Qg Typ @ VGS = 10 V (nC)']),
-                ID_25=parse_field_value(row.get('ID Max (A)') or row.get('Id Max (A)')),
+                Qg_typ=value('Qg Typ @ VGS = 10 V (nC)'),
+                ID_25=value('ID Max (A)' if 'ID Max (A)' in row else 'Id Max (A)'),
                 Vgs_th_min=math.nan,
                 Vgs_th_typ=math.nan,
                 Vgs_th_max=vgs_th if vgs_th < 10 else math.nan,

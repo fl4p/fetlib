@@ -1,6 +1,7 @@
 import datetime
 import math
 import os
+import re
 import warnings
 from typing import List, Callable, Optional, Literal
 
@@ -10,6 +11,7 @@ import requests
 from dslib import round_to_n_dec
 from dslib.cache import disk_cache
 from dslib.field import Field
+from dslib.mosfet import Polarity, normalize_mosfet_polarity
 
 
 def ensure_nC(s, min, max, abs):
@@ -41,10 +43,42 @@ def ensure_ohm(s, min, max):
 Substrate = Literal['Si', 'SiC', 'GaN']
 
 
+def parse_mosfet_polarity(value) -> Optional[Polarity]:
+    """Normalize vendor channel-type labels to ``"N"`` or ``"P"``.
+
+    Parts lists use spellings such as N, N-Channel, N-ch, and N+N. Same-
+    polarity multi-die parts still have one well-defined polarity; mixed
+    N+P/complementary parts do not fit the scalar MOSFET model and raise
+    instead of being silently labelled from whichever signed Vds appears
+    first.
+    """
+    if value is None or (isinstance(value, float) and math.isnan(value)):
+        return None
+    text = str(value).strip().strip(',').strip()
+    if not text:
+        return None
+    if re.fullmatch(r'N\s+with\s+Schottky', text, re.IGNORECASE):
+        return 'N'
+
+    def names(channel: str) -> bool:
+        return bool(re.search(
+            rf'(?<![a-z]){channel}\s*'
+            rf'(?:[- ]?ch(?:annel)?\b|(?=\s*(?:[+/x&]|\band\b|$)))',
+            text, re.IGNORECASE))
+
+    found = {p for p in ('N', 'P') if names(p.lower())}
+    if len(found) == 1:
+        return next(iter(found))
+    if len(found) > 1:
+        raise ValueError("mixed MOSFET polarity is unsupported: %r" % (value,))
+    raise ValueError("unknown MOSFET polarity: %r" % (value,))
+
+
 class MosfetBasicSpecs():
     def __init__(self, Vds_max, Rds_on_10v_max, ID_25,
                  Vgs_th_min, Vgs_th_typ, Vgs_th_max,
-                 Qg_typ, Qg_max, source: List[str], substrate: Optional[Substrate] = None):
+                 Qg_typ, Qg_max, source: List[str], substrate: Optional[Substrate] = None,
+                 polarity: Optional[Polarity] = None):
 
         Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 800)
 
@@ -55,6 +89,8 @@ class MosfetBasicSpecs():
 
         self.substrate: Optional[Substrate] = substrate
         self.Vds_max = Vds_max
+        self.polarity: Optional[Polarity] = normalize_mosfet_polarity(
+            polarity, self.Vds_max)
         self.Rds_on_10v_max = ensure_ohm(Rds_on_10v_max, 1e-6, 800)
         self.ID_25 = ID_25
         self.Vgs_th_min = Vgs_th_min
@@ -90,6 +126,16 @@ class MosfetBasicSpecs():
 
     def update(self, specs: 'MosfetBasicSpecs'):
 
+        own_polarity = getattr(self, 'polarity', None)
+        incoming_polarity = getattr(specs, 'polarity', None)
+        # With no signed Vds, polarity can only have come from an explicit
+        # parts-list field. Preserve that distinction through the merge so
+        # later signed data is validated against it.
+        own_polarity_is_explicit = normalize_mosfet_polarity(
+            None, self.Vds_max) is None
+        incoming_polarity_is_explicit = normalize_mosfet_polarity(
+            None, specs.Vds_max) is None
+
         if math.isnan(self.Vds_max):
             self.Vds_max = specs.Vds_max
 
@@ -97,6 +143,21 @@ class MosfetBasicSpecs():
             self.Vds_max = min(self.Vds_max, specs.Vds_max)  # give preference to p-ch
         else:
             assert math.isnan(specs.Vds_max) or self.Vds_max == specs.Vds_max, (self.Vds_max, specs.Vds_max)
+        # Vds merge above deliberately gives a P-channel record precedence over
+        # an otherwise-identical positive rating. Keep the explicit field tied
+        # to that final signed value rather than to whichever source arrived first.
+        inferred = normalize_mosfet_polarity(None, self.Vds_max)
+        if inferred is not None:
+            if own_polarity_is_explicit:
+                normalize_mosfet_polarity(own_polarity, self.Vds_max)
+            if incoming_polarity_is_explicit:
+                normalize_mosfet_polarity(incoming_polarity, self.Vds_max)
+            self.polarity = inferred
+        else:
+            assert (own_polarity is None or incoming_polarity is None
+                    or own_polarity == incoming_polarity), (
+                        own_polarity, incoming_polarity)
+            self.polarity = own_polarity or incoming_polarity
 
         def mean_chk_std(t, std, fn: Callable = np.nanmean):
             if sum(~np.isnan(t)) == 0:
@@ -111,6 +172,12 @@ class MosfetBasicSpecs():
         self.Vgs_th_max = mean_chk_std((self.Vgs_th_max, specs.Vgs_th_max), 0.3, fn=np.nanmax)
         self.Qg_typ_nC = mean_chk_std((self.Qg_typ_nC, specs.Qg_typ_nC), 0.01, fn=np.nanmean)
         self.Qg_max_nC = mean_chk_std((self.Qg_max_nC, specs.Qg_max_nC), 0.2, fn=np.nanmax)
+
+    def __setstate__(self, state):
+        """Backfill polarity when loading discovery caches created by older code."""
+        self.__dict__.update(state)
+        self.polarity = normalize_mosfet_polarity(
+            state.get('polarity'), self.Vds_max)
 
     def fields(self):
         n = math.nan

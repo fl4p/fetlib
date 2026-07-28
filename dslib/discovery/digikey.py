@@ -4,7 +4,7 @@ import math
 import pandas as pd
 
 from dslib import mfr_tag
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart
+from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, parse_mosfet_polarity
 from dslib.field import parse_field_value
 
 
@@ -21,6 +21,7 @@ def digikey(csv_glob_path, no_obsolete=False):
         mpn = str(row['Mfr Part #'])
         ds_url = row.Datasheet
         parts.append(DiscoveredPart(mfr, mpn, ds_url=ds_url, specs=MosfetBasicSpecs(
+            polarity=parse_mosfet_polarity(row['FET Type']),
             substrate='GaN' if row['Technology'].startswith('GaN') else None,
             Vds_max=float(row['Drain to Source Voltage (Vdss)'].strip(' V')),
             Rds_on_10v_max=(row['Rds On (Max) @ Id, Vgs'].split('@')[0].strip()),

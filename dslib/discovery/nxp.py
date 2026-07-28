@@ -2,7 +2,8 @@ import math
 
 import xlrd
 
-from dslib.discovery import MosfetBasicSpecs, DiscoveredPart, download_parts_list
+from dslib.discovery import (MosfetBasicSpecs, DiscoveredPart, download_parts_list,
+                             parse_mosfet_polarity)
 from dslib.field import parse_field_value
 
 
@@ -48,6 +49,7 @@ async def nexperia_mosfets():
             ds_url=ds_url,
             package=v['Package name'] + ',' + v['Package version'],
             specs=MosfetBasicSpecs(
+                polarity=parse_mosfet_polarity(v['Channel type']),
                 substrate='GaN' if v['Type number'].startswith('GAN') else 'Si',
                 Vds_max=parse_field_value(v['VDS [max] (V)']),
                 Rds_on_10v_max=parse_field_value(v['RDSon [max] @ VGS = 10 V (mΩ)']) * 1e-3,
