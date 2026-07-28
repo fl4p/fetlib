@@ -238,3 +238,103 @@ def test_label_row_with_values_never_takes_the_ir_path():
 def test_empty_sheet_is_refused_not_matched():
     c, why = gen.select_block([], qrr=65, trr=35)
     assert c is None and why == "no recovery block in layout text"
+
+
+# --- 2026-07-28 layout classes (census of the 776 'no recovery block' rejects) ---
+
+# Infineon OptiMOS 3 (N3G): the recovery current is 'I F=I S', a cross-reference to the
+# diode continuous forward current rating row a few lines up. The VSD row carries a
+# DIFFERENT current (50 A here, deliberately != IS) so a window that leaks across the
+# forward-voltage row is caught as a wrong IF, not as a coincidental pass.
+N3G_IF_IS = "\n".join([
+    "Diode continous forward current      IS          -    -    100   A",
+    "Diode pulse current                  I S,pulse   -    -    400   A",
+    "Diode forward voltage                V SD        -    1.0  1.2   V   V GS=0 V, I F=50 A, T j=25 °C",
+    "Reverse recovery time                t rr   V R=40 V, I F=I S,   -   73   -   ns",
+    "                                     Q rr   di F/dt =100 A/µs",
+    "Reverse recovery charge                     -   136   -   nC",
+])
+
+
+def test_n3g_if_is_resolves_from_the_rating_row():
+    blocks = gen.extract_all_blocks(N3G_IF_IS)
+    assert len(blocks) == 1
+    c = blocks[0][0]
+    # 100 (the IS rating row) -- not 400 (pulse row), not 50 (VSD row's IF)
+    assert c["IF"] == 100.0 and c["didt"] == 100e6 and c["VR"] == 40.0
+    assert c["qrr_seen"] == [136.0]
+
+
+def test_n3g_if_is_without_a_rating_row_is_refused_not_guessed():
+    # Known-bad: the cross-reference dangles. The block must vanish rather than ship
+    # any fallback current.
+    sheet = "\n".join(N3G_IF_IS.split("\n")[2:])   # drop the IS and pulse rows
+    assert gen.extract_all_blocks(sheet) == []
+
+
+# onsemi 6H-series: 'Charge Time ta' / 'Discharge Time tb' rows space the trr label
+# 4 rows above the Qrr label (old scan depth 3 never found it -> no conditions). The
+# VSD row above must stay outside the window: its IS = 20 A is the wrong current.
+ONSEMI_TA_TB = "\n".join([
+    "Forward Diode Voltage        VSD    VGS = 0 V, IS = 20 A   TJ = 25°C   0.77  1.2  V",
+    "Reverse Recovery Time        tRR    VGS = 0 V, dIS/dt = 100 A/µs,   59   ns",
+    "                                    IS = 50 A",
+    "Charge Time                  ta     33",
+    "Discharge Time               tb     25",
+    "Reverse Recovery Charge      QRR    73   nC",
+])
+
+
+def test_onsemi_ta_tb_rows_reach_the_trr_conditions():
+    blocks = gen.extract_all_blocks(ONSEMI_TA_TB)
+    assert len(blocks) == 1
+    c = blocks[0][0]
+    assert c["IF"] == 50.0 and c["didt"] == 100e6   # 50 A -- never VSD's 20 A
+    assert c["qrr_seen"] == [73.0]
+    assert 59.0 in c["trr_seen"]
+
+
+# ST F7: the label wraps over three lines ('Reverse / Qrr recovery / charge'); no line
+# prints 'recovery charge'. The anchor is the Qrr-before-'recover' value row.
+ST_WRAPPED = "\n".join([
+    "         VSD (1)   ISD = 110 A, VGS = 0    -   1.2   V",
+    "                   Reverse",
+    "  trr                                      -   60   -   ns",
+    "                   recovery time",
+    "                   ISD = 110 A,",
+    "                   Reverse",
+    "                   di/dt = 100 A/µs,",
+    "  Qrr    recovery                          -   83   -   nC",
+    "         charge    VDD = 80 V, Tj = 25°C (see Figure 14. Test",
+    "                   circuit for inductive load switching and diode",
+    "                   recovery times)",
+])
+
+
+def test_st_wrapped_label_extracts_the_full_condition_set():
+    blocks = gen.extract_all_blocks(ST_WRAPPED)
+    assert len(blocks) == 1
+    c = blocks[0][0]
+    assert c["IF"] == 110.0 and c["didt"] == 100e6 and c["VR"] == 80.0
+    assert c["Tj"] == 25.0 and c["qrr_seen"] == [83.0]
+
+
+def test_anchor_matches_the_separator_variants():
+    for line in ("Reverse RecoveryCharge ––– 94 140 nC",
+                 "Body Diode Reverse-Recovery Charge QRR — 45 — nC",
+                 "Qrr Reverse−Recovery Charge − 65 65 nC",
+                 "Qr recovered charge IS = 100 A; dIS/dt = -100 A/µs",
+                 "Qrr recovery - 83 - nC"):
+        assert gen.RE_QRR_ROW.search(line), line
+
+
+def test_marketing_bullet_still_never_becomes_a_block():
+    # Bullets anchor (they always did) but carry no conditions, so no block may
+    # survive -- for the Qrr-first form the bullet's '(Qrr)' trails 'recovery' and
+    # must not even anchor.
+    body = "\n".join([
+        "  Fast intrinsic diode with low reverse recovery charge (Qrr)",
+        "  100% avalanche tested, di/dt = 100 A/µs ruggedness",
+    ])
+    assert gen.extract_all_blocks(body) == []
+    assert not gen.RE_QRR_ROW.search("low reverse recovery (Qrr)")

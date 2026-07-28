@@ -60,8 +60,20 @@ RE_DIDT = re.compile(r'd\s*[iI]\s*[A-Z]{0,3}\s*/\s*d\s*t\s*=?\s*(' + _NUM + r')\
 RE_IF = re.compile(r'\bI\s*(?:F|S|SD|DR)\b\s*=?\s*(' + _NUM + r')\s*A(?![/\w])', re.I)
 RE_VR = re.compile(r'\bV\s*(?:R|DD|DS)\b\s*=?\s*(' + _NUM + r')\s*V', re.I)
 RE_TJ = re.compile(r'\bT\s*j\s*=?\s*(' + _NUM + r')\s*°?\s*C', re.I)
-RE_QRR_ROW = re.compile(r'[Rr]everse\s+recovery\s+charge', re.I)
-RE_TRR_ROW = re.compile(r'[Rr]everse\s+recovery\s+time', re.I)
+# The label separators vary per template: 'Reverse Recovery Charge' (space),
+# 'Reverse-Recovery' / 'Reverse−Recovery' (ASCII / unicode hyphen, IR & onsemi),
+# 'RecoveryCharge' printed with NO space (Vishay/IR column collision), and ST's older
+# 'recovered charge' wording. All are the same anchor; front-page marketing bullets
+# ('low reverse recovery charge (Qrr)') still anchor harmlessly -- their window has no
+# IF/di-dt conditions, so iter_blocks drops them, as it always has.
+# ST's F7 template wraps the label over three lines ('Reverse / Qrr recovery / charge'),
+# so no line prints 'recovery charge' -- the value row is the one where the symbol Qrr
+# PRECEDES 'recover'. Marketing bullets print it the other way round ('... low reverse
+# recovery charge (Qrr)') and don't match the Qrr-first form.
+RE_QRR_ROW = re.compile(
+    r'[Rr]everse[\s−–—-]*[Rr]ecovery\s*[Cc]harge|recovered\s+charge'
+    r'|\bQ\s*rr\b[^|]*?\brecover', re.I)
+RE_TRR_ROW = re.compile(r'[Rr]everse[\s−–—-]*[Rr]ecovery\s*[Tt]ime|recovery\s+time', re.I)
 RE_VSD_ROW = re.compile(r'forward\s+voltage|V\s*SD\b', re.I)
 # A new table/section starting below the Qrr row ends the condition cell. Without this the
 # downward window runs on into the next block: goford/8070.0 picked up "VGS=0V, VDS=0V"
@@ -83,6 +95,12 @@ CALIBRATION = {
     ('infineon', 'IAUCN08S7N013'): (50.0, 100e6),
     ('infineon', 'IPT015N10NF2S'): (100.0, 500e6),
     ('ao', 'AOGT68801'): (20.0, 500e6),
+    # 2026-07-28 batch, read off rendered pages when their layout classes were added:
+    # N3G 'I F=I S' cross-reference (IS rating row prints 100 A), onsemi ta/tb-spaced
+    # labels, ST F7 three-line wrapped label.
+    ('infineon', 'IPP037N08N3GXKSA1'): (100.0, 100e6),
+    ('onsemi', 'NVMFS6H818NLWFT1G'): (50.0, 100e6),
+    ('st', 'STP150N10F7AG'): (110.0, 100e6),
     # IPT014N10N5 is deliberately absent: it is a print-to-PDF with no text layer at all
     # (11 characters extract from 1.6 MB), so this pass MUST find nothing for it. It is
     # asserted as a no-extraction case instead.
@@ -150,9 +168,12 @@ def iter_blocks(body):
         if not RE_QRR_ROW.search(line):
             continue
         # Window = the trr..Qrr row span ONLY. See the module docstring for the
-        # IAUCN08S7N013 miscapture this bound exists to prevent.
+        # IAUCN08S7N013 miscapture this bound exists to prevent. Depth 6 (was 3):
+        # onsemi spaces the labels with 'Charge Time ta' / 'Discharge Time tb' rows, so
+        # trr sits 4-5 rows above Qrr there. The forward-voltage / other-charge-row
+        # stops below still bound the scan -- depth alone never crosses a section.
         lo = i
-        for j in range(i - 1, max(-1, i - 4), -1):
+        for j in range(i - 1, max(-1, i - 7), -1):
             if RE_TRR_ROW.search(lines[j]):
                 lo = j
                 break
@@ -175,7 +196,8 @@ def iter_blocks(body):
         flat = re.sub(r'[ \t]+', ' ', '\n'.join(lines[lo:hi]))
         d, f_, v, t = (RE_DIDT.search(flat), RE_IF.search(flat),
                        RE_VR.search(flat), RE_TJ.search(flat))
-        if not (d and f_):
+        if_val = abs(_f(f_.group(1))) if f_ else _resolve_if_is(lines, lo, flat)
+        if not (d and if_val is not None):
             continue
         qv = _values_in(re.sub(r'^[^|]*?charge\D*', '', line, flags=re.I))
         # The DB stores Qrr in nC; sheets printing uC (vishay '126 189 uC', ao '1.18
@@ -219,11 +241,35 @@ def iter_blocks(body):
             if RE_TRR_ROW.search(lines[j]):
                 tv = _values_in(re.sub(r'^[^|]*?time\D*', '', lines[j], flags=re.I))
                 break
-        yield (dict(IF=abs(_f(f_.group(1))), didt=abs(_f(d.group(1))) * 1e6,
+        yield (dict(IF=if_val, didt=abs(_f(d.group(1))) * 1e6,
                     VR=_f(v.group(1)) if v else None,
                     Tj=_f(t.group(1)) if t else 25.0,
                     qrr_seen=qv, trr_seen=tv),
                [re.sub(r'\s+', ' ', x).strip() for x in lines[lo:hi] if x.strip()])
+
+
+# Infineon OptiMOS 3 (N3G) prints the recovery current as a CROSS-REFERENCE --
+# 'V R=40 V, I F=I S, di F/dt=100 A/us' -- where IS is the diode continuous forward
+# current, printed as its own labelled row a few lines up in the same reverse-diode
+# table ('Diode continous forward current  IS  -  -  100  A'; the typo is Infineon's).
+RE_IF_IS_XREF = re.compile(r'\bI\s*F\s*=\s*I\s*S\b(?!\s*,?\s*pulse)', re.I)
+RE_IS_ROW = re.compile(r'diode\s+contin\w*\s+forward\s+current', re.I)
+
+
+def _resolve_if_is(lines, lo, flat):
+    """IF in amps for an 'I F=I S' condition cell, or None.
+
+    Anchored to the LABELLED rating row, never a bare 'IS' anywhere: the nearest
+    'diode continuous forward current' row above the window, its last 'NUM A' token.
+    No row -> None, and the caller refuses the block -- a recovery point with a
+    guessed current is worse than a missing one."""
+    if not RE_IF_IS_XREF.search(flat):
+        return None
+    for j in range(lo - 1, max(-1, lo - 30), -1):
+        if RE_IS_ROW.search(lines[j]):
+            amps = re.findall(r'(' + _NUM + r')\s*A\b', lines[j])
+            return abs(_f(amps[-1])) if amps else None
+    return None
 
 
 # An IR value row: optional dash placeholders (min), one or two numbers (typ [max]),

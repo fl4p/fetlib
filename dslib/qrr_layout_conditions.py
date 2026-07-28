@@ -59,6 +59,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("ao", "AOTL66811"): dict(IF=20, didt=5e+08, VR=None, Tj=25),  # Qrr=233 nC trr=40 ns, IRRM/IF=0.61
     ("ao", "AOTL66914"): dict(IF=20, didt=5e+08, VR=None, Tj=25),  # Qrr=300 nC trr=50 ns, IRRM/IF=0.64
     ("crmicro", "CS60N20A8R"): dict(IF=60, didt=1e+08, VR=None, Tj=25),  # Qrr=1306 nC trr=166 ns, IRRM/IF=0.26
+    ("diodes", "DMTH10H2M2LPSW-13"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=172 nC trr=74 ns, IRRM/IF=0.16
     ("goford", "11N10"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=66 nC trr=42 ns, IRRM/IF=0.08
     ("goford", "18N20-252"): dict(IF=18, didt=1e+08, VR=None, Tj=25),  # Qrr=1045 nC trr=235 ns, IRRM/IF=0.54
     ("goford", "8070.0"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=90 nC trr=50 ns, IRRM/IF=0.09
@@ -243,6 +244,10 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "AUIRFS4310ZTRL"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=58 nC trr=40 ns, IRRM/IF=0.04
     ("infineon", "AUIRFSL4010"): dict(IF=106, didt=1e+08, VR=85, Tj=25),  # Qrr=210 nC trr=72 ns, IRRM/IF=0.06
     ("infineon", "AUIRLR3110Z"): dict(IF=38, didt=1e+08, VR=50, Tj=25),  # Qrr=42 nC trr=34 ns, IRRM/IF=0.07
+    ("infineon", "BSC12DN20NS3GATMA1"): dict(IF=11.3, didt=1e+08, VR=100, Tj=25),  # Qrr=208 nC trr=74 ns, IRRM/IF=0.51
+    ("infineon", "BSC900N20NS3GATMA1"): dict(IF=15.2, didt=1e+08, VR=100, Tj=25),  # Qrr=309 nC trr=86 ns, IRRM/IF=0.48
+    ("infineon", "BSZ12DN20NS3GATMA1"): dict(IF=11.3, didt=1e+08, VR=100, Tj=25),  # Qrr=212 nC trr=74 ns, IRRM/IF=0.52
+    ("infineon", "BSZ900N20NS3GATMA1"): dict(IF=15.2, didt=1e+08, VR=100, Tj=25),  # Qrr=309 nC trr=86 ns, IRRM/IF=0.48
     ("infineon", "IAUCN08S7L013"): dict(IF=50, didt=1e+08, VR=40, Tj=25),  # Qrr=32 nC trr=44 ns, IRRM/IF=0.03
     ("infineon", "IAUCN08S7L018"): dict(IF=50, didt=1e+08, VR=40, Tj=25),  # Qrr=22 nC trr=36 ns, IRRM/IF=0.03
     ("infineon", "IAUCN08S7L024"): dict(IF=50, didt=1e+08, VR=40, Tj=25),  # Qrr=19 nC trr=33 ns, IRRM/IF=0.03
@@ -283,8 +288,19 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IAUZN08S7N046"): dict(IF=50, didt=1e+08, VR=40, Tj=25),  # Qrr=11 nC trr=25 ns, IRRM/IF=0.02
     ("infineon", "IAUZN10S7L289"): dict(IF=27, didt=1e+08, VR=50, Tj=25),  # Qrr=8 nC trr=21 ns, IRRM/IF=0.03
     ("infineon", "IAUZN10S7N078"): dict(IF=50, didt=1e+08, VR=50, Tj=25),  # Qrr=19 nC trr=31 ns, IRRM/IF=0.03
+    ("infineon", "IPA037N08N3GXKSA1"): dict(IF=75, didt=1e+08, VR=40, Tj=25),  # Qrr=130 nC trr=62 ns, IRRM/IF=0.06
+    ("infineon", "IPA057N08N3GXKSA1"): dict(IF=60, didt=1e+08, VR=40, Tj=25),  # Qrr=121 nC trr=64 ns, IRRM/IF=0.07
+    ("infineon", "IPB019N08N3GATMA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=317 nC trr=113 ns, IRRM/IF=0.06
+    ("infineon", "IPB020N10N5"): dict(IF=176, didt=1e+08, VR=50, Tj=25),  # Qrr=287 nC trr=99 ns, IRRM/IF=0.04
+    ("infineon", "IPB020N10N5ATMA1"): dict(IF=176, didt=1e+08, VR=50, Tj=25),  # Qrr=287 nC trr=99 ns, IRRM/IF=0.04
+    ("infineon", "IPB035N08N3GATMA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=136 nC trr=73 ns, IRRM/IF=0.04
     ("infineon", "IPB085N15NM6"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
     ("infineon", "IPB085N15NM6ATMA1"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
+    ("infineon", "IPB108N15N3GATMA1"): dict(IF=83, didt=1e+08, VR=75, Tj=25),  # Qrr=415 nC trr=132 ns, IRRM/IF=0.08
+    ("infineon", "IPB200N15N3GATMA1"): dict(IF=50, didt=1e+08, VR=75, Tj=25),  # Qrr=332 nC trr=106 ns, IRRM/IF=0.13
+    ("infineon", "IPD053N08N3GATMA1"): dict(IF=90, didt=1e+08, VR=40, Tj=25),  # Qrr=130 nC trr=72 ns, IRRM/IF=0.04
+    ("infineon", "IPD135N08N3GATMA1"): dict(IF=45, didt=1e+08, VR=40, Tj=25),  # Qrr=74 nC trr=50 ns, IRRM/IF=0.07
+    ("infineon", "IPD200N15N3GATMA1"): dict(IF=50, didt=1e+08, VR=75, Tj=25),  # Qrr=332 nC trr=106 ns, IRRM/IF=0.13
     ("infineon", "IPDQ60R010S7"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPDQ60R010S7A"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPDQ60R010S7AXTMA1"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
@@ -295,8 +311,16 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IPDQ60T010S7XTMA1"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPF019N10NM8"): dict(IF=25, didt=1e+08, VR=50, Tj=25),  # Qrr=68 nC trr=40 ns, IRRM/IF=0.14
     ("infineon", "IPF019N10NM8ATMA1"): dict(IF=25, didt=1e+08, VR=50, Tj=25),  # Qrr=68 nC trr=40 ns, IRRM/IF=0.14
+    ("infineon", "IPI111N15N3GAKSA1"): dict(IF=83, didt=1e+08, VR=75, Tj=25),  # Qrr=415 nC trr=132 ns, IRRM/IF=0.08
+    ("infineon", "IPP030N10N3GXKSA1"): dict(IF=100, didt=1e+08, VR=50, Tj=25),  # Qrr=232 nC trr=86 ns, IRRM/IF=0.06
+    ("infineon", "IPP037N08N3GXKSA1"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=136 nC trr=73 ns, IRRM/IF=0.04
+    ("infineon", "IPP041N12N3GXKSA1"): dict(IF=120, didt=1e+08, VR=60, Tj=25),  # Qrr=356 nC trr=123 ns, IRRM/IF=0.05
+    ("infineon", "IPP076N12N3GXKSA1"): dict(IF=100, didt=1e+08, VR=60, Tj=25),  # Qrr=291 nC trr=122 ns, IRRM/IF=0.05
     ("infineon", "IPP089N15NM6"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
     ("infineon", "IPP089N15NM6AKSA1"): dict(IF=16, didt=5e+08, VR=75, Tj=25),  # Qrr=111 nC trr=36 ns, IRRM/IF=0.42
+    ("infineon", "IPP111N15N3GXKSA1"): dict(IF=83, didt=1e+08, VR=75, Tj=25),  # Qrr=415 nC trr=132 ns, IRRM/IF=0.08
+    ("infineon", "IPP114N12N3GXKSA1"): dict(IF=75, didt=1e+08, VR=60, Tj=25),  # Qrr=232 nC trr=116 ns, IRRM/IF=0.06
+    ("infineon", "IPP200N15N3GXKSA1"): dict(IF=50, didt=1e+08, VR=75, Tj=25),  # Qrr=332 nC trr=106 ns, IRRM/IF=0.13
     ("infineon", "IPQC60R010S7A"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPQC60R010S7AXTMA1"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
     ("infineon", "IPQC60T010S7"): dict(IF=50, didt=1e+08, VR=300, Tj=25),  # Qrr=17000 nC trr=600 ns, IRRM/IF=1.14
@@ -340,10 +364,22 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRF7815"): dict(IF=3.1, didt=3e+08, VR=75, Tj=25),  # Qrr=213 nC trr=41 ns, IRRM/IF=3.41
     ("infineon", "IRF7853"): dict(IF=5, didt=1e+08, VR=25, Tj=25),  # Qrr=84 nC trr=45 ns, IRRM/IF=0.76
     ("infineon", "IRF7854"): dict(IF=6, didt=1e+08, VR=25, Tj=25),  # Qrr=76 nC trr=43 ns, IRRM/IF=0.60
+    ("infineon", "IRF8010"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=460 nC trr=99 ns, IRRM/IF=0.12
+    ("infineon", "IRF8010PBF"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=460 nC trr=99 ns, IRRM/IF=0.12
+    ("infineon", "IRF8010S"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=460 nC trr=99 ns, IRRM/IF=0.12
+    ("infineon", "IRF8010STRLPBF"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=460 nC trr=99 ns, IRRM/IF=0.12
     ("infineon", "IRF8252PBF-1"): dict(IF=20, didt=2.3e+08, VR=13, Tj=25),  # Qrr=12 nC trr=19 ns, IRRM/IF=0.07
+    ("infineon", "IRFB23N20DPBF"): dict(IF=14, didt=1e+08, VR=None, Tj=25),  # Qrr=1300 nC trr=200 ns, IRRM/IF=0.97
+    ("infineon", "IRFB260N"): dict(IF=34, didt=1e+08, VR=None, Tj=25),  # Qrr=2100 nC trr=240 ns, IRRM/IF=0.53
+    ("infineon", "IRFB260NPBF"): dict(IF=34, didt=1e+08, VR=None, Tj=25),  # Qrr=2100 nC trr=240 ns, IRRM/IF=0.53
+    ("infineon", "IRFB31N20DPBF"): dict(IF=18, didt=1e+08, VR=None, Tj=25),  # Qrr=1700 nC trr=200 ns, IRRM/IF=0.96
+    ("infineon", "IRFB33N15D"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=920 nC trr=150 ns, IRRM/IF=0.63
     ("infineon", "IRFB4020PBF"): dict(IF=11, didt=1e+08, VR=None, Tj=25),  # Qrr=280 nC trr=82 ns, IRRM/IF=0.63
+    ("infineon", "IRFB4110"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=94 nC trr=50 ns, IRRM/IF=0.05
     ("infineon", "IRFB4110G"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=94 nC trr=50 ns, IRRM/IF=0.05
     ("infineon", "IRFB4110GPBF"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=94 nC trr=50 ns, IRRM/IF=0.05
+    ("infineon", "IRFB4110PBF"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=94 nC trr=50 ns, IRRM/IF=0.05
+    ("infineon", "IRFB4110PBFXKMA1"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=94 nC trr=50 ns, IRRM/IF=0.05
     ("infineon", "IRFB4115"): dict(IF=62, didt=1e+08, VR=130, Tj=25),  # Qrr=300 nC trr=86 ns, IRRM/IF=0.12
     ("infineon", "IRFB4115G"): dict(IF=62, didt=1e+08, VR=130, Tj=25),  # Qrr=300 nC trr=86 ns, IRRM/IF=0.12
     ("infineon", "IRFB4115PBF"): dict(IF=62, didt=1e+08, VR=130, Tj=25),  # Qrr=300 nC trr=86 ns, IRRM/IF=0.12
@@ -355,6 +391,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRFB4228PBF"): dict(IF=50, didt=1e+08, VR=50, Tj=25),  # Qrr=230 nC trr=76 ns, IRRM/IF=0.12
     ("infineon", "IRFB4229"): dict(IF=26, didt=1e+08, VR=50, Tj=25),  # Qrr=840 nC trr=190 ns, IRRM/IF=0.36
     ("infineon", "IRFB4229PBF"): dict(IF=26, didt=1e+08, VR=50, Tj=25),  # Qrr=840 nC trr=190 ns, IRRM/IF=0.36
+    ("infineon", "IRFB42N20D"): dict(IF=26, didt=1e+08, VR=None, Tj=25),  # Qrr=1860 nC trr=220 ns, IRRM/IF=0.67
     ("infineon", "IRFB4310"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=82 nC trr=45 ns, IRRM/IF=0.05
     ("infineon", "IRFB4310PBF"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=82 nC trr=45 ns, IRRM/IF=0.05
     ("infineon", "IRFB4310Z"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=58 nC trr=40 ns, IRRM/IF=0.04
@@ -372,9 +409,19 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRFB4510PBF"): dict(IF=37, didt=1e+08, VR=85, Tj=25),  # Qrr=95 nC trr=54 ns, IRRM/IF=0.10
     ("infineon", "IRFB4610"): dict(IF=44, didt=1e+08, VR=85, Tj=25),  # Qrr=44 nC trr=35 ns, IRRM/IF=0.06
     ("infineon", "IRFB4610PBF"): dict(IF=44, didt=1e+08, VR=85, Tj=25),  # Qrr=44 nC trr=35 ns, IRRM/IF=0.06
+    ("infineon", "IRFB4615"): dict(IF=21, didt=1e+08, VR=100, Tj=25),  # Qrr=177 nC trr=70 ns, IRRM/IF=0.25
     ("infineon", "IRFB4620"): dict(IF=15, didt=1e+08, VR=100, Tj=25),  # Qrr=294 nC trr=78 ns, IRRM/IF=0.51
     ("infineon", "IRFB4620PBF"): dict(IF=15, didt=1e+08, VR=100, Tj=25),  # Qrr=294 nC trr=78 ns, IRRM/IF=0.51
+    ("infineon", "IRFB4710"): dict(IF=45, didt=1e+08, VR=None, Tj=25),  # Qrr=180 nC trr=74 ns, IRRM/IF=0.11
+    ("infineon", "IRFB4710PBF"): dict(IF=45, didt=1e+08, VR=None, Tj=25),  # Qrr=180 nC trr=74 ns, IRRM/IF=0.11
+    ("infineon", "IRFB52N15D"): dict(IF=36, didt=1e+08, VR=None, Tj=25),  # Qrr=780 nC trr=140 ns, IRRM/IF=0.32
+    ("infineon", "IRFB52N15DPBF"): dict(IF=36, didt=1e+08, VR=None, Tj=25),  # Qrr=780 nC trr=140 ns, IRRM/IF=0.32
     ("infineon", "IRFB5615"): dict(IF=21, didt=1e+08, VR=120, Tj=25),  # Qrr=312 nC trr=80 ns, IRRM/IF=0.37
+    ("infineon", "IRFB59N10DPBF"): dict(IF=35.4, didt=1e+08, VR=None, Tj=25),  # Qrr=750 nC trr=130 ns, IRRM/IF=0.33
+    ("infineon", "IRFB61N15D"): dict(IF=37, didt=1e+08, VR=None, Tj=25),  # Qrr=1340 nC trr=180 ns, IRRM/IF=0.41
+    ("infineon", "IRFB61N15DPBF"): dict(IF=37, didt=1e+08, VR=None, Tj=25),  # Qrr=1340 nC trr=180 ns, IRRM/IF=0.41
+    ("infineon", "IRFBA90N20D"): dict(IF=59, didt=1e+08, VR=None, Tj=25),  # Qrr=1900 nC trr=220 ns, IRRM/IF=0.30
+    ("infineon", "IRFBA90N20DPBF"): dict(IF=59, didt=1e+08, VR=None, Tj=25),  # Qrr=1900 nC trr=220 ns, IRRM/IF=0.30
     ("infineon", "IRFH4209D"): dict(IF=50, didt=3e+08, VR=13, Tj=25),  # Qrr=83 nC trr=33 ns, IRRM/IF=0.11
     ("infineon", "IRFH5010"): dict(IF=50, didt=5e+08, VR=50, Tj=25),  # Qrr=256 nC trr=34 ns, IRRM/IF=0.30
     ("infineon", "IRFH5015"): dict(IF=34, didt=5e+08, VR=75, Tj=25),  # Qrr=550 nC trr=52 ns, IRRM/IF=0.64
@@ -428,17 +475,30 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRFP4332PBF"): dict(IF=35, didt=1e+08, VR=50, Tj=25),  # Qrr=820 nC trr=190 ns, IRRM/IF=0.26
     ("infineon", "IRFP4410Z"): dict(IF=58, didt=1e+08, VR=85, Tj=25),  # Qrr=53 nC trr=38 ns, IRRM/IF=0.05
     ("infineon", "IRFP4468PBF"): dict(IF=180, didt=1e+08, VR=85, Tj=25),  # Qrr=370 nC trr=100 ns, IRRM/IF=0.04
+    ("infineon", "IRFP4568"): dict(IF=103, didt=1e+08, VR=100, Tj=25),  # Qrr=515 nC trr=110 ns, IRRM/IF=0.09
     ("infineon", "IRFP4568PBF"): dict(IF=103, didt=1e+08, VR=100, Tj=25),  # Qrr=515 nC trr=110 ns, IRRM/IF=0.09
     ("infineon", "IRFP4568PBFXKMA1"): dict(IF=103, didt=1e+08, VR=100, Tj=25),  # Qrr=515 nC trr=110 ns, IRRM/IF=0.09
+    ("infineon", "IRFP4668"): dict(IF=81, didt=1e+08, VR=100, Tj=25),  # Qrr=633 nC trr=130 ns, IRRM/IF=0.12
     ("infineon", "IRFP4668PBF"): dict(IF=81, didt=1e+08, VR=100, Tj=25),  # Qrr=633 nC trr=130 ns, IRRM/IF=0.12
+    ("infineon", "IRFP4710"): dict(IF=45, didt=1e+08, VR=None, Tj=25),  # Qrr=180 nC trr=74 ns, IRRM/IF=0.11
     ("infineon", "IRFP4768"): dict(IF=56, didt=1e+08, VR=200, Tj=25),  # Qrr=1480 nC trr=180 ns, IRRM/IF=0.30
     ("infineon", "IRFP4768PBF"): dict(IF=56, didt=1e+08, VR=200, Tj=25),  # Qrr=1480 nC trr=180 ns, IRRM/IF=0.30
+    ("infineon", "IRFP4868"): dict(IF=42, didt=1e+08, VR=255, Tj=25),  # Qrr=2520 nC trr=351 ns, IRRM/IF=0.37
     ("infineon", "IRFP90N20D"): dict(IF=56, didt=1e+08, VR=None, Tj=25),  # Qrr=1900 nC trr=230 ns, IRRM/IF=0.30
+    ("infineon", "IRFP90N20DPBF"): dict(IF=56, didt=1e+08, VR=None, Tj=25),  # Qrr=1900 nC trr=230 ns, IRRM/IF=0.30
+    ("infineon", "IRFPS3810"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=1640 nC trr=220 ns, IRRM/IF=0.15
+    ("infineon", "IRFPS3810PBF"): dict(IF=100, didt=1e+08, VR=None, Tj=25),  # Qrr=1640 nC trr=220 ns, IRRM/IF=0.15
+    ("infineon", "IRFPS3815"): dict(IF=58, didt=1e+08, VR=None, Tj=25),  # Qrr=2990 nC trr=270 ns, IRRM/IF=0.39
+    ("infineon", "IRFR3410"): dict(IF=18, didt=1e+08, VR=None, Tj=25),  # Qrr=260 nC trr=84 ns, IRRM/IF=0.35
     ("infineon", "IRFR3710Z"): dict(IF=33, didt=1e+08, VR=50, Tj=25),  # Qrr=41 nC trr=35 ns, IRRM/IF=0.07
     ("infineon", "IRFR3710ZTRPBF"): dict(IF=33, didt=1e+08, VR=50, Tj=25),  # Qrr=41 nC trr=35 ns, IRRM/IF=0.07
     ("infineon", "IRFR4510"): dict(IF=38, didt=1e+08, VR=86, Tj=25),  # Qrr=47 nC trr=34 ns, IRRM/IF=0.07
+    ("infineon", "IRFR4615"): dict(IF=21, didt=1e+08, VR=100, Tj=25),  # Qrr=177 nC trr=70 ns, IRRM/IF=0.25
     ("infineon", "IRFR4620TRLPBF"): dict(IF=15, didt=1e+08, VR=100, Tj=25),  # Qrr=294 nC trr=78 ns, IRRM/IF=0.51
     ("infineon", "IRFR540Z"): dict(IF=21, didt=1e+08, VR=50, Tj=25),  # Qrr=40 nC trr=32 ns, IRRM/IF=0.12
+    ("infineon", "IRFS31N20DPBF"): dict(IF=18, didt=1e+08, VR=None, Tj=25),  # Qrr=1700 nC trr=200 ns, IRRM/IF=0.96
+    ("infineon", "IRFS31N20DTRLP"): dict(IF=18, didt=1e+08, VR=None, Tj=25),  # Qrr=1700 nC trr=200 ns, IRRM/IF=0.96
+    ("infineon", "IRFS33N15D"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=920 nC trr=150 ns, IRRM/IF=0.63
     ("infineon", "IRFS4010"): dict(IF=106, didt=1e+08, VR=85, Tj=25),  # Qrr=210 nC trr=72 ns, IRRM/IF=0.06
     ("infineon", "IRFS4010-7P"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=150 nC trr=60 ns, IRRM/IF=0.05
     ("infineon", "IRFS4010-7PPBF"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=150 nC trr=60 ns, IRRM/IF=0.05
@@ -453,6 +513,8 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRFS4115PBF"): dict(IF=62, didt=1e+08, VR=130, Tj=25),  # Qrr=300 nC trr=86 ns, IRRM/IF=0.12
     ("infineon", "IRFS4115TRL7PP"): dict(IF=63, didt=1e+08, VR=130, Tj=25),  # Qrr=271 nC trr=82 ns, IRRM/IF=0.11
     ("infineon", "IRFS4115TRLPBF"): dict(IF=62, didt=1e+08, VR=130, Tj=25),  # Qrr=300 nC trr=86 ns, IRRM/IF=0.12
+    ("infineon", "IRFS4127"): dict(IF=44, didt=1e+08, VR=100, Tj=25),  # Qrr=458 nC trr=136 ns, IRRM/IF=0.16
+    ("infineon", "IRFS4127TRLPBF"): dict(IF=44, didt=1e+08, VR=100, Tj=25),  # Qrr=458 nC trr=136 ns, IRRM/IF=0.16
     ("infineon", "IRFS4227"): dict(IF=46, didt=1e+08, VR=50, Tj=25),  # Qrr=430 nC trr=100 ns, IRRM/IF=0.19
     ("infineon", "IRFS4227TRLPBF"): dict(IF=46, didt=1e+08, VR=50, Tj=25),  # Qrr=430 nC trr=100 ns, IRRM/IF=0.19
     ("infineon", "IRFS4229"): dict(IF=26, didt=1e+08, VR=50, Tj=25),  # Qrr=840 nC trr=190 ns, IRRM/IF=0.36
@@ -474,10 +536,13 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRFS4610"): dict(IF=44, didt=1e+08, VR=85, Tj=25),  # Qrr=44 nC trr=35 ns, IRRM/IF=0.06
     ("infineon", "IRFS4615"): dict(IF=21, didt=1e+08, VR=100, Tj=25),  # Qrr=177 nC trr=70 ns, IRRM/IF=0.25
     ("infineon", "IRFS4620TRLPBF"): dict(IF=15, didt=1e+08, VR=100, Tj=25),  # Qrr=294 nC trr=78 ns, IRRM/IF=0.51
+    ("infineon", "IRFS52N15D"): dict(IF=36, didt=1e+08, VR=None, Tj=25),  # Qrr=780 nC trr=140 ns, IRRM/IF=0.32
     ("infineon", "IRFS5615"): dict(IF=21, didt=1e+08, VR=120, Tj=25),  # Qrr=312 nC trr=80 ns, IRRM/IF=0.37
     ("infineon", "IRFSL4010"): dict(IF=106, didt=1e+08, VR=85, Tj=25),  # Qrr=210 nC trr=72 ns, IRRM/IF=0.06
     ("infineon", "IRFSL4010PBF"): dict(IF=106, didt=1e+08, VR=85, Tj=25),  # Qrr=210 nC trr=72 ns, IRRM/IF=0.06
     ("infineon", "IRFSL4115"): dict(IF=62, didt=1e+08, VR=130, Tj=25),  # Qrr=300 nC trr=86 ns, IRRM/IF=0.12
+    ("infineon", "IRFSL4127"): dict(IF=44, didt=1e+08, VR=100, Tj=25),  # Qrr=458 nC trr=136 ns, IRRM/IF=0.16
+    ("infineon", "IRFSL4127PBF"): dict(IF=44, didt=1e+08, VR=100, Tj=25),  # Qrr=458 nC trr=136 ns, IRRM/IF=0.16
     ("infineon", "IRFSL4227"): dict(IF=46, didt=1e+08, VR=50, Tj=25),  # Qrr=430 nC trr=100 ns, IRRM/IF=0.19
     ("infineon", "IRFSL4310"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=82 nC trr=45 ns, IRRM/IF=0.05
     ("infineon", "IRFSL4310Z"): dict(IF=75, didt=1e+08, VR=85, Tj=25),  # Qrr=58 nC trr=40 ns, IRRM/IF=0.04
@@ -486,6 +551,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRFSL5615"): dict(IF=21, didt=1e+08, VR=120, Tj=25),  # Qrr=312 nC trr=80 ns, IRRM/IF=0.37
     ("infineon", "IRFU3710Z"): dict(IF=33, didt=1e+08, VR=50, Tj=25),  # Qrr=41 nC trr=35 ns, IRRM/IF=0.07
     ("infineon", "IRFU4510"): dict(IF=38, didt=1e+08, VR=86, Tj=25),  # Qrr=47 nC trr=34 ns, IRRM/IF=0.07
+    ("infineon", "IRFU4615"): dict(IF=21, didt=1e+08, VR=100, Tj=25),  # Qrr=177 nC trr=70 ns, IRRM/IF=0.25
     ("infineon", "IRLB4030"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
     ("infineon", "IRLB4030PBF"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
     ("infineon", "IRLB4030PBFXKMA1"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
@@ -502,6 +568,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("infineon", "IRLSL4030"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
     ("infineon", "IRLSL4030PBF"): dict(IF=110, didt=1e+08, VR=85, Tj=25),  # Qrr=88 nC trr=50 ns, IRRM/IF=0.03
     ("infineon", "IRLU3110Z"): dict(IF=38, didt=1e+08, VR=50, Tj=25),  # Qrr=42 nC trr=34 ns, IRRM/IF=0.07
+    ("infineon", "SPP15N60CFD"): dict(IF=13.4, didt=1e+08, VR=480, Tj=25),  # Qrr=1000 nC trr=147 ns, IRRM/IF=1.02
     ("nce", "NCE0240F"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=66 nC trr=42 ns, IRRM/IF=0.08
     ("nce", "NCEP0135A"): dict(IF=20, didt=5e+08, VR=None, Tj=25),  # Qrr=98 nC trr=26 ns, IRRM/IF=0.40
     ("nce", "NCEP0135AK"): dict(IF=20, didt=5e+08, VR=None, Tj=25),  # Qrr=98 nC trr=26 ns, IRRM/IF=0.40
@@ -523,8 +590,18 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "FDB150N10"): dict(IF=49, didt=1e+08, VR=None, Tj=25),  # Qrr=70 nC trr=41 ns, IRRM/IF=0.07
     ("onsemi", "FDB1D7N10CL7"): dict(IF=50, didt=3e+08, VR=None, Tj=25),  # Qrr=186 nC trr=63 ns, IRRM/IF=0.13
     ("onsemi", "FDB86135"): dict(IF=75, didt=1e+08, VR=80, Tj=25),  # Qrr=129 nC trr=72 ns, IRRM/IF=0.05
+    ("onsemi", "FDBL0150N80"): dict(IF=80, didt=1e+08, VR=64, Tj=25),  # Qrr=205 nC trr=117 ns, IRRM/IF=0.05
+    ("onsemi", "FDBL0210N80"): dict(IF=80, didt=1e+08, VR=64, Tj=25),  # Qrr=118 nC trr=83 ns, IRRM/IF=0.04
+    ("onsemi", "FDBL0330N80"): dict(IF=80, didt=1e+08, VR=64, Tj=25),  # Qrr=95 nC trr=80 ns, IRRM/IF=0.03
+    ("onsemi", "FDBL86062-F085"): dict(IF=80, didt=1e+08, VR=80, Tj=25),  # Qrr=172 nC trr=115 ns, IRRM/IF=0.04
+    ("onsemi", "FDBL86062-F085AW"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=175 nC trr=107 ns, IRRM/IF=0.04
+    ("onsemi", "FDBL86063"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=175 nC trr=107 ns, IRRM/IF=0.04
+    ("onsemi", "FDBL86063-F085"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=175 nC trr=107 ns, IRRM/IF=0.04
+    ("onsemi", "FDBL86063-F085AW"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=175 nC trr=107 ns, IRRM/IF=0.04
+    ("onsemi", "FDBL86063_F085"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=175 nC trr=107 ns, IRRM/IF=0.04
     ("onsemi", "FDBL86066-F085"): dict(IF=80, didt=3e+08, VR=None, Tj=25),  # Qrr=84 nC trr=36 ns, IRRM/IF=0.06
     ("onsemi", "FDBL86066-F085AW"): dict(IF=80, didt=3e+08, VR=None, Tj=25),  # Qrr=84 nC trr=36 ns, IRRM/IF=0.06
+    ("onsemi", "FDD86380-F085"): dict(IF=50, didt=1e+08, VR=64, Tj=25),  # Qrr=24 nC trr=36 ns, IRRM/IF=0.03
     ("onsemi", "FDH055N15A"): dict(IF=120, didt=1e+08, VR=75, Tj=25),  # Qrr=342 nC trr=105 ns, IRRM/IF=0.06
     ("onsemi", "FDMC007N08LC"): dict(IF=10, didt=3e+08, VR=None, Tj=25),  # Qrr=27 nC trr=20 ns, IRRM/IF=0.29
     ("onsemi", "FDMC008N08C"): dict(IF=10, didt=3e+08, VR=None, Tj=25),  # Qrr=27 nC trr=19 ns, IRRM/IF=0.30
@@ -547,6 +624,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "FDMS86300"): dict(IF=19, didt=1e+08, VR=None, Tj=25),  # Qrr=50 nC trr=57 ns, IRRM/IF=0.10
     ("onsemi", "FDMS86300DC"): dict(IF=24, didt=1e+08, VR=None, Tj=25),  # Qrr=42 nC trr=56 ns, IRRM/IF=0.07
     ("onsemi", "FDMS86310"): dict(IF=17, didt=1e+08, VR=None, Tj=25),  # Qrr=41 nC trr=51 ns, IRRM/IF=0.10
+    ("onsemi", "FDMS86369"): dict(IF=65, didt=1e+08, VR=64, Tj=25),  # Qrr=44 nC trr=49 ns, IRRM/IF=0.03
     ("onsemi", "FDMS8D8N15C"): dict(IF=45, didt=1e+08, VR=None, Tj=25),  # Qrr=108 nC trr=68 ns, IRRM/IF=0.08
     ("onsemi", "FDP027N08B-F102"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=112 nC trr=80 ns, IRRM/IF=0.03
     ("onsemi", "FDP032N08B-F102"): dict(IF=100, didt=1e+08, VR=40, Tj=25),  # Qrr=102 nC trr=75 ns, IRRM/IF=0.03
@@ -565,17 +643,23 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "FDPF2D3N10C"): dict(IF=100, didt=1e+08, VR=50, Tj=25),  # Qrr=191 nC trr=107 ns, IRRM/IF=0.04
     ("onsemi", "FDPF4D5N10C"): dict(IF=100, didt=1e+08, VR=50, Tj=25),  # Qrr=106 nC trr=82 ns, IRRM/IF=0.03
     ("onsemi", "FDPF8D5N10C"): dict(IF=76, didt=1e+08, VR=50, Tj=25),  # Qrr=53 nC trr=58 ns, IRRM/IF=0.03
+    ("onsemi", "FDWS86368-F085"): dict(IF=80, didt=1e+08, VR=64, Tj=25),  # Qrr=49 nC trr=58 ns, IRRM/IF=0.02
+    ("onsemi", "FDWS86368-F085H"): dict(IF=80, didt=1e+08, VR=64, Tj=25),  # Qrr=49 nC trr=58 ns, IRRM/IF=0.02
+    ("onsemi", "FDWS86369-F085"): dict(IF=65, didt=1e+08, VR=64, Tj=25),  # Qrr=44 nC trr=49 ns, IRRM/IF=0.03
     ("onsemi", "NTB011N15MC"): dict(IF=41, didt=3e+08, VR=75, Tj=25),  # Qrr=210 nC trr=49 ns, IRRM/IF=0.22
     ("onsemi", "NTB7D3N15MC"): dict(IF=62, didt=3e+08, VR=75, Tj=25),  # Qrr=247 nC trr=55 ns, IRRM/IF=0.15
+    ("onsemi", "NTBGS6D5N15MC"): dict(IF=69, didt=1e+08, VR=None, Tj=25),  # Qrr=141 nC trr=74 ns, IRRM/IF=0.06
     ("onsemi", "NTBLS002N08MC"): dict(IF=40, didt=3e+08, VR=None, Tj=25),  # Qrr=74 nC trr=35 ns, IRRM/IF=0.11
     ("onsemi", "NTBLS1D1N08H"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=234 nC trr=92 ns, IRRM/IF=0.11
     ("onsemi", "NTBLS1D5N08MC"): dict(IF=40, didt=3e+08, VR=None, Tj=25),  # Qrr=42 nC trr=19 ns, IRRM/IF=0.11
     ("onsemi", "NTBLS1D5N10MCTXG"): dict(IF=71, didt=1e+08, VR=None, Tj=25),  # Qrr=143 nC trr=110 ns, IRRM/IF=0.04
     ("onsemi", "NTBLS1D7N10MCTXG"): dict(IF=62, didt=1e+08, VR=None, Tj=25),  # Qrr=160 nC trr=98 ns, IRRM/IF=0.06
+    ("onsemi", "NTBLS4D0N15MC"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=180 nC trr=84 ns, IRRM/IF=0.06
     ("onsemi", "NTBS9D0N10MC"): dict(IF=12, didt=3e+08, VR=None, Tj=25),  # Qrr=61 nC trr=29 ns, IRRM/IF=0.37
     ("onsemi", "NTMFS002N10MCLT1G"): dict(IF=31, didt=1e+08, VR=None, Tj=25),  # Qrr=93 nC trr=73 ns, IRRM/IF=0.09
     ("onsemi", "NTMFS005N10MCLT1G"): dict(IF=17, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=56 ns, IRRM/IF=0.12
     ("onsemi", "NTMFS006N12MCT1G"): dict(IF=46, didt=3e+08, VR=None, Tj=25),  # Qrr=161 nC trr=49 ns, IRRM/IF=0.15
+    ("onsemi", "NTMFS008N12MCT1G"): dict(IF=36, didt=3e+08, VR=None, Tj=25),  # Qrr=165 nC trr=50 ns, IRRM/IF=0.20
     ("onsemi", "NTMFS010N10GTWG"): dict(IF=15, didt=3e+08, VR=None, Tj=25),  # Qrr=147 nC trr=36 ns, IRRM/IF=0.56
     ("onsemi", "NTMFS011N15MC"): dict(IF=35, didt=3e+08, VR=None, Tj=25),  # Qrr=227 nC trr=48.8 ns, IRRM/IF=0.28
     ("onsemi", "NTMFS015N10MCLT1G"): dict(IF=7, didt=3e+08, VR=None, Tj=25),  # Qrr=33 nC trr=20 ns, IRRM/IF=0.50
@@ -605,6 +689,8 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "NTMFS7D8N10GTWG"): dict(IF=24, didt=3e+08, VR=None, Tj=25),  # Qrr=177 nC trr=42 ns, IRRM/IF=0.37
     ("onsemi", "NTMFSC004N08MC"): dict(IF=44, didt=1e+08, VR=None, Tj=25),  # Qrr=50 nC trr=44 ns, IRRM/IF=0.06
     ("onsemi", "NTMFSC006N12MC"): dict(IF=44, didt=1e+09, VR=None, Tj=25),  # Qrr=350.2 nC trr=33.4 ns, IRRM/IF=0.50
+    ("onsemi", "NTMFSC010N08M7"): dict(IF=10, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=41 ns, IRRM/IF=0.23
+    ("onsemi", "NTMFSC011N08M7"): dict(IF=10, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=41 ns, IRRM/IF=0.23
     ("onsemi", "NTMFSC012N15MC"): dict(IF=44, didt=1e+09, VR=None, Tj=25),  # Qrr=559 nC trr=42.7 ns, IRRM/IF=0.62
     ("onsemi", "NTMFSC2D6N08XTWG"): dict(IF=37, didt=1e+09, VR=40, Tj=25),  # Qrr=163 nC trr=23 ns, IRRM/IF=0.40
     ("onsemi", "NTMJST2D6N08HTXG"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=84 nC trr=61 ns, IRRM/IF=0.06
@@ -612,10 +698,13 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "NTMTS002N10MCTXG"): dict(IF=46, didt=1e+08, VR=None, Tj=25),  # Qrr=44 nC trr=49 ns, IRRM/IF=0.04
     ("onsemi", "NTMTS1D5N08MC"): dict(IF=40, didt=3e+08, VR=None, Tj=25),  # Qrr=89 nC trr=39 ns, IRRM/IF=0.12
     ("onsemi", "NTMTS1D6N10MCTXG"): dict(IF=58, didt=1e+08, VR=None, Tj=25),  # Qrr=52 nC trr=54 ns, IRRM/IF=0.04
+    ("onsemi", "NTMTS4D3N15MC"): dict(IF=95, didt=1e+08, VR=None, Tj=25),  # Qrr=194 nC trr=85 ns, IRRM/IF=0.05
+    ("onsemi", "NTMTS6D0N15MC"): dict(IF=69, didt=1e+08, VR=None, Tj=25),  # Qrr=125 nC trr=72 ns, IRRM/IF=0.05
     ("onsemi", "NTMTSC002N10MCTXG"): dict(IF=46, didt=1e+08, VR=None, Tj=25),  # Qrr=44 nC trr=49 ns, IRRM/IF=0.04
     ("onsemi", "NTMTSC1D5N08MC"): dict(IF=40, didt=3e+08, VR=None, Tj=25),  # Qrr=89 nC trr=39 ns, IRRM/IF=0.12
     ("onsemi", "NTMTSC1D6N10MCTXG"): dict(IF=58, didt=1e+08, VR=None, Tj=25),  # Qrr=52 nC trr=54 ns, IRRM/IF=0.04
     ("onsemi", "NTMTSC4D2N10GTXG"): dict(IF=44, didt=3e+08, VR=None, Tj=25),  # Qrr=224 nC trr=46.7 ns, IRRM/IF=0.23
+    ("onsemi", "NTMTSC4D3N15MC"): dict(IF=95, didt=1e+08, VR=None, Tj=25),  # Qrr=194 nC trr=85 ns, IRRM/IF=0.05
     ("onsemi", "NTMYS003N08LHTWG"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=66 nC trr=57 ns, IRRM/IF=0.05
     ("onsemi", "NTMYS006N08LHTWG"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=42 ns, IRRM/IF=0.06
     ("onsemi", "NTMYS008N08LHTWG"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=36 nC trr=39 ns, IRRM/IF=0.07
@@ -627,6 +716,7 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "NTTFS5D6N08XLTAG"): dict(IF=17, didt=1e+09, VR=40, Tj=25),  # Qrr=96 nC trr=19 ns, IRRM/IF=0.63
     ("onsemi", "NVBLS1D5N10MCTXG"): dict(IF=71, didt=1e+08, VR=None, Tj=25),  # Qrr=143 nC trr=110 ns, IRRM/IF=0.04
     ("onsemi", "NVBLS1D7N10MCTXG"): dict(IF=62, didt=1e+08, VR=None, Tj=25),  # Qrr=160 nC trr=98 ns, IRRM/IF=0.06
+    ("onsemi", "NVBLS4D0N15MC"): dict(IF=80, didt=1e+08, VR=None, Tj=25),  # Qrr=180 nC trr=84 ns, IRRM/IF=0.06
     ("onsemi", "NVD6824NLT4G-UM"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=59 nC trr=38 ns, IRRM/IF=0.16
     ("onsemi", "NVDS015N15MCT4G"): dict(IF=29, didt=3e+08, VR=75, Tj=25),  # Qrr=197 nC trr=49 ns, IRRM/IF=0.29
     ("onsemi", "NVMFS005N10MCLT1G"): dict(IF=17, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=56 ns, IRRM/IF=0.12
@@ -637,10 +727,33 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "NVMFS4C302NWFET1G"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=69 nC trr=56 ns, IRRM/IF=0.09
     ("onsemi", "NVMFS4C305NET1G-YE"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=30.2 nC trr=40.2 ns, IRRM/IF=0.05
     ("onsemi", "NVMFS6D1N08HT1G"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=60 nC trr=49 ns, IRRM/IF=0.13
+    ("onsemi", "NVMFS6H800NLT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=110 nC trr=77 ns, IRRM/IF=0.06
+    ("onsemi", "NVMFS6H800NLWFT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=110 nC trr=77 ns, IRRM/IF=0.06
     ("onsemi", "NVMFS6H800NT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=82 nC trr=76 ns, IRRM/IF=0.05
     ("onsemi", "NVMFS6H800NWFT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=82 nC trr=76 ns, IRRM/IF=0.05
+    ("onsemi", "NVMFS6H801NLT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=92 nC trr=66 ns, IRRM/IF=0.06
+    ("onsemi", "NVMFS6H801NLWFT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=92 nC trr=66 ns, IRRM/IF=0.06
+    ("onsemi", "NVMFS6H801NT3G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=98 nC trr=64 ns, IRRM/IF=0.07
+    ("onsemi", "NVMFS6H818NLT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=73 nC trr=59 ns, IRRM/IF=0.05
+    ("onsemi", "NVMFS6H818NLWFT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=73 nC trr=59 ns, IRRM/IF=0.05
+    ("onsemi", "NVMFS6H824NLT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=59 nC trr=52 ns, IRRM/IF=0.05
+    ("onsemi", "NVMFS6H824NLWFT1G"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=59 nC trr=52 ns, IRRM/IF=0.05
+    ("onsemi", "NVMFS6H824NT1G"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=67 nC trr=52 ns, IRRM/IF=0.09
+    ("onsemi", "NVMFS6H824NWFT1G"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=67 nC trr=52 ns, IRRM/IF=0.09
+    ("onsemi", "NVMFS6H836NLT1G"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=42 ns, IRRM/IF=0.06
+    ("onsemi", "NVMFS6H836NLWFT1G"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=42 ns, IRRM/IF=0.06
+    ("onsemi", "NVMFS6H836NT1G"): dict(IF=25, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=43 ns, IRRM/IF=0.11
+    ("onsemi", "NVMFS6H836NT3G"): dict(IF=25, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=43 ns, IRRM/IF=0.11
+    ("onsemi", "NVMFS6H836NWFT1G"): dict(IF=25, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=43 ns, IRRM/IF=0.11
+    ("onsemi", "NVMFS6H836NWFT3G"): dict(IF=25, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=43 ns, IRRM/IF=0.11
     ("onsemi", "NVMFS6H848NLT1G"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=36 nC trr=39 ns, IRRM/IF=0.07
     ("onsemi", "NVMFS6H848NLWFT1G"): dict(IF=30, didt=1e+08, VR=None, Tj=25),  # Qrr=36 nC trr=39 ns, IRRM/IF=0.07
+    ("onsemi", "NVMFS6H848NT1G"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=41 nC trr=39 ns, IRRM/IF=0.11
+    ("onsemi", "NVMFS6H848NWFT1G"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=41 nC trr=39 ns, IRRM/IF=0.11
+    ("onsemi", "NVMFS6H852NLT1G"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=25 nC trr=32 ns, IRRM/IF=0.08
+    ("onsemi", "NVMFS6H852NLWFT1G"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=25 nC trr=32 ns, IRRM/IF=0.08
+    ("onsemi", "NVMFS6H852NT1G"): dict(IF=15, didt=1e+08, VR=None, Tj=25),  # Qrr=29 nC trr=33 ns, IRRM/IF=0.12
+    ("onsemi", "NVMFS6H852NWFT1G"): dict(IF=15, didt=1e+08, VR=None, Tj=25),  # Qrr=29 nC trr=33 ns, IRRM/IF=0.12
     ("onsemi", "NVMFSW6D1N08HT1G"): dict(IF=20, didt=1e+08, VR=None, Tj=25),  # Qrr=60 nC trr=49 ns, IRRM/IF=0.13
     ("onsemi", "NVMFWS002N10MCLT1G"): dict(IF=31, didt=1e+08, VR=None, Tj=25),  # Qrr=93 nC trr=73 ns, IRRM/IF=0.09
     ("onsemi", "NVMFWS003N10MCT1G"): dict(IF=31, didt=1e+08, VR=None, Tj=25),  # Qrr=91 nC trr=72 ns, IRRM/IF=0.09
@@ -656,6 +769,9 @@ QRR_LAYOUT_CONDITIONS = {
     ("onsemi", "NVMFWS6D2N08XT1G"): dict(IF=15, didt=1e+09, VR=64, Tj=25),  # Qrr=88 nC trr=18 ns, IRRM/IF=0.69
     ("onsemi", "NVMJST2D6N08HTXG"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=84 nC trr=61 ns, IRRM/IF=0.06
     ("onsemi", "NVMTS1D6N10MCTXG"): dict(IF=58, didt=1e+08, VR=None, Tj=25),  # Qrr=52 nC trr=54 ns, IRRM/IF=0.04
+    ("onsemi", "NVMTS4D3N15MC"): dict(IF=95, didt=1e+08, VR=None, Tj=25),  # Qrr=194 nC trr=85 ns, IRRM/IF=0.05
+    ("onsemi", "NVMTS6D0N15MC"): dict(IF=69, didt=1e+08, VR=None, Tj=25),  # Qrr=125 nC trr=72 ns, IRRM/IF=0.05
+    ("onsemi", "NVMTSC4D3N15MC"): dict(IF=95, didt=1e+08, VR=None, Tj=25),  # Qrr=194 nC trr=85 ns, IRRM/IF=0.05
     ("onsemi", "NVMYS003N08LHTWG"): dict(IF=50, didt=1e+08, VR=None, Tj=25),  # Qrr=66 nC trr=57 ns, IRRM/IF=0.05
     ("onsemi", "NVMYS005N10MCLTWG"): dict(IF=17, didt=1e+08, VR=None, Tj=25),  # Qrr=54 nC trr=56 ns, IRRM/IF=0.12
     ("onsemi", "NVMYS006N08LHTWG"): dict(IF=40, didt=1e+08, VR=None, Tj=25),  # Qrr=45 nC trr=42 ns, IRRM/IF=0.06
@@ -718,20 +834,61 @@ QRR_LAYOUT_CONDITIONS = {
     ("st", "STB34NM60ND"): dict(IF=29, didt=1e+08, VR=60, Tj=25),  # Qrr=1400 nC trr=175 ns, IRRM/IF=0.56
     ("st", "STB35N60DM2"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=570 nC trr=120 ns, IRRM/IF=0.35
     ("st", "STB36N60M6"): dict(IF=30, didt=1e+08, VR=60, Tj=25),  # Qrr=5300 nC trr=340 ns, IRRM/IF=1.05
+    ("st", "STB37N60DM2AG"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=572 nC trr=120 ns, IRRM/IF=0.35
     ("st", "STB38N65M5"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=6600 nC trr=382 ns, IRRM/IF=1.17
+    ("st", "STB41N40DM6AG"): dict(IF=41, didt=1e+08, VR=60, Tj=25),  # Qrr=440 nC trr=103 ns, IRRM/IF=0.21
+    ("st", "STB45N40DM2AG"): dict(IF=38, didt=1e+08, VR=60, Tj=25),  # Qrr=400 nC trr=95 ns, IRRM/IF=0.23
+    ("st", "STB45N50DM2AG"): dict(IF=35, didt=1e+08, VR=100, Tj=25),  # Qrr=480 nC trr=105 ns, IRRM/IF=0.27
+    ("st", "STB45N60DM2AG"): dict(IF=34, didt=1e+08, VR=60, Tj=25),  # Qrr=600 nC trr=120 ns, IRRM/IF=0.30
+    ("st", "STB45N65M5"): dict(IF=35, didt=1e+08, VR=100, Tj=25),  # Qrr=7400 nC trr=392 ns, IRRM/IF=1.08
+    ("st", "STB46N60M6"): dict(IF=36, didt=1e+08, VR=60, Tj=25),  # Qrr=2800 nC trr=267 ns, IRRM/IF=0.60
+    ("st", "STB47N50DM6AG"): dict(IF=38, didt=1e+08, VR=60, Tj=25),  # Qrr=530 nC trr=113 ns, IRRM/IF=0.25
+    ("st", "STB57N65M5"): dict(IF=42, didt=1e+08, VR=100, Tj=25),  # Qrr=8000 nC trr=418 ns, IRRM/IF=0.92
+    ("st", "STB65N045M9"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=4000 nC trr=288 ns, IRRM/IF=0.51
     ("st", "STB75NF20"): dict(IF=75, didt=1e+08, VR=100, Tj=25),  # Qrr=2180 nC trr=222 ns, IRRM/IF=0.27
+    ("st", "STB80NF10"): dict(IF=80, didt=1e+08, VR=50, Tj=150),  # Qrr=450 nC trr=106 ns, IRRM/IF=0.11
+    ("st", "STD100N10F7"): dict(IF=80, didt=1e+08, VR=80, Tj=150),  # Qrr=146 nC trr=77 ns, IRRM/IF=0.05
     ("st", "STD20NF20"): dict(IF=20, didt=1e+08, VR=50, Tj=25),  # Qrr=775 nC trr=155 ns, IRRM/IF=0.52
+    ("st", "STD40NF10"): dict(IF=50, didt=1e+08, VR=25, Tj=150),  # Qrr=250 nC trr=80 ns, IRRM/IF=0.13
     ("st", "STE40NC60"): dict(IF=40, didt=1e+08, VR=40, Tj=150),  # Qrr=15000 nC trr=685 ns, IRRM/IF=1.15
-    ("st", "STE48NM50"): dict(IF=40, didt=1e+08, VR=100, Tj=150),  # Qrr=11200 nC trr=680 ns, IRRM/IF=0.88
     ("st", "STE53NC50"): dict(IF=53, didt=1e+08, VR=70, Tj=150),  # Qrr=17860 nC trr=760 ns, IRRM/IF=0.93
-    ("st", "STE70NM60"): dict(IF=60, didt=1e+08, VR=30, Tj=150),  # Qrr=14000 nC trr=600 ns, IRRM/IF=0.80
     ("st", "STF100N10F7"): dict(IF=80, didt=1e+08, VR=80, Tj=150),  # Qrr=146 nC trr=77 ns, IRRM/IF=0.05
     ("st", "STF20NF20"): dict(IF=20, didt=1e+08, VR=50, Tj=25),  # Qrr=775 nC trr=155 ns, IRRM/IF=0.52
+    ("st", "STF33N60DM2"): dict(IF=24, didt=1e+08, VR=60, Tj=25),  # Qrr=530 nC trr=120 ns, IRRM/IF=0.38
+    ("st", "STF33N60DM6"): dict(IF=25, didt=1e+08, VR=60, Tj=25),  # Qrr=470 nC trr=105 ns, IRRM/IF=0.36
+    ("st", "STF33N60M2"): dict(IF=26, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=375 ns, IRRM/IF=1.18
+    ("st", "STF33N60M6"): dict(IF=25, didt=1e+08, VR=60, Tj=25),  # Qrr=3070 nC trr=265 ns, IRRM/IF=0.94
+    ("st", "STF34N65M5"): dict(IF=28, didt=1e+08, VR=100, Tj=25),  # Qrr=5600 nC trr=350 ns, IRRM/IF=1.15
+    ("st", "STF34NM60ND"): dict(IF=29, didt=1e+08, VR=60, Tj=25),  # Qrr=1400 nC trr=175 ns, IRRM/IF=0.56
+    ("st", "STF35N60DM2"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=572 nC trr=120 ns, IRRM/IF=0.35
+    ("st", "STF38N65M5"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=6600 nC trr=382 ns, IRRM/IF=1.17
+    ("st", "STF42N65M5"): dict(IF=33, didt=1e+08, VR=100, Tj=25),  # Qrr=7000 nC trr=400 ns, IRRM/IF=1.08
+    ("st", "STF45N65M5"): dict(IF=35, didt=1e+08, VR=100, Tj=25),  # Qrr=7400 nC trr=392 ns, IRRM/IF=1.08
+    ("st", "STF46N60M6"): dict(IF=36, didt=1e+08, VR=60, Tj=25),  # Qrr=2800 nC trr=267 ns, IRRM/IF=0.60
+    ("st", "STF57N65M5"): dict(IF=42, didt=1e+08, VR=100, Tj=25),  # Qrr=8000 nC trr=418 ns, IRRM/IF=0.92
     ("st", "STF75NF25"): dict(IF=45, didt=1e+08, VR=200, Tj=25),  # Qrr=2070 nC trr=212 ns, IRRM/IF=0.44
+    ("st", "STFW38N65M5"): dict(IF=30, didt=1e+08, VR=100, Tj=25),  # Qrr=6600 nC trr=382 ns, IRRM/IF=1.17
+    ("st", "STFW69N65M5"): dict(IF=58, didt=1e+08, VR=100, Tj=25),  # Qrr=11000 nC trr=480 ns, IRRM/IF=0.79
+    ("st", "STH150N10F7-2"): dict(IF=110, didt=1e+08, VR=80, Tj=150),  # Qrr=165 nC trr=70 ns, IRRM/IF=0.04
+    ("st", "STH240N10F7-2"): dict(IF=180, didt=1e+08, VR=64, Tj=150),  # Qrr=315 nC trr=108 ns, IRRM/IF=0.03
+    ("st", "STH240N10F7-6"): dict(IF=180, didt=1e+08, VR=64, Tj=150),  # Qrr=315 nC trr=108 ns, IRRM/IF=0.03
+    ("st", "STH270N8F7-2"): dict(IF=180, didt=1e+08, VR=64, Tj=150),  # Qrr=182 nC trr=78 ns, IRRM/IF=0.03
+    ("st", "STH270N8F7-6"): dict(IF=180, didt=1e+08, VR=64, Tj=150),  # Qrr=182 nC trr=78 ns, IRRM/IF=0.03
+    ("st", "STH30N65DM6-7AG"): dict(IF=28, didt=1e+08, VR=60, Tj=25),  # Qrr=630 nC trr=126 ns, IRRM/IF=0.37
+    ("st", "STH315N10F7-2"): dict(IF=180, didt=1e+08, VR=80, Tj=150),  # Qrr=200 nC trr=85 ns, IRRM/IF=0.03
+    ("st", "STH315N10F7-6"): dict(IF=180, didt=1e+08, VR=80, Tj=150),  # Qrr=200 nC trr=85 ns, IRRM/IF=0.03
     ("st", "STH60N099DM9-2AG"): dict(IF=27, didt=1e+08, VR=60, Tj=25),  # Qrr=800 nC trr=130 ns, IRRM/IF=0.46
+    ("st", "STH65N050DM9-7AG"): dict(IF=51, didt=1e+08, VR=150, Tj=25),  # Qrr=1200 nC trr=170 ns, IRRM/IF=0.28
+    ("st", "STHU32N65DM6AG"): dict(IF=37, didt=1e+08, VR=60, Tj=25),  # Qrr=620 nC trr=122 ns, IRRM/IF=0.28
+    ("st", "STHU60N046DM9AG"): dict(IF=54, didt=1e+08, VR=100, Tj=25),  # Qrr=1100 nC trr=162 ns, IRRM/IF=0.26
+    ("st", "STHU65N050DM9AG"): dict(IF=51, didt=1e+08, VR=150, Tj=25),  # Qrr=1200 nC trr=170 ns, IRRM/IF=0.28
+    ("st", "STHU65N110DM9AG"): dict(IF=26, didt=1e+08, VR=150, Tj=25),  # Qrr=740 nC trr=130 ns, IRRM/IF=0.44
+    ("st", "STI33N60M2"): dict(IF=26, didt=1e+08, VR=60, Tj=25),  # Qrr=5600 nC trr=375 ns, IRRM/IF=1.18
+    ("st", "STI47N60DM6AG"): dict(IF=36, didt=1e+08, VR=60, Tj=25),  # Qrr=540 nC trr=115 ns, IRRM/IF=0.27
     ("st", "STL33N60DM6"): dict(IF=25, didt=1e+08, VR=60, Tj=25),  # Qrr=470 nC trr=105 ns, IRRM/IF=0.36
     ("st", "STP100N10F7"): dict(IF=80, didt=1e+08, VR=80, Tj=150),  # Qrr=146 nC trr=77 ns, IRRM/IF=0.05
     ("st", "STP150N10F7"): dict(IF=110, didt=1e+08, VR=80, Tj=150),  # Qrr=165 nC trr=70 ns, IRRM/IF=0.04
+    ("st", "STP150N10F7AG"): dict(IF=110, didt=1e+08, VR=80, Tj=25),  # Qrr=83 nC trr=60 ns, IRRM/IF=0.03
     ("st", "STP20NF20"): dict(IF=20, didt=1e+08, VR=50, Tj=25),  # Qrr=775 nC trr=155 ns, IRRM/IF=0.52
     ("st", "STP240N10F7"): dict(IF=110, didt=1e+08, VR=80, Tj=150),  # Qrr=315 nC trr=108 ns, IRRM/IF=0.06
     ("st", "STP25N018M9"): dict(IF=55, didt=1e+08, VR=100, Tj=25),  # Qrr=900 nC trr=151 ns, IRRM/IF=0.22
