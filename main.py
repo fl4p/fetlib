@@ -92,6 +92,12 @@ def main_yaml():
                              'harvest. Results persist in data/prices-lib.sqlite3 (~7d fresh). '
                              'Without this flag the price_usd column is still filled from '
                              'whatever that store already holds (stale records suppressed).')
+    parser.add_argument('--price-qty', type=int, metavar='N',
+                        help='qty basis for the price_usd/price_src columns (cheapest offer '
+                             'evaluated at the largest ladder break <= max(N, MOQ), then x '
+                             'parallel count per row). Overrides the YAML priceQty knob '
+                             '(default 100) for this run -- no re-fetch needed, the stored '
+                             'ladders are just read at a different break.')
     parser.add_argument('--qrr-op', action='store_true',
                         help='force syncFet.qrrOperatingPoint on for this run: book the LS '
                              "reverse-recovery loss on the Qrr predicted at THIS converter's "
@@ -138,7 +144,10 @@ def main_yaml():
                        for p in conf['loadPoints']
                    ],
                    q=cargs.q,
-                   price_qty=int(conf.get('priceQty', 100)),
+                   # CLI --price-qty overrides the YAML knob (both rankings can be
+                   # A/B'd at different qty bases from one config, no re-fetch)
+                   price_qty=cargs.price_qty if cargs.price_qty is not None
+                             else int(conf.get('priceQty', 100)),
                 )
 
     # CLI override for the YAML knob, so the two rankings can be A/B'd from one config.
