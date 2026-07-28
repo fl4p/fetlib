@@ -555,6 +555,29 @@ def test_keyword_pool_retires_auth_bad_key_and_requeues(monkeypatch, db):
     assert k1.dead and not k2.dead
 
 
+def test_search_raw_failing_rebuild_is_auth_failed(monkeypatch):
+    # round-5 follow-up: if the mid-run client REBUILD itself raises (refresh/OAuth/
+    # network), that is proof of a broken key -- it must surface as DkAuthFailed
+    # (global retirement + job re-queue), not as a generic per-job error
+    import dslib.prices.digikey_api as dk
+    from digikey.v4.productinformation.rest import ApiException
+
+    key = _FakeKey('k1')
+
+    class FakeApi:
+        def keyword_search_with_http_info(self, *a, **kw):
+            raise ApiException(status=401, reason='Unauthorized')
+
+    key.client = {'api': FakeApi(), 'auth': 'Bearer x'}
+
+    def broken_rebuild(k):
+        raise RuntimeError('refresh token rejected')
+
+    monkeypatch.setattr(dk, '_build_client', broken_rebuild)
+    with pytest.raises(dk.DkAuthFailed):
+        dk._dk_keyword_search_raw('X1', key=key)
+
+
 # ------------------------------------------------------------------ history
 def test_history_appends_changes_only_and_samples_stock_at_changes(tmp_path):
     from dslib.prices.history import read_history, record_history

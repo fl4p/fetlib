@@ -182,7 +182,14 @@ def _dk_keyword_search_raw(mpn: str, currency: str = 'USD',
             if e.status == 401:
                 if not retried_auth:
                     retried_auth = True   # access token expired mid-run: rebuild, retry
-                    _build_client(key)
+                    try:
+                        _build_client(key)
+                    except Exception as be:
+                        # a FAILING rebuild (refresh/OAuth/network) is itself proof the
+                        # key is broken for this run -- surfacing it generically would
+                        # book the JOB as an error and leave the bad key draining the
+                        # queue (round-5 follow-up)
+                        raise DkAuthFailed(mpn, key.client_id) from be
                     continue
                 raise DkAuthFailed(mpn, key.client_id) from e
             if e.status == 429 and not retried_burst:
@@ -509,7 +516,15 @@ def _batch_phase(todo: List[Tuple[str, str]], keys: List[_Key], currency: str,
                     continue
                 if status == 401 and key.label not in auth_retried:
                     auth_retried.add(key.label)  # token expiry: one rebuild, retry
-                    _build_client(key)
+                    try:
+                        _build_client(key)
+                    except Exception as be:
+                        # rebuild failure = broken auth: retire GLOBALLY (keyword
+                        # would only re-prove it) instead of aborting the phase
+                        print('digikey batch: key %s client rebuild failed, retiring: '
+                              '%s' % (key.label, be))
+                        key.dead = True
+                        batch_keys.pop(0)
                     continue
                 if status in (401, 403, 404):
                     # 403/404 = endpoint absent/forbidden for this app; second 401 =
