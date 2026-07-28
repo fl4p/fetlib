@@ -35,6 +35,10 @@ nan = math.nan
     # bare 'C', values >= 100: identical under lost-'n' and lost-'µ' readings -> keep
     ('C', nan, 600.0, nan, 'C'),           # IXFN150N10's band-converted sibling
     ('C', 0.35, 0.5, 350.0, 'C'),          # bare 'C' in band: convert, unit NOT upgraded
+    # whitespace-padded bare 'C' is the same mangle (review 2026-07-28: it used to
+    # bypass the whole three-band block — silent pass-through of ambiguous values)
+    (' C', 0.35, 0.5, 350.0, ' C'),        # padded, in band: convert like 'C'
+    ('C ', nan, 600.0, nan, 'C '),         # padded, >= 100: keep like 'C'
 ])
 def test_qrr_unit_scale(unit, typ, max_, want_typ, want_unit):
     f = Field('Qrr', min=nan, typ=typ, max=max_, unit=unit)
@@ -45,17 +49,20 @@ def test_qrr_unit_scale(unit, typ, max_, want_typ, want_unit):
     assert f.unit == want_unit
 
 
+@pytest.mark.parametrize('unit', ['C', 'C ', ' C', 'c '])
 @pytest.mark.parametrize('typ,max_', [
     (1.3, 2.0),    # IRFB38N20D's raw text-layer values: nC and µC readings both plausible
     (35.0, nan),   # plausible as nC, absurd as µC-band -> still ambiguous vs lost-'n'
     (0.52, 1.2),   # mixed: one stat in the µ band, one outside
 ])
-def test_qrr_bare_c_ambiguous_refuses(typ, max_):
+def test_qrr_bare_c_ambiguous_refuses(typ, max_, unit):
     """A bare 'C' whose scale cannot be established must REFUSE, not pass through:
     absence of evidence must never encode absence of the problem. A missing Qrr is
-    recoverable; a plausible 1000x one is not."""
+    recoverable; a plausible 1000x one is not. Whitespace-padded spellings included:
+    ' C' used to slip past the raw-unit comparison and pass ambiguous values through
+    silently (review 2026-07-28)."""
     with pytest.raises(ValueError, match='ambiguous-scale'):
-        Field('Qrr', min=nan, typ=typ, max=max_, unit='C')
+        Field('Qrr', min=nan, typ=typ, max=max_, unit=unit)
 
 
 def test_micro_mangle_claim_stays_qrr_specific():
@@ -79,7 +86,15 @@ def test_repair_classifier_in_lock_step_with_field():
         assert Field('Qrr', nan, 0.5, nan, unit=unit).unit == 'nC'
     for unit in ('nC', 'nc', None, ''):
         assert classify('Qrr', unit) == GOOD, unit
-    assert classify('Qrr', 'C') == BARE_C
+    for unit in ('C', ' C', 'C '):
+        assert classify('Qrr', unit) == BARE_C, unit
+        # and Field agrees the padded spellings are bare-C: ambiguous values refuse
+        try:
+            Field('Qrr', nan, 1.3, 2.0, unit=unit)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('%r must refuse ambiguous bare-C values' % unit)
     for stats, action in ((dict(typ=0.6), C_CONVERT), (dict(max=600.0), C_KEEP),
                           (dict(typ=1.3, max=2.0), C_DROP)):
         assert _bare_c_action(_F(**stats)) == action, stats

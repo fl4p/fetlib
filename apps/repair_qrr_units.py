@@ -119,7 +119,7 @@ def _calibrate_classifier():
     """Known-good must pass through, known-bad must convert — refuse to run otherwise."""
     bad = [('PC', MICRO), ('UC', MICRO), ('µC', MICRO), ('μ C', MICRO), ('uc', MICRO),
            ('PSC', MICRO), ('WC', MICRO), ('mC', MICRO),
-           ('C', BARE_C), ('c', BARE_C)]
+           ('C', BARE_C), ('c', BARE_C), (' C', BARE_C), ('C ', BARE_C)]
     good = [('nC', GOOD), ('nc', GOOD), (None, GOOD), ('', GOOD), ('  nC', GOOD)]
     for unit, want in bad + good:
         got = classify('Qrr', unit)

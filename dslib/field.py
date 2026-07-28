@@ -504,12 +504,19 @@ class Field():
 
         mtm = (min, typ, max)
 
-        if symbol == 'Qrr' and (not unit or unit.lower() == 'c'):
+        if symbol == 'Qrr' and (not unit or (_u and _u.lower() == 'c')):
             # fix Qrr in uC -> nC: the micro glyph was dropped entirely, leaving no unit
             # or a bare 'C'. The 0.1-0.9 band is deliberately NARROW and deliberately NOT
             # a general magnitude guess: a Qrr there is implausibly small as nC and
             # plausible as uC. (Known micro spellings never reach this — they were
             # converted on the unit above, band or no band.)
+            # Compared on _u, the whitespace-STRIPPED spelling, like the micro set: a
+            # padded ' C' is the same mangle as 'C' and used to bypass both the band
+            # conversion and the refusal below — the exact silent-1000x pass-through
+            # this block exists to kill, escaping via a space (review 2026-07-28; the
+            # repair script's classify() already stripped, so the two had diverged).
+            # `unit` cannot have been rewritten by an earlier block here: a rewrite
+            # rewrites to 'nC'/'pF'/'mΩ', none of which strip to 'c'.
             if sum(math.isnan(v) or 0.1 < v < 0.9 for v in mtm) == 3:
                 min *= 1e3
                 typ *= 1e3
