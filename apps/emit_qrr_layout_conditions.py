@@ -186,8 +186,34 @@ def iter_blocks(body):
         # lost-micro class) matches no prefix and stays UNSCALED, so those sheets keep
         # refusing instead of guessing a magnitude.
         u = re.findall(r'([nuµμ])\s*C(?![a-zA-Z])', line)
-        if u and u[-1] in 'uµμ':
-            qv = [x * 1e3 for x in qv]
+        scale = 1e3 if u and u[-1] in 'uµμ' else 1.0
+        qv = [x * scale for x in qv]
+        if not qv:
+            # IR/AUIR layout: the label line carries only symbol+name+unit, and the
+            # value rows sit ABOVE and BELOW it, one per Tj, each self-tagged:
+            #
+            #         --- 180 ---   TJ = 25 C    VDD = 200V     <- trr @25
+            #   trr   Reverse Recovery Time   ns
+            #         --- 200 ---   TJ = 125 C   IF = 56A,      <- trr @125
+            #         --- 1480 ---  TJ = 25 C    di/dt=100A/us  <- Qrr @25
+            #   Qrr   Reverse Recovery Charge  nC
+            #         --- 2260 ---  TJ = 125 C                  <- Qrr @125
+            #
+            # One test condition, spread vertically over the section (the VDD row sits
+            # a line ABOVE the trr label, outside the normal window). Yield one
+            # candidate per Tj-tagged Qrr row -- select_block() then picks the row that
+            # prints the DB's value, the Tj attribution follows that row for free, and
+            # the trr co-match compares against the SAME-Tj trr row only. ~150 parts
+            # per harvest ('no block prints the DB value') are this layout.
+            ir = _ir_rows(lines, i, lo, scale)
+            if ir:
+                for cand in ir:
+                    yield cand
+                continue
+            # no IR rows either: fall through to the plain yield -- an empty
+            # qrr_seen block still carries conditions, which is all the hand-read
+            # calibration sheets (IAU*) have on this line, and select_block simply
+            # never value-matches it.
         tv = []
         for j in range(lo, hi):
             if RE_TRR_ROW.search(lines[j]):
@@ -198,6 +224,58 @@ def iter_blocks(body):
                     Tj=_f(t.group(1)) if t else 25.0,
                     qrr_seen=qv, trr_seen=tv),
                [re.sub(r'\s+', ' ', x).strip() for x in lines[lo:hi] if x.strip()])
+
+
+# An IR value row: optional dash placeholders (min), one or two numbers (typ [max]),
+# dashes, then the row's own Tj tag. Anchored so label rows ('IRRM Reverse Recovery
+# Current --- 16 --- A TJ = 25 C') cannot match: only whitespace/dashes may precede the
+# first number.
+RE_IR_VALROW = re.compile(
+    r'^\s*[–—-]*\s*(?P<typ>\d+(?:[.,]\d+)?)(?:\s+(?P<max>\d+(?:[.,]\d+)?))?'
+    r'\s*[–—-]*\s*TJ\s*=\s*(?P<tj>\d+(?:[.,]\d+)?)\s*°?\s*C', re.IGNORECASE)
+
+
+def _ir_rows(lines, i, lo, scale):
+    """Candidates for the IR values-above-the-label layout; [] when it does not hold.
+
+    `i` is the Qrr label line, `lo` the window start (the trr label, when the upward
+    scan found one). Qrr's value rows are the TJ-tagged rows at i-1/i+1; trr's are the
+    ones adjacent to its label, excluding Qrr's. Conditions are searched across the
+    whole section INCLUDING the row above the trr label (the VDD/VR row) -- but never
+    Tj, which only ever comes off the matched row's own tag."""
+    def valrow(k, taken=()):
+        if k < 0 or k >= len(lines) or k in taken:
+            return None
+        m = RE_IR_VALROW.match(lines[k])
+        if not m:
+            return None
+        vals = [_f(m['typ'])] + ([_f(m['max'])] if m['max'] else [])
+        return k, _f(m['tj']), vals
+
+    # the charge-unit scale applies to Qrr rows ONLY -- trr rows are ns regardless
+    q_rows = [(k, tj, [x * scale for x in vals])
+              for r in (valrow(i - 1), valrow(i + 1)) if r for k, tj, vals in [r]]
+    if not q_rows:
+        return []
+    t_label = lo if lo != i and RE_TRR_ROW.search(lines[lo]) else None
+    q_taken = {r[0] for r in q_rows}
+    t_rows = ([r for r in (valrow(t_label - 1, q_taken), valrow(t_label + 1, q_taken))
+               if r] if t_label is not None else [])
+    sec_lo = max(0, (t_label - 1) if t_label is not None else i - 1)
+    flat = re.sub(r'[ \t]+', ' ', '\n'.join(lines[sec_lo:i + 2]))
+    d, f_, v = RE_DIDT.search(flat), RE_IF.search(flat), RE_VR.search(flat)
+    if not (d and f_):
+        return []
+    block = [re.sub(r'\s+', ' ', x).strip() for x in lines[sec_lo:i + 2] if x.strip()]
+    out = []
+    for _k, tj, vals in q_rows:
+        # trr values are only trusted from the row tagged with the SAME Tj; without
+        # one the co-match is skipped, never satisfied by the other Tj's time.
+        tv = [x for r in t_rows if r[1] == tj for x in r[2]]
+        out.append((dict(IF=abs(_f(f_.group(1))), didt=abs(_f(d.group(1))) * 1e6,
+                         VR=_f(v.group(1)) if v else None,
+                         Tj=tj, qrr_seen=vals, trr_seen=tv), block))
+    return out
 
 
 def calibrate():

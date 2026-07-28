@@ -167,6 +167,74 @@ def test_bare_c_unit_is_not_scaled():
     assert c is None and why == "Qrr value mismatch (no block prints the DB value)"
 
 
+# The IR/AUIR layout, verbatim shape of infineon/IRFP4768PBF: label lines carry no
+# values; value rows sit above/below, one per Tj, self-tagged; ONE test condition is
+# spread vertically over the section, with VDD on the row ABOVE the trr label.
+IR_SECTION = "\n".join([
+    "                    ––– 180 –––   TJ = 25°C     VDD = 200V",
+    "trr    Reverse Recovery Time                ns",
+    "                    ––– 200 –––   TJ = 125°C    IF = 56A,",
+    "                    ––– 1480 –––  TJ = 25°C  di/dt = 100A/µs",
+    "Qrr    Reverse Recovery Charge              nC",
+    "                    ––– 2260 –––  TJ = 125°C",
+    "IRRM   Reverse Recovery Current   –––  16  –––  A TJ = 25°C",
+])
+
+
+def test_ir_layout_yields_one_candidate_per_tj_row():
+    blocks = gen.extract_all_blocks(IR_SECTION)
+    assert [(c["Tj"], c["qrr_seen"]) for c, _ in blocks] == [
+        (25.0, [1480.0]), (125.0, [2260.0])]
+    # same-Tj trr attribution: 180@25, 200@125 -- never the other row's time
+    assert [(c["Tj"], c["trr_seen"]) for c, _ in blocks] == [
+        (25.0, [180.0]), (125.0, [200.0])]
+    # the VDD row above the trr label is part of the section's condition cell
+    assert all(c["IF"] == 56 and c["didt"] == 100e6 and c["VR"] == 200
+               for c, _ in blocks)
+
+
+def test_ir_layout_tj_follows_the_matched_row():
+    blocks = gen.extract_all_blocks(IR_SECTION)
+    c, why = gen.select_block(blocks, qrr=1480, trr=180)
+    assert why is None and c["Tj"] == 25.0
+    c, why = gen.select_block(blocks, qrr=2260, trr=200)
+    assert why is None and c["Tj"] == 125.0
+
+
+def test_ir_layout_same_tj_trr_comatch_refuses_a_cross_tj_pair():
+    # DB (Qrr@25, trr@125) is an inconsistent pair; the co-match against the SAME-Tj
+    # trr row must refuse it rather than let the 125C time vouch for the 25C charge.
+    c, why = gen.select_block(gen.extract_all_blocks(IR_SECTION), qrr=1480, trr=200)
+    assert c is None and why == "trr value mismatch"
+
+
+def test_ir_layout_typ_max_rows():
+    # AUIRFP4110 shape: two numbers per row (typ max)
+    sheet = "\n".join([
+        "            ––– 50 80    TJ = 25°C    VDD = 75V",
+        "trr    Reverse Recovery Time     ns",
+        "            ––– 60 90    TJ = 125°C   IF = 75A,",
+        "            ––– 94 140   TJ = 25°C di/dt = 100A/µs",
+        "Qrr    Reverse Recovery Charge   nC",
+        "            ––– 140 210  TJ = 125°C",
+    ])
+    c, why = gen.select_block(gen.extract_all_blocks(sheet), qrr=94, trr=50)
+    assert why is None
+    assert c["Tj"] == 25.0 and c["IF"] == 75 and c["qrr_seen"] == [94.0, 140.0]
+
+
+def test_label_row_with_values_never_takes_the_ir_path():
+    # A normal sheet whose label line prints the values must be untouched by the IR
+    # parser even if a TJ-tagged row happens to sit nearby.
+    sheet = "\n".join([
+        "trr Reverse recovery time IF = 20 A, di/dt = 100 A/us - 35 ns",
+        "Qrr Reverse recovery charge - 65 nC",
+        "  ––– 999 –––  TJ = 125°C",
+    ])
+    blocks = gen.extract_all_blocks(sheet)
+    assert len(blocks) == 1 and blocks[0][0]["qrr_seen"] == [65.0]
+
+
 def test_empty_sheet_is_refused_not_matched():
     c, why = gen.select_block([], qrr=65, trr=35)
     assert c is None and why == "no recovery block in layout text"
