@@ -39,7 +39,9 @@ CREDS_GLOB = os.path.realpath(os.path.join(os.path.dirname(__file__),
                                            '..', '..', 'data')) + '/.digikey-api*'
 _STORAGE_BASE = os.path.realpath(os.path.join(os.path.dirname(__file__), '..'))
 
-_env_lock = threading.Lock()  # SDK TokenHandler reads process-global env
+_env_lock = threading.Lock()  # serializes client construction: the interactive OAuth
+#                               flow binds the localhost callback port (creds are
+#                               passed to TokenHandler directly, NOT via env)
 
 
 class DkAuthFailed(RuntimeError):
@@ -124,9 +126,11 @@ def discover_keys() -> List[_Key]:
 
 
 def _build_client(key: _Key) -> None:
-    """(Re)build the per-key API client. Serialized via _env_lock because the SDK's
-    TokenHandler reads env; may run the interactive OAuth flow (browser) on a key's
-    first ever use. A 401 later (access token expired, ~30 min) re-enters here."""
+    """(Re)build the per-key API client. Creds/storage are passed DIRECTLY to
+    TokenHandler (no env mutation); construction is still serialized via _env_lock
+    because a key's first ever use runs the interactive OAuth flow (browser), which
+    binds the localhost callback port. A 401 later (access token expired, ~30 min)
+    re-enters here."""
     import digikey.oauth.oauth2
     import digikey.v4.productinformation as dpi
     import digikey.v4.batchproductdetails as dbp
@@ -412,7 +416,7 @@ def parse_digikey_batch(mfr: str, mpn: str, raw: dict,
 
     Batch details are FLAT (one entry per DigiKey SKU, no variations array). Match
     tiers mirror the keyword path minus base_product_number (absent here): MPN
-    equality, then non-digit suffix extension; manufacturer must match. Returns None
+    equality, then reviewed-packaging-suffix extension; manufacturer must match. Returns None
     when nothing matches -- the batch phase NEVER writes negative records (its error
     list does not name the failing MPN reliably), unmatched parts fall through to the
     keyword path which owns catalog_miss semantics."""
@@ -632,15 +636,19 @@ def fetch_digikey_prices(parts: List[Tuple[str, str]], currency: str = 'USD',
     # freshness gate matches on the REQUESTED currency: a USD query that DigiKey
     # answered in EUR lives under the (..., 'EUR') key, and probing only the
     # (..., 'USD') key re-spent quota on that part every run inside max_age
+    from dslib.prices import norm_mpn
     dk_by_part: Dict[Tuple[str, str], List[PartOffers]] = {}
     for rec in prices_db.load().values():
         if rec.distributor == DIGIKEY:
-            dk_by_part.setdefault((rec.mfr, rec.mpn), []).append(rec)
+            # normalized like the PriceLookup join: a discovery spelling change
+            # across runs ('BSC070N10NS3G' stored, 'BSC070N10NS3 G' ranked now)
+            # must not re-spend quota on an already-fresh part
+            dk_by_part.setdefault((rec.mfr, norm_mpn(rec.mpn)), []).append(rec)
 
     todo = []
     fresh = []
     for mfr, mpn in parts:
-        existing = [r for r in dk_by_part.get((mfr, mpn), ())
+        existing = [r for r in dk_by_part.get((mfr, norm_mpn(mpn)), ())
                     if (getattr(r, 'requested_currency', None) or r.currency) == currency
                     and (now - r.fetched_at) <= max_age]
         if existing:

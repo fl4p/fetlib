@@ -158,13 +158,14 @@ def test_dk_mfr_mismatch_is_indeterminate_never_catalog_miss():
 
 def test_dk_suffix_fallback_allowlist_only():
     from dslib.prices.digikey_api import _suffix_extends_mpn
-    # known packaging suffixes and separator-led carrier codes extend the MPN
+    # only COMPLETE reviewed packaging suffixes extend the MPN (no generic rules)
     assert _suffix_extends_mpn('NTMFS5C628NLT1G', 'NTMFS5C628NL')
     assert _suffix_extends_mpn('SIR104LDP-T1-RE3', 'SIR104LDP')
     assert _suffix_extends_mpn('IRFB4110TRPBF', 'IRFB4110')
-    # digit continuations and bare letter continuations are DIFFERENT parts
+    # digit, letter AND unknown separator-led continuations are DIFFERENT parts
     assert not _suffix_extends_mpn('X10', 'X1')
     assert not _suffix_extends_mpn('X1A', 'X1')     # re-review P1: not a variant
+    assert not _suffix_extends_mpn('X1-A', 'X1')    # round-3 P1: separator branch gone
     assert not _suffix_extends_mpn('IRFB4110G', 'IRFB4110')
 
 
@@ -716,6 +717,17 @@ def test_fresh_gate_matches_requested_currency_after_substitution(monkeypatch, d
     db.add([eur])
 
     n = dk.fetch_digikey_prices([('infineon', 'X1')])  # USD run: must fresh-skip
+    assert n['fresh_skip'] == 1 and n.get('fetched', 0) == 0
+
+
+def test_fresh_gate_normalizes_mpn_spelling(monkeypatch, db, tmp_path):
+    # a stored no-space record must satisfy the freshness gate for the spaced ranked
+    # spelling -- otherwise a discovery spelling change re-spends quota inside max_age
+    import dslib.prices.digikey_api as dk
+    monkeypatch.setattr(dk, 'prices_db', db)
+    monkeypatch.setattr('dslib.prices.history._PATH', str(tmp_path / 'h.sqlite3'))
+    db.add([_rec(mpn='BSC070N10NS3G', offers=[_offer([(1, 1.0)])])])
+    n = dk.fetch_digikey_prices([('infineon', 'BSC070N10NS3 G')])
     assert n['fresh_skip'] == 1 and n.get('fetched', 0) == 0
 
 

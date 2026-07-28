@@ -2,8 +2,9 @@
 
 Store: `prices_db` -- one `PartOffers` record per (mfr, mpn, distributor, currency),
 `data/prices-lib.sqlite3`. Latest snapshot only (docs/Parts Prices.md's date index is
-realized by `fetched_at` inside the record, not by exploding rows); price history, if
-ever wanted, is an append-only side table, not this store.
+realized by `fetched_at` inside the record, not by exploding rows); price HISTORY is
+the append-only side table in dslib/prices/history.py (`data/prices-history.sqlite3`),
+written by both fetchers after every store write and healed on fresh-skip.
 
 Guard semantics (deliberate, keep them):
 - absent key            = never fetched. Distinct from every negative state.
@@ -47,8 +48,8 @@ def norm_mpn(mpn: str) -> str:
     discovery disagree on both -- LCSC lists 'BSC070N10NS3G' where Infineon
     discovery has 'BSC070N10NS3 G', and 'aot412' vs 'AOT412' (48 uniquely-mapping
     live keys never filled a CSV row before this). Store keys keep the RAW MPN;
-    only lookups and match tiers normalize."""
-    return ''.join(mpn.split()).lower()
+    only lookups, freshness gates and match tiers normalize."""
+    return ''.join(mpn.split()).casefold()
 
 
 class Offer:
@@ -171,10 +172,12 @@ class PriceLookup:
     """Read-side join for CSV row building: one prices_db.load(), then dict lookups.
 
     Two counter families, kept apart on purpose (a hit must not hide that a stale or
-    foreign-currency record was ALSO skipped for the same part):
-    - query outcomes: every get() is exactly one of hit / no-record / one
+    foreign-currency record was ALSO skipped for the same part), and get() is
+    MEMOIZED per (mfr, mpn) so both families count DISTINCT PARTS -- repeated
+    lookups (the staged-HS loop is O(n^2)) are dict hits and tick nothing:
+    - query outcomes: each distinct part is exactly one of hit / no-record / one
       most-specific no-price reason;
-    - record-level skips: every record excluded from consideration is counted here,
+    - record-level skips: every record excluded from a distinct part's evaluation,
       on hits and misses alike.
     get() returns None for absent / negative-status / under-ladder parts -- never 0,
     and never a value from another currency.
