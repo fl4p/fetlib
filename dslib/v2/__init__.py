@@ -21,6 +21,7 @@ import hashlib
 import math
 import os
 import re
+import threading
 import warnings
 from typing import Optional
 
@@ -51,7 +52,7 @@ _V2_DEP_SOURCES = (
 )
 
 
-def v2_code_salt():
+def _compute_v2_code_salt():
     """Cache salt covering the code that *derives* the result.
 
     ``hash_func_code=True`` only hashes ``parse_datasheet``'s own source, so
@@ -73,8 +74,8 @@ def v2_code_salt():
     that cannot be read would silently narrow the key and reintroduce this bug,
     so it has to be louder than a cache miss, not quieter.
 
-    Callable so decoration doesn't force ``expr``'s lazy regex tables
-    (~1.7 s of regex.compile) at import time.
+    Not called directly — go through ``v2_code_salt()``, which pins the result
+    for the process. This function reads the files LIVE every time.
     """
     # Private, but same project. Memoized by (path, mtime, size), so once warm
     # this is a stat per file per call rather than a re-hash.
@@ -91,6 +92,47 @@ def v2_code_salt():
     # otherwise be invisible to the cache key — one backend's results would be
     # served for the other's.
     return 'v2-src:' + sig, DEFAULT_BACKEND, get_field_detect_regex('any')
+
+
+_V2_CODE_SIG = None
+_v2_code_sig_lock = threading.Lock()
+
+
+def v2_code_salt():
+    """The v2 code generation THIS PROCESS is running. Snapshot, not a live read.
+
+    Same reason ``field_repr_salt`` and ``chart_digitizer_salt`` snapshot theirs, and
+    the same failure they name: a long-lived process still running the OLD code must
+    not observe a concurrent on-disk edit and write its old results under the new
+    generation's key. That is not hypothetical here — this repo is routinely worked by
+    several agents at once. Measured on 2026-07-28: a full run started 21:20, another
+    session saved ``dslib/v2/__init__.py`` at 21:57 and ``tables.py`` at 22:20 and
+    again at 22:31, and because the salt was resolved live on every call, the key moved
+    THREE times mid-run. Each move orphaned everything parsed up to that point (~1,670
+    entries by the first flip alone) and the same PDFs were re-parsed under the next
+    generation. The v2 cache dir had accumulated ten generations for a ~3k corpus.
+
+    A revert is a second flip, not a return: entries written under the interim
+    generation stay orphaned even once the file is byte-identical again.
+
+    LAZY-once rather than computed at import, unlike the two siblings, because the
+    salt folds in ``get_field_detect_regex('any')`` and forcing ``expr``'s regex
+    tables at import costs ~1.7 s of ``regex.compile`` for every process that merely
+    imports ``dslib.v2`` (the parts-DB-only tools never parse). The residual window is
+    therefore first-call rather than import: an edit landing between interpreter start
+    and the first ``parse_datasheet`` is still picked up. That window is the one this
+    cache cannot close without paying the import cost, and it is a fraction of a run
+    instead of all of it.
+    """
+    global _V2_CODE_SIG
+    # _compute_v2_code_salt returns a tuple, never None, so None is an unambiguous
+    # "not yet computed" — a failed compute RAISES (see the unreadable-dependency note
+    # there) rather than caching a narrowed key.
+    if _V2_CODE_SIG is None:
+        with _v2_code_sig_lock:
+            if _V2_CODE_SIG is None:
+                _V2_CODE_SIG = _compute_v2_code_salt()
+    return _V2_CODE_SIG
 
 
 def _mfr_mpn_from_path(pdf_path: str):
