@@ -82,6 +82,17 @@ def main_yaml():
     parser.add_argument('--no-cache', action='store_true')
     parser.add_argument('--no-ocr', action='store_true')
     parser.add_argument('--no-download', action='store_true')
+    parser.add_argument('--no-discover', action='store_true',
+                        help='skip the manufacturer scrapers: take the candidate parts from '
+                             'parts_db (their stored discovered specs) instead of re-running '
+                             'discovery. Combine with --no-parse for a fully offline CSV '
+                             're-emit from the DBs.')
+    parser.add_argument('--no-parse', action='store_true',
+                        help='do NOT parse any PDF: build each record from manual overrides, '
+                             "the stored datasheets_db fields, and discovery/vendor specs "
+                             'only. Fast DB-only CSV re-emit. Parts with no stored datasheet '
+                             'record get just their discovered specs (and an error note). '
+                             'Implies no download and no OCR/tabular work.')
     parser.add_argument('--tabular-harvest', action='store_true',
                         help='run Tabula even when text+v2 already satisfy need_symbols '
                              '(restores pre-2026-07 opportunistic harvesting of non-needed '
@@ -265,7 +276,12 @@ async def _discover_and_close_browser(no_obsolete):
 
 def run(args: RunArgs, cargs, name):
 
-    parts = asyncio.run(_discover_and_close_browser(no_obsolete=not args.includeObsolete))
+    if cargs.no_discover:
+        # offline: candidate list is the stored discovered specs, no scrapers.
+        parts = [p.discovered for p in dslib.store.parts_db.load().values() if p.discovered]
+        print('Loaded', len(parts), 'parts from parts_db (--no-discover, offline)')
+    else:
+        parts = asyncio.run(_discover_and_close_browser(no_obsolete=not args.includeObsolete))
     print('Discovered', len(parts), 'parts from manufacturers:', ', '.join(sorted(set(p.mfr for p in parts))))
     # print('all parts:', ','.join(sorted(set(p.mpn for p in parts))))
 
@@ -383,7 +399,7 @@ def run(args: RunArgs, cargs, name):
 
 
 def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False,
-                           tabular_harvest=False):
+                           tabular_harvest=False, no_parse=False):
     mfr = part.mfr
     mpn = part.mpn
     ds_url = part.ds_url
@@ -421,6 +437,28 @@ def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr,
         ld_keys = ld.keys() if ld else None
         if ld_keys:
             need_symbols = subsctract_needed_symbols(need_symbols, ld_keys, copy=True)
+
+    if no_parse:
+        # DB-only mode: no download, no PDF parsing. Pull whatever was previously
+        # parsed out of datasheets_db and let manual overrides (added above, higher
+        # priority) and discovery specs (added below) fill around it.
+        try:
+            ld = dslib.store.datasheets_db.load_obj(part)
+        except Exception:
+            ld = None
+        if ld is not None:
+            # carry the parse-time datestamps so the date/dateC CSV columns fill,
+            # mirroring the warm-parse path below.
+            ds.timestamp = ld.timestamp
+            ds.date_from_meta = ld.date_from_meta
+            ds.date_from_text = ld.date_from_text
+            ds.add_multiple(ld.all_fields())
+        else:
+            ds.errors.append('no stored datasheet fields (--no-parse)')
+        ds.add_multiple(part.specs.fields())
+        for sym, typ in ff.items():
+            ds.add(Field(sym, min=math.nan, typ=typ, max=math.nan))
+        return ds
 
     if not os.path.exists(ds_path) and not no_download:
         asyncio.run(fetch_datasheet(ds_url, ds_path, mfr=mfr, mpn=mpn))
@@ -606,7 +644,8 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
         parts_shuffled = list(parts)
         random.shuffle(parts_shuffled)
         jobs = {(p.mfr, p.mpn): (compile_part_datasheet, p, need_symbols, args.no_cache, args.no_ocr,
-                                 args.no_download, args.get('tabular_harvest', False))
+                                 args.no_download, args.get('tabular_harvest', False),
+                                 args.get('no_parse', False))
                 for p in
                 parts_shuffled}
         results = run_parallel(jobs, int(args.j), 'multiprocessing', verbose=0)

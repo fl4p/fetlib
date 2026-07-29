@@ -113,9 +113,13 @@ class MosfetBasicSpecs():
 
     @property
     def isGaN(self):
-        if self.substrate is None:
+        # getattr guard: parts_db holds pickled specs, and unpickling bypasses
+        # __init__, so records written before `substrate` existed lack the attr.
+        # Same reason update() guards `polarity` with getattr below.
+        substrate = getattr(self, 'substrate', None)
+        if substrate is None:
             return None
-        return self.substrate == 'GaN'
+        return substrate == 'GaN'
 
     @property
     def Qg_max_or_typ_nC(self):
