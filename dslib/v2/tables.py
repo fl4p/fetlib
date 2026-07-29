@@ -67,6 +67,11 @@ head_stop = (
 )
 
 
+def _contains_head_stop(text: str) -> bool:
+    text_l = text.lower()
+    return any(sw.lower() in text_l for sw in head_stop)
+
+
 # ---------- header detection ----------
 
 
@@ -191,7 +196,7 @@ def _row_is_header(row: TextRow, m: re.Match,
     qualify. The font check is mainly there to reject decorative tiny
     asterisks/footnotes rather than to enforce a typographic minimum.
     """
-    if any(sw in row.text for sw in head_stop):
+    if _contains_head_stop(row.text):
         return False
 
     if _header_match_is_incidental(row, m):
@@ -334,7 +339,7 @@ def _fuzzy_header_items(row: TextRow) -> List[Tuple[str, Word]]:
         return []
     if not _items_have_ordered_numeric_cluster(items):
         return []
-    if any(sw in row.text for sw in head_stop):
+    if _contains_head_stop(row.text):
         return []
     if max((w.bbox.height for _g, w in items), default=0.0) < 2.5:
         return []

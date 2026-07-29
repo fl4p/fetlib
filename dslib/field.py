@@ -183,6 +183,29 @@ def unit_dimensions(unit) -> frozenset:
     return frozenset(dims)
 
 
+def _freeze_field_value(v):
+    if isinstance(v, float) and math.isnan(v):
+        return ('nan',)
+    if isinstance(v, dict):
+        items = ((_freeze_field_value(k), _freeze_field_value(val)) for k, val in v.items())
+        return ('dict', tuple(sorted(items, key=repr)))
+    if isinstance(v, (list, tuple)):
+        return (type(v).__name__, tuple(_freeze_field_value(x) for x in v))
+    if isinstance(v, set):
+        return ('set', tuple(sorted((_freeze_field_value(x) for x in v), key=repr)))
+    return v
+
+
+def field_dedup_key(f: 'Field'):
+    return (f.symbol,
+            _freeze_field_value(f.min),
+            _freeze_field_value(f.typ),
+            _freeze_field_value(f.max),
+            f.unit,
+            _freeze_field_value(f.cond),
+            _freeze_field_value(getattr(f, '_sources', None)))
+
+
 def units_provably_incompatible(a, b) -> bool:
     """True only when a and b are KNOWN to name different dimensions.
 
@@ -849,6 +872,7 @@ class DatasheetFields():
         self.part: Union[DiscoveredPart, MpnMfr] = part or MpnMfr(mfr, mpn)
         self.fields_filled: Dict[str, Field] = {}
         self.fields_lists: Dict[str, List[Field]] = {}
+        self._field_keys = set()
         if fields:
             self.add_multiple(fields)
 
@@ -947,6 +971,16 @@ class DatasheetFields():
 
     def add(self, f: Field):
         assert not math.isnan(f.typ_or_max_or_min)
+        k = field_dedup_key(f)
+        keys = getattr(self, '_field_keys', None)
+        if keys is None:
+            keys = self._field_keys = {
+                field_dedup_key(existing)
+                for existing in sum((self.fields_lists or {}).values(), [])
+            }
+        if k in keys:
+            return
+        keys.add(k)
         self.fields_lists.setdefault(f.symbol, []).append(f)
 
         candidate_quality = unit_quality_for_symbol(f.symbol, f.unit)

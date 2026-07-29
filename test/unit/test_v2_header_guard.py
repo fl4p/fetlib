@@ -65,6 +65,15 @@ def test_condition_bearing_data_rows_are_not_headers(text):
     assert _candidate_header(_row(text)) is None, 'data row accepted as a table header'
 
 
+@pytest.mark.parametrize('text', [
+    '3 Safe operating area 4 Max. transient thermal impedance',
+    'Tl Maximum lead temperature for soldering purpose 300 C',
+])
+def test_section_title_with_head_stop_word_is_not_a_header(text):
+    assert head_re.search(text), 'precondition: loose header regex must match'
+    assert _candidate_header(_row(text)) is None
+
+
 @pytest.mark.xfail(strict=True, reason=(
     'KNOWN, NOT FIXED. These are prose/section-title rows with no "=", so the landed guard '
     '(which requires BOTH an "=" outside the match AND low coverage) deliberately does not '
@@ -76,7 +85,6 @@ def test_condition_bearing_data_rows_are_not_headers(text):
     'is why this is xfail(strict) rather than deleted. If a coverage rule is ever landed '
     'with an end-to-end A/B behind it, these should flip to passing.'))
 @pytest.mark.parametrize('text', [
-    'Tl Maximum lead temperature for soldering purpose 300 C',
     'compliance with JEDEC Standard JESD97. The maximum ratings related to soldering',
 ])
 def test_prose_rows_are_still_wrongly_accepted(text):
