@@ -254,6 +254,13 @@ _ASCII_PASSTHROUGH = frozenset(
     "�"
 )
 
+# IXYS/Littelfuse PDFs can encode Symbol-font glyphs as C0 control codes.
+# Normalising the control byte through pdf2txt strips it, so "µC" becomes bare
+# "C" and Qrr reads 1000x low unless the backend-specific glyph is preserved.
+_CONTROL_GLYPH_MAP = {
+    "\x05": "µ",
+}
+
 
 def _normalize_char(c: str) -> str:
     """Normalize a single decoded char from pdfminer.
@@ -270,6 +277,9 @@ def _normalize_char(c: str) -> str:
     """
     if not c:
         return ""
+    mapped = _CONTROL_GLYPH_MAP.get(c)
+    if mapped is not None:
+        return mapped
     if c in _ASCII_PASSTHROUGH:
         return c
     n = _norm_char_memo.get(c)
@@ -730,6 +740,20 @@ def _pages_fitz(pdf_path: str, max_pages: int
         doc.close()
 
 
+def _word_lost_unit_glyph(raw: str, cleaned: str) -> bool:
+    """True when U+FFFD was part of a unit token, not cosmetic text damage."""
+    if _UNDECODABLE not in raw or not cleaned:
+        return False
+    compact = cleaned.strip(",;:()")
+    if compact in {"C", "F", "s", "S", "A", "V", "Ω", "O", "Ohm"}:
+        return True
+    if compact in {"m", "u", "µ", "μ", "n", "p", "k", "M"}:
+        return True
+    if "/" in compact and any(t in compact for t in ("s", "S", "A", "V")):
+        return True
+    return False
+
+
 def _scrub_undecodable(rows: List[TextRow]) -> int:
     """Remove undecodable glyphs from rows; return how many *cells* were lost.
 
@@ -753,6 +777,8 @@ def _scrub_undecodable(rows: List[TextRow]) -> int:
             if not cleaned:
                 lost += 1
                 continue
+            if _word_lost_unit_glyph(w.text, cleaned):
+                lost += 1
             w.text = cleaned
             kept.append(w)
         if len(kept) != len(row.words):

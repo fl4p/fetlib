@@ -779,6 +779,12 @@ def _dimension_unit_re(dim: str):
     return re.compile(r"^(%s)$" % DIMENSIONS[dim].unit_regex)
 
 
+def _qrr_qrm_bare_c_unit(row: TextRow, symbol: Optional[str], unit: Optional[str]) -> Optional[str]:
+    if symbol == "Qrr" and unit == "C" and row.words and row.words[0].text == "QRM":
+        return "µC"
+    return unit
+
+
 def _unit_from_column(row: TextRow,
                       cols: Dict[str, Tuple[float, float]],
                       symbol: Optional[str] = None) -> Optional[str]:
@@ -787,13 +793,14 @@ def _unit_from_column(row: TextRow,
         # try to infer from the right-most word of the row
         if row.words:
             tail = row.words[-1].text.strip(",;")
-            if _looks_like_unit(tail) or tail in {"Ω", "nC", "pF", "ns"}:
-                return _clean_unit(tail, symbol)
+            if _looks_like_unit(tail) or tail in {"Ω", "C", "nC", "pF", "ns"}:
+                return _qrr_qrm_bare_c_unit(row, symbol, _clean_unit(tail, symbol))
         return None
 
     x1, x2 = cols["unit"]
     cand = [w for w in row.words if x1 <= w.bbox.cx <= x2]
     unit = _clean_unit(_join_value_words(cand).strip(), symbol) if cand else None
+    unit = _qrr_qrm_bare_c_unit(row, symbol, unit)
     if unit is not None:
         return unit
 
@@ -802,7 +809,7 @@ def _unit_from_column(row: TextRow,
     # neutral, it makes Field treat a resistance as already-canonical mOhm —
     # look for a unit of the right dimension among the row's trailing words.
     for w in reversed(row.words):
-        got = _clean_unit(w.text, symbol)
+        got = _qrr_qrm_bare_c_unit(row, symbol, _clean_unit(w.text, symbol))
         if got is not None:
             return got
     return None
