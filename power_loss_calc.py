@@ -56,7 +56,16 @@ if __name__ == '__main__':
     print('Converter', buck.name)
     print('Rg_total=', buck.hs.rg_total, 'Ω')
     print('HS(cntr)=', str(buck.hs.parallel) + 'p', buck.hs.mf.part.mpn, buck.hs.mf)
-    print('LS(sync)=', buck.ls.mf.part.mpn, buck.ls.mf, 'Qgs/Qgd=', round(buck.ls.mf.QgdQgsRatio, 1))
+    # Label was 'Qgs/Qgd=' while printing Qgd/Qgs -- the inverse, so a value read off this
+    # line meant the reciprocal of what it said. Both bases are shown now: Qgd/Qgs1 is the
+    # one the shoot-through criterion is stated in, tagged est/ds because Qg_th is on only
+    # 16.2% of records and is otherwise a fixed 2.22x rescale of Qgd/Qgs.
+    _ls = buck.ls.mf
+    _est = _ls.QgdQgsThIsEstimate
+    print('LS(sync)=', _ls.part.mpn, _ls,
+          'Qgd/Qgs=', round(_ls.QgdQgsRatio, 2),
+          'Qgd/Qgs1=', '%s(%s)' % (round(_ls.QgdQgsThRatio, 2),
+                                   'n/a' if _est is None else ('est' if _est else 'ds')))
     print('Coil=', repr(buck.coil))
     print('     Analyzer', buck.coil.micrometals_analyzer(dcdc))
     print('OperatingPoint=', dcdc)

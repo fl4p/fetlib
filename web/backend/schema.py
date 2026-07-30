@@ -17,6 +17,10 @@ class Part(BaseModel):
     V_pl: Optional[float] = None
     Vgs_th: Optional[float] = None
     QgdQgs_ratio: Optional[float] = None
+    # Qgd/Qgs1, the basis the shoot-through criterion is actually stated in. None when
+    # Qg_th was not on the datasheet (84% of records) -- see app.py's mapping for why an
+    # estimated value is served as None rather than as a number.
+    QgdQgsth_ratio: Optional[float] = None
     FoM: Optional[float] = None
     FoMqsw: Optional[float] = None
     FoMqrr: Optional[float] = None

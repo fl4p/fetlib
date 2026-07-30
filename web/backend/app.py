@@ -35,6 +35,7 @@ NUMERIC_COLUMNS = (
     "V_pl",
     "Vgs_th",
     "QgdQgs_ratio",
+    "QgdQgsth_ratio",
     "FoM",
     "FoMqsw",
     "FoMqrr",
@@ -50,6 +51,7 @@ SLIDER_COLUMNS = (
     "Qrr",
     "Vsd",
     "QgdQgs_ratio",
+    "QgdQgsth_ratio",
     "FoM",
     "FoMqsw",
     "FoMqrr",
@@ -171,6 +173,13 @@ def _serialize(part) -> dict:
         "V_pl": _clean(_safe_attr(specs, "V_pl")),
         "Vgs_th": _clean(vgs_th),
         "QgdQgs_ratio": _clean(_safe_attr(specs, "QgdQgsRatio")),
+        # Served ONLY when Qg_th came off the datasheet. When it was estimated from
+        # Qgs2_Qgs_ratio_estimate the ratio is exactly QgdQgs_ratio/(1-0.55) for every
+        # part -- a rescale of the column beside it, carrying no new information -- so a
+        # number here would present a guess as a measurement for 84% of records. None is
+        # not a loss: the UI already has QgdQgs_ratio to rescale.
+        "QgdQgsth_ratio": (_clean(_safe_attr(specs, "QgdQgsThRatio"))
+                          if _safe_attr(specs, "QgdQgsThIsEstimate") is False else None),
         "FoM": _clean(_safe_attr(specs, "FoM")),
         "FoMqsw": _clean(_safe_attr(specs, "FoMqsw")),
         "FoMqrr": _clean(_safe_attr(specs, "FoMqrr")),

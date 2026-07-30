@@ -72,8 +72,20 @@ WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
     ('Vsd',          'specs', 'Vsd',         (0.3,     2.5)),      # V
     ('V_pl',         'specs', 'V_pl',        (2.0,     9.0)),      # V (matches _VPL_MIN/_VPL_MAX) # TODO for SiC Vpl can be higher! and for GaN probably smaller
     ('QgdQgs_ratio', 'specs', 'QgdQgsRatio', (0.05,    10.0)),     # dimensionless
+    # Qgd/Qgs1, the basis the shoot-through criterion is stated in. Upper bound is the
+    # plateau-basis 10.0 scaled by 1/(1-Qgs2_Qgs_ratio_estimate)=2.22 plus headroom, since
+    # this ratio is >= QgdQgs_ratio by construction and equals exactly 2.22x it whenever
+    # Qg_th was estimated rather than read. NOTE it does not distinguish the two: unlike
+    # web/backend/app.py, which serves this column only for a MEASURED Qg_th, anything
+    # consuming the value from here gets estimates mixed in -- check
+    # MosfetSpecs.QgdQgsThIsEstimate before presenting it as datasheet evidence.
+    ('QgdQgsth_ratio', 'specs', 'QgdQgsThRatio', (0.05, 25.0)),    # dimensionless
     #('Vgs_th',       'basic', 'Vgs_th_max',  (0.5,     8.0)),     # V
 )
+
+# CAREFUL: the tuple below SHADOWS the one above -- the name is rebound, so every entry
+# added there is inert until this reduced set is removed or merged. Adding a field to the
+# full list and seeing no effect is this, not a bug in the field.
 
 WEB_FIELDS: Tuple[Tuple[str, str, str, Tuple[float, float]], ...] = (
     ('Rds_on_max', 'specs', 'Rds_on', (1e-5, 10.0)),  # Ω
