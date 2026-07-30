@@ -3,10 +3,9 @@ output-capacitance graph (typ. "Diagram 11" / "Typical Capacitances vs V_DS"), k
 (mfr, mpn). This is the SOURCE OF TRUTH for the curve-faithful Coss used by
 dcdc-tools/loss (SW-ring model + Eoss switching-loss attribution).
 
-Each COSS_CURVES entry is a list of (Vds_V, Coss_pF, Crss_pF) points, low V -> high V.
-Coss is the total output capacitance; Crss the reverse-transfer (gate-drain)
-capacitance; the drain-source part is Cds = Coss - Crss. CISS_CURVES carries optional
-input-capacitance points from the same graph for consumers that need a real Ciss(V).
+Legacy COSS_CURVES entries are (Vds_V, Coss_pF, Crss_pF) triples. New imports may use
+(Vds_V, Coss_pF) pairs and keep independently validated reverse-transfer curves in
+CRSS_CURVES. Ciss is likewise independent in CISS_CURVES.
 Digitize from the log-C vs Vds graph and reconcile against the datasheet Table anchors
 (Ciss/Coss/Crss at the stated Vds, Qoss integral, Qgd integral).
 
@@ -499,6 +498,12 @@ CISS_CURVES = {
 }
 
 
+# Optional independently validated (Vds_V, Crss_pF) reverse-transfer-capacitance curves.
+# Legacy COSS_CURVES triples remain readable through crss_curve_for().
+CRSS_CURVES = {
+}
+
+
 def _curve_for(curves, mfr, mpn):
     if not isinstance(mfr, str) or not isinstance(mpn, str):
         return None
@@ -510,10 +515,11 @@ def _curve_for(curves, mfr, mpn):
 
 
 def coss_curve_for(mfr, mpn):
-    """Return the digitized [(V, Coss_pF, Crss_pF), ...] curve for a part, or None if the
-    part has no curve in the DB. Case-tolerant on mfr (matching dslib key lookups). Falls
-    back to a base-MPN match so an orderable suffix (e.g. IPP024N08NF2S -> ...AKMA1) still
-    resolves the base part's curve; longest matching base wins to avoid false positives.
+    """Return digitized Coss pairs or legacy Coss/Crss triples, or None.
+
+    Case-tolerant on mfr (matching dslib key lookups). Falls back to a base-MPN match so
+    an orderable suffix (e.g. IPP024N08NF2S -> ...AKMA1) still resolves the base part's
+    curve; longest matching base wins to avoid false positives.
 
     Returns a COPY: handing out the module-level list let any consumer that mutates a
     specs' curve in place corrupt the registry process-wide."""
@@ -532,3 +538,15 @@ def ciss_curve_for(mfr, mpn):
     Returns a copy for the same reason as ``coss_curve_for``."""
     curve = _curve_for(CISS_CURVES, mfr, mpn)
     return list(curve) if curve else None
+
+
+def crss_curve_for(mfr, mpn):
+    """Return independently stored [(V, Crss_pF), ...] pairs, or extract pairs from a
+    legacy COSS_CURVES triple. A Coss-only pair curve never becomes Crss evidence."""
+    curve = _curve_for(CRSS_CURVES, mfr, mpn)
+    if curve:
+        return list(curve)
+    legacy = _curve_for(COSS_CURVES, mfr, mpn)
+    if not legacy or any(len(knot) < 3 for knot in legacy):
+        return None
+    return [(knot[0], knot[2]) for knot in legacy]

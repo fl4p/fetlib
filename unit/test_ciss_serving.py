@@ -7,7 +7,7 @@ card grades a missing Ciss curve UNVERIFIED — absence of evidence is not PASS.
 
 import unittest
 
-from dslib.coss_curves import ciss_curve_for, coss_curve_for
+from dslib.coss_curves import ciss_curve_for, coss_curve_for, crss_curve_for
 
 
 class CissCurveForTests(unittest.TestCase):
@@ -51,15 +51,50 @@ class CissCurveForTests(unittest.TestCase):
         # cross would poison that silently. Guard every curated part that has both.
         from dslib.coss_curves import CISS_CURVES
         for (mfr, mpn), ciss in CISS_CURVES.items():
-            triple = coss_curve_for(mfr, mpn)
-            if not triple:
+            crss = crss_curve_for(mfr, mpn)
+            if not crss:
                 continue
             for v, c in ciss:
-                crss = _interp([(k[0], k[2]) for k in triple], v)
-                if crss is None:
+                crss_at_v = _interp(crss, v)
+                if crss_at_v is None:
                     continue
-                self.assertGreater(c, crss,
-                                   f"{mfr}:{mpn} Ciss({v}V)={c} <= Crss={crss}")
+                self.assertGreater(c, crss_at_v,
+                                   f"{mfr}:{mpn} Ciss({v}V)={c} <= Crss={crss_at_v}")
+
+
+class IndependentCrssCurveForTests(unittest.TestCase):
+    def test_independent_pairs_are_served_without_cross_fallback(self):
+        from dslib import coss_curves
+        key = ('faketest', 'INDEPENDENT_CAP_CURVES_ZZ')
+        coss_curves.COSS_CURVES[key] = [(0, 1000), (40, 500)]
+        try:
+            self.assertIsNone(crss_curve_for(*key))
+            coss_curves.CRSS_CURVES[key] = [(0, 100), (40, 20)]
+            self.assertEqual(crss_curve_for(*key), [(0, 100), (40, 20)])
+            self.assertEqual(coss_curve_for(*key), [(0, 1000), (40, 500)])
+        finally:
+            coss_curves.COSS_CURVES.pop(key, None)
+            coss_curves.CRSS_CURVES.pop(key, None)
+
+    def test_fresh_registry_path_attaches_all_capacitance_curves(self):
+        from types import SimpleNamespace
+        from dslib.coss_curves import (
+            ciss_curve_for,
+            coss_curve_for,
+            crss_curve_for,
+        )
+        from dslib.mosfet import attach_capacitance_registries
+
+        key = ('infineon', 'IPP019N08NF2S')
+        specs = SimpleNamespace(
+            coss_curve=None, coss_curve_meta=None,
+            ciss_curve=None, crss_curve=None)
+
+        attach_capacitance_registries(specs, *key)
+
+        self.assertEqual(specs.coss_curve, coss_curve_for(*key))
+        self.assertEqual(specs.ciss_curve, ciss_curve_for(*key))
+        self.assertEqual(specs.crss_curve, crss_curve_for(*key))
 
 
 def _interp(pairs, v):

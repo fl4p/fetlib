@@ -3,11 +3,12 @@
 
 Consumes the browser-exported ``*.review.json`` from build_html_review_packets.py,
 keeps capacitance cards whose ``human_review.status`` is ``green``, re-runs the
-machine export gate on each card's ``values.verify.json``, and appends passing curves to
-``COSS_CURVES`` / ``CISS_CURVES`` / ``COSS_CURVE_SOURCE``.
+machine export gate on each card's ``values.verify.json``, and appends each independently
+passing trace to ``COSS_CURVES`` / ``CRSS_CURVES`` / ``CISS_CURVES``.
 
-Human GREEN is necessary but not sufficient: rejected export-gate rows are reported and
-not landed. Existing exact ``(mfr, mpn)`` registry keys are skipped.
+Human GREEN is necessary but not sufficient: rejected per-trace export-gate rows are
+reported and not landed. Existing exact ``(mfr, mpn)`` keys are skipped per registry, so
+an existing Coss curve does not prevent a later Ciss or Crss import.
 """
 
 from __future__ import annotations
@@ -58,13 +59,23 @@ def _load_dsdig_export(dsdig_home: Path):
     return export_row
 
 
-def _load_existing(curves_file: Path) -> tuple[set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]]]:
+def _load_existing(curves_file: Path) -> tuple[
+        set[tuple[str, str]], set[tuple[str, str]], set[tuple[str, str]],
+        set[tuple[str, str]]]:
     spec = importlib.util.spec_from_file_location("_fetlib_coss_curves_for_import", curves_file)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"could not import {curves_file}")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return (set(mod.COSS_CURVES), set(getattr(mod, "CISS_CURVES", {})),
+    coss = getattr(mod, "COSS_CURVES", {})
+    # A legacy COSS_CURVES triple already contains accepted Crss evidence. New pair
+    # entries do not; their independently accepted Crss lives in CRSS_CURVES.
+    legacy_crss = {
+        key for key, curve in coss.items()
+        if curve and all(len(knot) >= 3 for knot in curve)
+    }
+    crss = set(getattr(mod, "CRSS_CURVES", {})) | legacy_crss
+    return (set(coss), crss, set(getattr(mod, "CISS_CURVES", {})),
             set(getattr(mod, "COSS_CURVE_SOURCE", {})))
 
 
@@ -144,9 +155,10 @@ def _fmt_points(points: list[list[float] | tuple[float, ...]], indent: str = "  
         f"{indent}({', '.join(f'{float(x):.10g}' for x in p)})," for p in points)
 
 
-def _anchor_summary(anchor_check: dict[str, dict[str, Any]]) -> str:
+def _anchor_summary(anchor_check: dict[str, dict[str, Any]],
+                    names: Iterable[str] = ("Coss", "Crss", "Ciss")) -> str:
     parts = []
-    for name in ("Coss", "Crss", "Ciss"):
+    for name in names:
         row = anchor_check.get(name)
         if not row:
             continue
@@ -172,9 +184,9 @@ def _source_entry(key: tuple[str, str], result: Any, item: dict[str, Any]) -> st
             page = json.loads(value_path.read_text()).get("page")
         except Exception:
             page = None
-    anchors = ["Coss", "Crss"] + (["Ciss"] if row.get("ciss_status") == "pass" else [])
-    validation = ("export gate on FETLIB-served anchors (dslib.coss_anchors): "
-                  f"{'/'.join(anchors)} + Qoss; human overlay review GREEN "
+    validation = ("per-trace export gate on FETLIB-served anchors "
+                  "(dslib.coss_anchors): Coss + Qoss; "
+                  "human overlay review GREEN "
                   f"(packet {packet}, exported {exported})")
     source_figure = "Diagram %s" % _safe_comment(row["diagram"])
     return (
@@ -185,37 +197,65 @@ def _source_entry(key: tuple[str, str], result: Any, item: dict[str, Any]) -> st
     )
 
 
-def _coss_entry(key: tuple[str, str], result: Any, item: dict[str, Any]) -> str:
+def _curve_entry(key: tuple[str, str], result: Any, item: dict[str, Any],
+                 curve_name: str, points: list) -> str:
     row = asdict(result)
     packet = _safe_comment(item.get("_packet") or Path(str(item.get("_packet_file", "review"))).stem)
     return (
         f"    # human overlay review GREEN ({packet}); export anchors: "
-        f"{_anchor_summary(row.get('anchor_check') or {})}.\n"
-        f"    {key!r}: [\n{_fmt_points(row['curve'])}\n    ],\n"
+        f"{_anchor_summary(row.get('anchor_check') or {}, (curve_name,))}.\n"
+        f"    {key!r}: [\n{_fmt_points(points)}\n    ],\n"
     )
 
 
-def _ciss_entry(key: tuple[str, str], result: Any) -> str:
-    row = asdict(result)
-    return f"    {key!r}: [\n{_fmt_points(row['ciss_curve'])}\n    ],\n"
+def _trace_result(payload: dict[str, Any], name: str) -> tuple[str, list[str], list]:
+    """Return one trace's verdict, accepting old aggregate exporter payloads too."""
+    stem = name.lower()
+    status_key = f"{stem}_status"
+    reasons_key = f"{stem}_reasons"
+    curve_key = f"{stem}_curve"
+    if status_key in payload:
+        status = str(payload.get(status_key) or "rejected")
+        reasons = list(payload.get(reasons_key) or [])
+        points = list(payload.get(curve_key) or [])
+    elif name in ("Coss", "Crss"):
+        status = str(payload.get("status") or "rejected")
+        reasons = list(payload.get("reasons") or [])
+        combined = list(payload.get("curve") or [])
+        col = 1 if name == "Coss" else 2
+        points = [(knot[0], knot[col]) for knot in combined if len(knot) > col]
+    else:
+        status = str(payload.get("ciss_status") or "rejected")
+        reasons = list(payload.get("ciss_reasons") or [])
+        points = list(payload.get("ciss_curve") or [])
+    if status == "pass" and not points:
+        return "rejected", [f"{stem}_export_pass_without_curve"], []
+    return status, reasons, points
 
 
-def _apply_insertions(curves_file: Path, coss_entries: list[str], ciss_entries: list[str],
-                      source_entries: list[str], coss_keys: set[tuple[str, str]],
-                      ciss_keys: set[tuple[str, str]]) -> None:
+def _apply_insertions(curves_file: Path, coss_entries: list[str], crss_entries: list[str],
+                      ciss_entries: list[str], source_entries: list[str],
+                      coss_keys: set[tuple[str, str]], crss_keys: set[tuple[str, str]],
+                      ciss_keys: set[tuple[str, str]],
+                      source_keys: set[tuple[str, str]]) -> None:
     lock_path = curves_file.with_suffix(curves_file.suffix + ".lock")
     with open(lock_path, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
-        existing_coss, existing_ciss, existing_source = _load_existing(curves_file)
-        dup_coss = coss_keys & (existing_coss | existing_source)
+        existing_coss, existing_crss, existing_ciss, existing_source = _load_existing(curves_file)
+        dup_coss = coss_keys & existing_coss
+        dup_crss = crss_keys & existing_crss
         dup_ciss = ciss_keys & existing_ciss
-        if dup_coss or dup_ciss:
+        dup_source = source_keys & existing_source
+        if dup_coss or dup_crss or dup_ciss or dup_source:
             raise RuntimeError("registry changed while importing; duplicate key(s): "
-                               f"Coss={sorted(dup_coss)}, Ciss={sorted(dup_ciss)}")
+                               f"Coss={sorted(dup_coss)}, Crss={sorted(dup_crss)}, "
+                               f"Ciss={sorted(dup_ciss)}, source={sorted(dup_source)}")
         source = curves_file.read_text()
         inserts = []
         if coss_entries:
             inserts.append((_line_for_assign_end(source, "COSS_CURVES"), "\n" + "".join(coss_entries)))
+        if crss_entries:
+            inserts.append((_line_for_assign_end(source, "CRSS_CURVES"), "\n" + "".join(crss_entries)))
         if ciss_entries:
             inserts.append((_line_for_assign_end(source, "CISS_CURVES"), "\n" + "".join(ciss_entries)))
         if source_entries:
@@ -233,28 +273,31 @@ def _apply_insertions(curves_file: Path, coss_entries: list[str], ciss_entries: 
 def main() -> None:
     args = _arguments()
     export_row = _load_dsdig_export(args.dsdig_home)
-    existing_coss, existing_ciss, existing_source = _load_existing(args.curves_file)
+    existing_coss, existing_crss, existing_ciss, existing_source = _load_existing(
+        args.curves_file)
     items = _green_items(args.review_json)
     out_dir = args.out
     if out_dir:
         out_dir.mkdir(parents=True, exist_ok=True)
 
     accepted, rejected, skipped = [], [], []
-    coss_entries, ciss_entries, source_entries = [], [], []
+    coss_entries, crss_entries, ciss_entries, source_entries = [], [], [], []
     pending_coss: set[tuple[str, str]] = set()
+    pending_crss: set[tuple[str, str]] = set()
     pending_ciss: set[tuple[str, str]] = set()
+    pending_source: set[tuple[str, str]] = set()
     for item in items:
         mfr = str(item.get("mfr") or str(item.get("id", "")).split("/", 1)[0])
         item_part = str(item.get("part") or str(item.get("id", "")).split("/")[1])
         key = (mfr, item_part)
-        if key in existing_coss:
-            skipped.append((item.get("id"), "already in COSS_CURVES", key))
-            continue
-        if key in existing_source:
-            skipped.append((item.get("id"), "already in COSS_CURVE_SOURCE", key))
-            continue
-        if key in pending_coss:
-            skipped.append((item.get("id"), "duplicate green key in input batch", key))
+        registries = {
+            "Coss": (existing_coss, pending_coss, "COSS_CURVES"),
+            "Crss": (existing_crss, pending_crss, "CRSS_CURVES"),
+            "Ciss": (existing_ciss, pending_ciss, "CISS_CURVES"),
+        }
+        if all(key in existing or key in pending
+               for existing, pending, _registry in registries.values()):
+            skipped.append((item.get("id"), "all curves already registered", key))
             continue
         value_path, export_root = _value_path(args.backlog_root, item)
         item["_values_path"] = str(value_path)
@@ -271,23 +314,40 @@ def main() -> None:
         if out_dir:
             safe = "".join(ch if ch.isalnum() else "_" for ch in f"{key[0]}_{key[1]}_d{payload['diagram']}")
             (out_dir / f"{safe}.dslib_coss.json").write_text(json.dumps(payload, indent=2) + "\n")
-        if payload["status"] != "pass":
-            rejected.append((key, payload["reasons"]))
-            continue
-        coss_entries.append(_coss_entry(key, result, item))
-        source_entries.append(_source_entry(key, result, item))
-        pending_coss.add(key)
-        if payload.get("ciss_status") == "pass" and key not in existing_ciss and key not in pending_ciss:
-            ciss_entries.append(_ciss_entry(key, result))
-            pending_ciss.add(key)
-        accepted.append(key)
+        accepted_here = []
+        entry_lists = {"Coss": coss_entries, "Crss": crss_entries, "Ciss": ciss_entries}
+        for name, (existing, pending, registry) in registries.items():
+            if key in existing:
+                skipped.append((item.get("id"), f"already in {registry}", key))
+                continue
+            if key in pending:
+                skipped.append((item.get("id"), f"duplicate {name} in input batch", key))
+                continue
+            status, reasons, points = _trace_result(payload, name)
+            if status == "pass":
+                entry_lists[name].append(_curve_entry(key, result, item, name, points))
+                pending.add(key)
+                accepted.append((key, name))
+                accepted_here.append(name)
+            elif status == "absent":
+                skipped.append((item.get("id"), f"{name} absent", "; ".join(reasons)))
+            else:
+                rejected.append((key, name, reasons))
+        # COSS_CURVE_SOURCE feeds COSS_CURVE_META, so it records Coss evidence only.
+        # Crss/Ciss carry their own inline packet + anchor comment. Letting either create
+        # this entry first would block a later Coss import from recording its Qoss source.
+        if ("Coss" in accepted_here and key not in existing_source
+                and key not in pending_source):
+            source_entries.append(_source_entry(key, result, item))
+            pending_source.add(key)
 
-    print("coss review import: %d green card(s), %d accepted, %d rejected, %d skipped" % (
+    print("coss review import: %d green card(s), %d curve(s) accepted, "
+          "%d rejected, %d skipped" % (
         len(items), len(accepted), len(rejected), len(skipped)))
-    for key in accepted:
-        print("  ACCEPT", "%s/%s" % key)
-    for key, reasons in rejected[:20]:
-        print("  REJECT", "%s/%s" % key, "; ".join(reasons))
+    for key, name in accepted:
+        print("  ACCEPT", "%s/%s" % key, name)
+    for key, name, reasons in rejected[:20]:
+        print("  REJECT", "%s/%s" % key, name, "; ".join(reasons))
     if len(rejected) > 20:
         print("  ... %d more rejected" % (len(rejected) - 20))
     for item_id, reason, detail in skipped[:20]:
@@ -300,8 +360,9 @@ def main() -> None:
     if args.dry_run:
         print("dry-run: would update", args.curves_file)
         return
-    _apply_insertions(args.curves_file, coss_entries, ciss_entries, source_entries,
-                      pending_coss, pending_ciss)
+    _apply_insertions(args.curves_file, coss_entries, crss_entries, ciss_entries,
+                      source_entries, pending_coss, pending_crss, pending_ciss,
+                      pending_source)
     print("updated", args.curves_file)
 
 

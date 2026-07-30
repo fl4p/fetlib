@@ -851,40 +851,17 @@ parts_db = ObjectDatabase[Tuple[Mfr, Mpn], Part]('parts-lib', key_func=lambda p:
 
 def load_parts():
     parts = parts_db.load()
-    # Attach each Coss curve together with its metadata as one evidence object. The helper
-    # validates old partial records against the registry and refuses to cross-wire custom
-    # curves/provenance.
-    from dslib.mosfet import attach_coss_registry
-    # Import Ciss SEPARATELY: a combined import would let a broken/renamed
-    # ciss_curve_for silently disable the Coss attach too (same except clause),
-    # violating the never-silently-degrade contract stated above.
-    try:
-        from dslib.coss_curves import ciss_curve_for
-    except ImportError:
-        ciss_curve_for = None
+    # Attach all capacitance registries through the same fill-if-absent helper used by
+    # freshly parsed specs. Each lookup is internally isolated, so one missing registry
+    # symbol cannot disable another curve.
+    from dslib.mosfet import attach_capacitance_registries
     for key, p in parts.items():
         specs = getattr(p, 'specs', None)
         if specs is None:
             continue
         mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
                                                         getattr(p, 'mpn', None)))
-        attach_coss_registry(specs, mfr, mpn)
-    # Ciss(V) pairs ride the same module but attach in an INDEPENDENT pass gated only on
-    # ciss_curve_for: nesting this under `coss_curve_for is not None` (as it first shipped)
-    # would let a broken/renamed coss_curve_for silently disable the Ciss attach too — the
-    # exact combined-failure anti-pattern the separate imports above exist to prevent. Two
-    # passes over parts.items() is cheap vs the unpickle cost. Older pickled specs predate
-    # the attribute, so set it via getattr-guarded assignment (unpickling bypasses __init__).
-    # None -> consumers keep their gate-charge-partition Cgs basis.
-    if ciss_curve_for is not None:
-        for key, p in parts.items():
-            specs = getattr(p, 'specs', None)
-            if specs is None or getattr(specs, 'ciss_curve', None):
-                continue
-            mfr, mpn = (key if isinstance(key, tuple) else (getattr(p, 'mfr', None),
-                                                            getattr(p, 'mpn', None)))
-            ciss = ciss_curve_for(mfr, mpn)
-            specs.ciss_curve = ciss if ciss else None
+        attach_capacitance_registries(specs, mfr, mpn)
     # Same for the body-diode reverse-recovery test conditions (IF/di-dt/VR/Tj the datasheet
     # Qrr+trr were measured at). Scalars without their operating point can't be re-scaled or
     # fitted to a charge-control diode; see dslib/qrr_conditions.py and fl4p/fetlib#37.

@@ -114,12 +114,13 @@ def _cond_vds(field) -> Optional[float]:
 
 
 def _interp_curve(curve, col: int, vds: Optional[float]) -> Optional[float]:
-    """curve = list[(Vds, ...)] knot rows — Coss triples (col 1=Coss, 2=Crss) or
-    Ciss pairs (col 1=Ciss). pF at vds, or None.
+    """pF at vds from a knot column, or None when the column/span is unavailable.
     Refuses to extrapolate past the digitised span."""
     if not curve or vds is None:
         return None
     a = np.array(curve, float)
+    if a.ndim != 2 or col >= a.shape[1]:
+        return None
     V = a[:, 0]
     if vds < V.min() - 1e-9 or vds > V.max() + 1e-9:
         return None
@@ -161,9 +162,16 @@ def build_card(specs, ds) -> list:
         note = "" if m is not None else f"nameplate Vds={vds} outside curve span"
         rows.append(Row("Coss(V) curve @Vds", m, fc.typ, "pF", f"Vds={vds}V", "cap", note))
 
-    # Crss(V) curve vs nameplate
+    # Crss(V) curve vs nameplate. New imports attach independent pairs; legacy triples
+    # keep working through the fallback.
     fr = _field(ds, "Crss")
-    if curve is None:
+    crss_curve = getattr(specs, "crss_curve", None)
+    if crss_curve is None and curve is not None and all(len(k) >= 3 for k in curve):
+        crss_curve = curve
+        crss_col = 2
+    else:
+        crss_col = 1
+    if crss_curve is None:
         rows.append(Row("Crss(V) curve @Vds", None, fr.typ if fr else None, "pF",
                         "", "cap", note="no digitised curve"))
     elif fr is None:
@@ -171,7 +179,7 @@ def build_card(specs, ds) -> list:
                         note="datasheet has no Crss field"))
     else:
         vds = _cond_vds(fr)
-        m = _interp_curve(curve, 2, vds)
+        m = _interp_curve(crss_curve, crss_col, vds)
         note = "" if m is not None else f"nameplate Vds={vds} outside curve span"
         rows.append(Row("Crss(V) curve @Vds", m, fr.typ, "pF", f"Vds={vds}V", "cap", note))
 

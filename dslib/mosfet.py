@@ -152,6 +152,42 @@ def attach_coss_registry(specs: 'MosfetSpecs', mfr, mpn):
     return specs
 
 
+def _attach_pair_curve_registry(specs: 'MosfetSpecs', mfr, mpn, *,
+                                attr, lookup_name):
+    """Attach one optional pair-curve registry without coupling its import to others."""
+    if specs is None or getattr(specs, attr, None):
+        return specs
+    try:
+        from dslib import coss_curves
+        lookup = getattr(coss_curves, lookup_name)
+    except (ImportError, AttributeError):
+        return specs
+    curve = lookup(mfr, mpn)
+    if curve:
+        setattr(specs, attr, curve)
+    return specs
+
+
+def attach_ciss_registry(specs: 'MosfetSpecs', mfr, mpn):
+    """Attach independently validated Ciss(V) pairs, fill-if-absent."""
+    return _attach_pair_curve_registry(
+        specs, mfr, mpn, attr='ciss_curve', lookup_name='ciss_curve_for')
+
+
+def attach_crss_registry(specs: 'MosfetSpecs', mfr, mpn):
+    """Attach independently validated Crss(V) pairs, fill-if-absent."""
+    return _attach_pair_curve_registry(
+        specs, mfr, mpn, attr='crss_curve', lookup_name='crss_curve_for')
+
+
+def attach_capacitance_registries(specs: 'MosfetSpecs', mfr, mpn):
+    """Attach Coss, Ciss, and Crss independently on parsed and unpickled paths."""
+    attach_coss_registry(specs, mfr, mpn)
+    attach_ciss_registry(specs, mfr, mpn)
+    attach_crss_registry(specs, mfr, mpn)
+    return specs
+
+
 def attach_qoss_anchor(specs: 'MosfetSpecs', ds):
     """Fill `specs.Qoss` / `specs.Qoss_Vds` from the parsed datasheet fields, in place.
 
@@ -239,12 +275,12 @@ def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
     """
     if specs is None:
         return specs
-    # The Coss registry rides along here rather than at the call site in
+    # The capacitance registries ride along here rather than at the call site in
     # dslib.field.get_mosfet_specs: field.py's file content IS field_repr_salt(), so
     # attach wiring placed there invalidates the whole parse cache on every edit, while
     # mosfet.py is in no cache salt. Idempotent (fill-if-absent), so callers that
-    # already ran attach_coss_registry (dslib.store.load_parts) are unaffected.
-    attach_coss_registry(specs, mfr, mpn)
+    # already ran the helpers (dslib.store.load_parts) are unaffected.
+    attach_capacitance_registries(specs, mfr, mpn)
     try:
         from dslib.qrr_conditions import qrr_conditions_for
     except ImportError:
@@ -406,15 +442,16 @@ class MosfetSpecs:
         # which construction paths reach it and which keep the `Coss` anchor.
         self.Qoss = Qoss
         self.Qoss_Vds = Qoss_Vds
-        # Optional datasheet Coss(V)/Crss(V) curve: [(Vds_V, Coss_pF, Crss_pF), ...] or None.
-        # Attached by load_parts() from dslib.coss_curves (by MPN). Consumers use it for a
-        # curve-faithful output cap; None -> they warn and fall back to the scalar Coss.
+        # Optional datasheet Coss(V) curve: new entries are pairs; legacy entries may
+        # also carry Crss as a third column. Consumers use column 1 for a curve-faithful
+        # output cap; None -> they warn and fall back to the scalar Coss.
         self.coss_curve = coss_curve
         self.coss_curve_meta = coss_curve_meta
+        # Optional independently validated [(Vds_V, Crss_pF), ...] curve.
+        self.crss_curve = None
         # Optional datasheet Ciss(V) curve: [(Vds_V, Ciss_pF), ...] or None.
-        # Attached by load_parts() from dslib.coss_curves CISS_CURVES (by MPN). Together
-        # with the Crss column of coss_curve it yields a datasheet Cgs(V) = Ciss - Crss;
-        # None -> consumers keep their gate-charge-partition Cgs basis (Qgs/Vpl).
+        # Together with crss_curve it yields a datasheet Cgs(V) = Ciss - Crss; None ->
+        # consumers keep their gate-charge-partition Cgs basis (Qgs/Vpl).
         self.ciss_curve = None
         # Optional datasheet reverse-recovery TEST CONDITIONS: dict(IF, didt, VR, Tj) or None.
         # Attached by load_parts() from dslib.qrr_conditions (by MPN). Qrr/trr below are

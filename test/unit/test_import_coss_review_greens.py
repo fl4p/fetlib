@@ -46,6 +46,7 @@ def test_green_items_fail_closed_on_conflicting_status(tmp_path):
 def _write_empty_curves(path):
     path.write_text(
         "COSS_CURVES = {\n}\n"
+        "CRSS_CURVES = {\n}\n"
         "CISS_CURVES = {\n}\n"
         "COSS_CURVE_SOURCE = {\n}\n"
         "COSS_CURVE_META = {}\n")
@@ -109,7 +110,129 @@ def test_main_skips_second_accepted_curve_for_same_key(monkeypatch, tmp_path):
     imp.main()
 
     text = curves.read_text()
-    assert text.count("('mfr', 'PART')") == 2  # COSS_CURVES + COSS_CURVE_SOURCE only
+    assert text.count("('mfr', 'PART')") == 3  # Coss + Crss + source; Ciss absent
+
+
+def test_main_accepts_coss_and_ciss_when_crss_is_rejected(monkeypatch, tmp_path):
+    curves = tmp_path / "coss_curves.py"
+    _write_empty_curves(curves)
+    backlog = tmp_path / "backlog"
+    rel = Path("mfr/PART/digitized/capacitance/fig01/values.verify.json")
+    path = backlog / rel
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"part": "PART", "diagram": "01"}))
+    review = tmp_path / "packet.review.json"
+    review.write_text(json.dumps(dict(items=[
+        dict(id="mfr/PART/capacitance/fig01", mfr="mfr", part="PART",
+             chart_type="capacitance", values=str(rel),
+             human_review={"status": "green"}),
+    ])))
+
+    @dataclass
+    class Result:
+        part: str = "PART"
+        diagram: str = "01"
+        status: str = "rejected"
+        reasons: list = field(default_factory=lambda: ["crss_anchor_mismatch:+50%"])
+        curve: list = field(default_factory=list)
+        coss_status: str = "pass"
+        coss_reasons: list = field(default_factory=list)
+        coss_curve: list = field(
+            default_factory=lambda: [(0.0, 1000.0), (40.0, 500.0)])
+        crss_status: str = "rejected"
+        crss_reasons: list = field(
+            default_factory=lambda: ["crss_anchor_mismatch:+50%"])
+        crss_curve: list = field(default_factory=list)
+        anchor_check: dict = field(default_factory=lambda: {
+            "Coss": {"spec_pf": 500.0, "vds_v": 40.0, "rel_error": 0.0},
+            "Ciss": {"spec_pf": 2000.0, "vds_v": 40.0, "rel_error": 0.0},
+        })
+        qoss_pc: object = None
+        knots: int = 2
+        source_points: int = 2
+        overlay: object = None
+        points_csv: object = None
+        pdf: object = None
+        ciss_status: str = "pass"
+        ciss_reasons: list = field(default_factory=list)
+        ciss_curve: list = field(
+            default_factory=lambda: [(0.0, 2100.0), (40.0, 2000.0)])
+
+    monkeypatch.setattr(imp, "_load_dsdig_export",
+                        lambda _home: lambda _row, _root: Result())
+    monkeypatch.setattr(imp.sys, "argv", [
+        "import_coss_review_greens.py", "--backlog-root", str(backlog),
+        "--curves-file", str(curves), str(review)])
+
+    imp.main()
+
+    namespace = {}
+    exec(curves.read_text(), namespace)
+    key = ("mfr", "PART")
+    assert namespace["COSS_CURVES"][key] == [(0.0, 1000.0), (40.0, 500.0)]
+    assert key not in namespace["CRSS_CURVES"]
+    assert namespace["CISS_CURVES"][key] == [(0.0, 2100.0), (40.0, 2000.0)]
+    validation = namespace["COSS_CURVE_SOURCE"][key]["validation_method"]
+    assert "Coss + Qoss" in validation
+    assert "Ciss" not in validation
+
+
+def test_main_existing_coss_does_not_block_new_ciss(monkeypatch, tmp_path):
+    curves = tmp_path / "coss_curves.py"
+    curves.write_text(
+        "COSS_CURVES = {\n"
+        "    ('mfr', 'PART'): [(0, 1000, 100), (40, 500, 20)],\n"
+        "}\n"
+        "CRSS_CURVES = {\n}\n"
+        "CISS_CURVES = {\n}\n"
+        "COSS_CURVE_SOURCE = {\n"
+        "    ('mfr', 'PART'): {},\n"
+        "}\n"
+        "COSS_CURVE_META = {}\n")
+    backlog = tmp_path / "backlog"
+    rel = Path("mfr/PART/digitized/capacitance/fig01/values.verify.json")
+    path = backlog / rel
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"part": "PART", "diagram": "01"}))
+    review = tmp_path / "packet.review.json"
+    review.write_text(json.dumps(dict(items=[
+        dict(id="mfr/PART/capacitance/fig01", mfr="mfr", part="PART",
+             chart_type="capacitance", values=str(rel),
+             human_review={"status": "green"}),
+    ])))
+
+    @dataclass
+    class Result:
+        part: str = "PART"
+        diagram: str = "01"
+        status: str = "pass"
+        reasons: list = field(default_factory=list)
+        curve: list = field(
+            default_factory=lambda: [(0.0, 1000.0, 100.0), (40.0, 500.0, 20.0)])
+        anchor_check: dict = field(default_factory=dict)
+        qoss_pc: object = None
+        knots: int = 2
+        source_points: int = 2
+        overlay: object = None
+        points_csv: object = None
+        pdf: object = None
+        ciss_status: str = "pass"
+        ciss_reasons: list = field(default_factory=list)
+        ciss_curve: list = field(
+            default_factory=lambda: [(0.0, 2100.0), (40.0, 2000.0)])
+
+    monkeypatch.setattr(imp, "_load_dsdig_export",
+                        lambda _home: lambda _row, _root: Result())
+    monkeypatch.setattr(imp.sys, "argv", [
+        "import_coss_review_greens.py", "--backlog-root", str(backlog),
+        "--curves-file", str(curves), str(review)])
+
+    imp.main()
+
+    namespace = {}
+    exec(curves.read_text(), namespace)
+    assert namespace["CISS_CURVES"][("mfr", "PART")] == [
+        (0.0, 2100.0), (40.0, 2000.0)]
 
 
 def test_absolute_value_path_derives_backlog_root():
