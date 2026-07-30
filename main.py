@@ -22,7 +22,7 @@ from dslib.discovery import DiscoveredPart, Substrate
 from dslib.housing import normalize as normalize_housing
 from dslib.fetch import fetch_datasheet
 from dslib.field import Field, DatasheetFields, field_repr_salt, merge_keeping_absent_symbols
-from dslib.mosfet import GateDrive
+from dslib.mosfet import GateDrive, mosfet_polarity, attach_qoss_anchor
 from dslib.pdf.fonts import fontforge_bin
 from dslib.pdf.parse import (parse_datasheet, subsctract_needed_symbols, NoTabularData,
                              TooManyPages, chart_digitizer_salt)
@@ -530,7 +530,8 @@ def get_reference_fet_specs(ds: DatasheetFields):
     split, and it is why the boundary is named rather than implicit.
     """
     try:
-        return ds.get_mosfet_specs()        # Vgs=None -> dslib.field._DATASHEET_REF_VGS
+        # Vgs=None -> dslib.field._DATASHEET_REF_VGS
+        return attach_qoss_anchor(ds.get_mosfet_specs(), ds)
     except Exception as e:
         ds.errors.append('specs error: ' + str(e))
         return None
@@ -551,6 +552,10 @@ def get_fet_specs(ds: DatasheetFields, gd: GateDrive):
     # parse specification for DC-DC loss model
     try:
         fet_specs = ds.get_mosfet_specs(Vgs=gate_drive_vgs(ds, gd))
+        # The datasheet Qoss anchor for the Coss loss model. Attached here rather than in
+        # get_mosfet_specs because field.py's content is field_repr_salt() -- see
+        # attach_qoss_anchor. Idempotent, so double-attaching is harmless.
+        attach_qoss_anchor(fet_specs, ds)
         ds.get_row()
         return fet_specs
     except Exception as e:

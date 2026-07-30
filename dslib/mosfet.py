@@ -152,6 +152,71 @@ def attach_coss_registry(specs: 'MosfetSpecs', mfr, mpn):
     return specs
 
 
+def attach_qoss_anchor(specs: 'MosfetSpecs', ds):
+    """Fill `specs.Qoss` / `specs.Qoss_Vds` from the parsed datasheet fields, in place.
+
+    Qoss is the integral quantity the Coss loss model needs; `Coss` is a small-signal
+    capacitance at one bias. Anchoring the 1/sqrt(V) law on `Coss` therefore under-books
+    charge for most parts (corpus median Qoss/(Coss*V) = 2.35 against the law's implicit
+    2.0) and by up to 30x for superjunction devices. See CossEnergyModel.from_mosfet.
+
+    WHY NOT IN dslib.field.get_mosfet_specs, where every other spec is read: that file's
+    content IS field_repr_salt(), whose docstring states the price -- any edit, "INCLUDING A
+    COMMENT", rebuilds four parse caches (~17 GB, a full corpus re-parse). mosfet.py is in no
+    cache salt, and attach_coss_registry already lives here for exactly this reason.
+
+    KNOWN LIMIT, stated because a silent divergence here is the failure mode
+    attach_coss_registry's docstring warns about: this needs the DatasheetFields, so it can
+    only run on the parsed path (main.get_fet_specs / get_fet_specs_ref). Specs unpickled
+    from parts_db -- the web backend, apps/refresh_part_specs -- keep the `Coss` anchor and
+    the provenance that names it. That is the pre-existing behaviour, not a new regression,
+    and it is visible in the report's `scalar_anchor_source`. It cannot be fixed by reading
+    the DB here: during a parse run the record on disk is from an EARLIER generation than the
+    specs being built, so a keyed read would anchor today's model on yesterday's charge.
+
+    Fill-if-absent, so a caller that already supplied a Qoss (a test fixture, a future
+    curated registry) is not overwritten.
+    """
+    if specs is None or ds is None:
+        return specs
+    if isnum(getattr(specs, 'Qoss', math.nan)):
+        return specs
+
+    # The charge and the voltage it was measured at MUST come from the SAME Field. Reading
+    # the value via ds.get_typ_or_max_or_min('Qoss') and the condition from a separate scan
+    # of fields_lists is the pair-split theft class (fetlib#43): BSZ300N15NS5 carries a
+    # conditionless Qoss=2837 nC alongside the real Qoss=28 nC @ 75 V, and the split read
+    # paired 2837 nC WITH 75 V -- a 101x over-book that the r>=1 floor cannot see, because
+    # a too-high charge is not the direction that floor tests. Pairs, never a merge.
+    try:
+        from dslib.conditions import normalize_conditions
+        candidates = list(ds.fields_lists.get('Qoss', []))
+    except Exception:
+        return specs
+
+    for f in candidates:
+        try:
+            q_nc = f.typ_or_max_or_min
+            cv = normalize_conditions(f.cond).get('Vds')
+        except Exception:
+            continue
+        # A zero/negative parsed charge is this repo's corrupt-parse class AND the best
+        # possible loss number -- the anti-monotone shape. Never an anchor.
+        if not isnum(q_nc) or q_nc <= 0:
+            continue
+        # Same |Vds| >= 5 floor dslib.field applies to the Coss/Qoss condition bucket:
+        # 'Vds=1' there is a mis-bucketed f=1 MHz-style artifact, 317x over the corpus.
+        # A charge with no voltage cannot anchor anything, since the whole point is
+        # Q(V_q) == Qoss; refuse rather than borrowing Coss_Vds, which would attribute this
+        # charge to a voltage no datasheet claimed it at.
+        if not cv or abs(cv) < 5.0:
+            continue
+        specs.Qoss = float(q_nc) * 1e-9
+        specs.Qoss_Vds = abs(cv)      # p-channel conditions are negative
+        return specs
+    return specs
+
+
 def attach_qrr_registries(specs: 'MosfetSpecs', mfr, mpn, parsed_qrr_cond=None):
     """Fill `specs.qrr_cond` / `specs.qrr_points` from the curated registries, in place.
 
@@ -225,6 +290,7 @@ class MosfetSpecs:
                  Qsw=None,
                  Vpl=None, Vsd=None,
                  Coss=math.nan, Coss_Vds=None,
+                 Qoss=math.nan, Qoss_Vds=None,
                  Rg=math.nan, Id=math.nan, part=None, coss_curve=None,
                  coss_curve_meta=None,
                  Id_gc=math.nan, gfs_min=math.nan, gfs_typ=math.nan, Id_gfs=math.nan,
@@ -247,6 +313,14 @@ class MosfetSpecs:
         :param Vsd: body diode forward voltage
         :param Coss: output capacity (eff. energy related)
         :param Coss_Vds: Vds at which Coss was calculated or measured (test condition)
+        :param Qoss: datasheet output CHARGE at Qoss_Vds, in coulomb. The integral quantity
+            the Coss loss model actually needs, so it anchors that model in preference to
+            `Coss` when present -- see CossEnergyModel.from_mosfet. NOT derivable from
+            `Coss`: `Coss` is a small-signal capacitance at one bias, and measured across
+            the corpus Qoss/(Coss*V) runs p25 1.87 / p50 2.35 / p95 28.2, so the
+            1/sqrt(V) law extrapolated from `Coss` under-books charge for most parts and
+            by >10x for superjunction ones.
+        :param Qoss_Vds: Vds at which Qoss was specified (test condition)
         :param polarity: channel polarity ("N" or "P"); inferred from signed Vds when omitted
         """
         self.part = part
@@ -325,6 +399,13 @@ class MosfetSpecs:
 
         self.Coss = Coss  # Vds = Vin
         self.Coss_Vds = Coss_Vds
+        # Datasheet output CHARGE, the anchor CossEnergyModel prefers over `Coss`. Set here
+        # rather than read in dslib.field.get_mosfet_specs on purpose: field.py's content IS
+        # field_repr_salt(), so a read placed there rebuilds ~17 GB of parse cache; this file
+        # is in no cache salt. attach_qoss_anchor() is the populator -- see its docstring for
+        # which construction paths reach it and which keep the `Coss` anchor.
+        self.Qoss = Qoss
+        self.Qoss_Vds = Qoss_Vds
         # Optional datasheet Coss(V)/Crss(V) curve: [(Vds_V, Coss_pF, Crss_pF), ...] or None.
         # Attached by load_parts() from dslib.coss_curves (by MPN). Consumers use it for a
         # curve-faithful output cap; None -> they warn and fall back to the scalar Coss.

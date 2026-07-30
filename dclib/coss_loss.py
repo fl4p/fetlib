@@ -361,7 +361,8 @@ class CossEnergyModel:
 
     def __init__(self, *, curve=None, scalar_coss_f=None, scalar_anchor_v=None,
                  metadata=None, operating_frequency_hz=None,
-                 operating_temperature_c=None, gate_bias_v=0.0):
+                 operating_temperature_c=None, gate_bias_v=0.0,
+                 qoss_anchored=False):
         self.metadata = dict(metadata or {})
         self.operating_frequency_hz = operating_frequency_hz
         self.operating_temperature_c = operating_temperature_c
@@ -423,9 +424,13 @@ class CossEnergyModel:
             self.curve = None
             self.scalar_coss_f = float(scalar_coss_f)
             self.scalar_anchor_v = float(scalar_anchor_v)
-            self.model_state = "scalar-inverse-sqrt-fallback"
+            self.model_state = ("scalar-qoss-anchored-inverse-sqrt" if qoss_anchored
+                                else "scalar-inverse-sqrt-fallback")
             self.provenance = self.metadata.get(
-                "provenance", "single datasheet Coss anchor; assumed Coss(V) proportional to 1/sqrt(V)")
+                "provenance",
+                ("datasheet Qoss anchor; assumed Coss(V) proportional to 1/sqrt(V)"
+                 if qoss_anchored else
+                 "single datasheet Coss anchor; assumed Coss(V) proportional to 1/sqrt(V)"))
             self.base_evidence_quality = UNVERIFIED
             self.extrapolation_flags.append("nonlinear-curve-missing:scalar-parametric-fallback")
 
@@ -441,7 +446,63 @@ class CossEnergyModel:
         anchor = raw_anchor
         if not _finite(anchor) or anchor <= 0:
             anchor = getattr(mf, "Coss_V0", math.nan)
-        if not curve and _finite(anchor):
+
+        # ---- Charge anchor -------------------------------------------------------------
+        # A digitized curve still wins: it is the actual C(V), not a one-point fit to it.
+        # Below that, prefer the datasheet's own Qoss over `Coss`. `Coss` is a small-signal
+        # capacitance at one bias; Qoss is the integral this model exists to compute, so
+        # anchoring on it makes Q(V_q) == Qoss EXACTLY instead of off by the ratio measured
+        # across the corpus (p25 1.87 / p50 2.35 / p95 28.2 against the 1/sqrt(V) law's
+        # implicit 2.0). Same functional form either way -- only the anchor moves --
+        # implemented as an equivalent anchor capacitance Qoss/(2*V_q) so `at()` and
+        # `_integrate_curve` stay untouched:
+        #     k = C_a*sqrt(V_a) = (Qoss/(2*V_q))*sqrt(V_q) = Qoss/(2*sqrt(V_q))
+        #     Q(V) = 2*k*sqrt(V)  ->  Q(V_q) = Qoss
+        qoss = getattr(mf, "Qoss", math.nan)
+        qoss_v = getattr(mf, "Qoss_Vds", None)
+        qoss_anchored = False
+        if not curve and _finite(qoss) and qoss > 0 and _finite(qoss_v) and qoss_v > 0:
+            qoss_v = float(qoss_v)
+            # PHYSICAL floor, not a tuned band: Coss(V) decreases monotonically in V, so
+            # Qoss(V) = integral_0^V C dV >= C(V)*V. A parsed Qoss under that is impossible,
+            # i.e. a parse error -- and it would LOWER the booked loss, so it must be
+            # refused rather than trusted. Measured: 4 of 1420 cross-checkable records
+            # violate it (IPT020N10N3 r=0.547, IPQC60R010S7 r=0.891 -- the latter's own
+            # family sibling IPQC60R010S7A reads 1714 nC where it reads 50 nC).
+            #
+            # Deliberately NO upper bound. The high tail is real superjunction physics
+            # (IPDQ60T010S7 r=30.4, Coss collapsing ~100x below 50 V), the distribution runs
+            # continuously into it, and there is no void to put a ceiling in -- so a ceiling
+            # would drop legitimate anchors by the dozen. Direction also matters: a too-HIGH
+            # Qoss over-books loss, which surfaces as a bad rank rather than hiding.
+            cross_checkable = (_finite(coss) and coss > 0 and _finite(anchor)
+                               and _close(float(anchor), qoss_v, rel=1e-6))
+            ratio = (qoss / (coss * qoss_v)) if cross_checkable else None
+            if cross_checkable and ratio < 1.0:
+                part = getattr(getattr(mf, "part", None), "mpn", "<unknown>")
+                warnings.warn(
+                    "%s: datasheet Qoss=%.3g C at %g V is below the physical floor "
+                    "Coss*V=%.3g C (ratio %.3f < 1) — impossible for a monotone Coss(V), "
+                    "so the Qoss anchor is REFUSED and the Coss anchor kept "
+                    "(check the datasheet parse)" % (part, qoss, qoss_v, coss * qoss_v, ratio))
+                meta.setdefault("qoss_anchor_refused",
+                                "below-physical-floor:ratio=%.4f" % ratio)
+            else:
+                qoss_anchored = True
+                coss = qoss / (2.0 * qoss_v)   # equivalent anchor capacitance at V_q
+                anchor = qoss_v
+                meta["scalar_anchor_source"] = "Qoss"
+                meta["qoss_anchor_c"] = float(qoss)
+                meta["qoss_anchor_v"] = qoss_v
+                if cross_checkable:
+                    meta["qoss_over_coss_v_ratio"] = float(ratio)
+                else:
+                    # No same-voltage Coss to test against. Accepted -- Qoss is the better
+                    # quantity and its lack of a cross-check is not evidence against it --
+                    # but SAID, so the report never implies a check that did not run.
+                    meta["qoss_anchor_crosscheck"] = "unavailable:no-same-voltage-Coss"
+
+        if not curve and not qoss_anchored and _finite(anchor):
             if _finite(raw_anchor) and raw_anchor > 0:
                 anchor_source = "Coss_Vds"
             elif (_finite(raw_anchor) and raw_anchor < 0
@@ -461,12 +522,12 @@ class CossEnergyModel:
             # a full ranking run drowned in thousands of identical lines.
             if part not in _warned_scalar_fallback:
                 _warned_scalar_fallback.add(part)
-                warnings.warn("%s: no Coss(V) curve; using explicitly UNVERIFIED "
-                              "inverse-sqrt scalar fallback" % part)
+                #warnings.warn("%s: no Coss(V) curve; using explicitly UNVERIFIED "
+                #              "inverse-sqrt scalar fallback" % part)
         return cls(curve=curve, scalar_coss_f=coss, scalar_anchor_v=anchor,
                    metadata=meta, operating_frequency_hz=operating_frequency_hz,
                    operating_temperature_c=operating_temperature_c,
-                   gate_bias_v=gate_bias_v)
+                   gate_bias_v=gate_bias_v, qoss_anchored=qoss_anchored)
 
     def _flag_condition_extrapolation(self):
         # frequency_hz is deliberately NOT an evidence-capping axis: the C(V) curve is
