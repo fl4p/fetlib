@@ -622,6 +622,31 @@ class MosfetSpecs:
         return self.Qgd / self.Qgs
 
     @property
+    def QgdQgsThRatio(self):
+        """
+        Cdv/dt self turn-on ratio, Qgd / Qgs1 (Qgs1 = charge to reach V_th = Qg_th).
+
+        This is the ratio the shoot-through literature actually uses: during the HS
+        turn-on the LS gate is pushed up by the Qgd displacement current, and it only
+        conducts once the gate has accumulated Qg_th. Qgd/Qgs (QgdQgsRatio) divides by
+        the charge to the *plateau*, which is always larger, so it reads systematically
+        friendlier than the real criterion.
+
+        For a sync FET this should be < 1. NaN when Qg_th is unknown -- see
+        QgdQgsThIsEstimate before trusting a finite value.
+        """
+        return self.Qgd / self.Qg_th
+
+    @property
+    def QgdQgsThIsEstimate(self):
+        """True when Qg_th was not on the datasheet and MosfetSpecs.__init__ derived it
+        from Qgs2_Qgs_ratio_estimate, i.e. QgdQgsThRatio is a guess, not a measurement.
+        None when the ratio is unavailable altogether (nothing to qualify)."""
+        if not isnum(self.Qgd) or not isnum(self.Qg_th):
+            return None
+        return not isnum(self._Qg_th)
+
+    @property
     def Coss_V0(self):
         mf = self
         coss_vds = getattr(mf, 'Coss_Vds', math.nan)

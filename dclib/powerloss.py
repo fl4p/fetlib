@@ -30,7 +30,7 @@ import numpy as np
 import warnings
 from typing import Tuple
 
-from dslib import round_to_n, dotdict, round_to_n_dec, rel_err
+from dslib import round_to_n, dotdict, round_to_n_dec, rel_err, isnum
 from dataclasses import replace as dc_replace
 
 from dclib.coss_loss import (
@@ -620,8 +620,20 @@ def dcdc_buck_ls(dc: DcDcLoadParams, mf: MosfetSpecs, gd: GateDrive, Tj=math.nan
 
     rds = Rds_on(mf, dc.Io, Tj)  # temp rise Tj=100°C
 
-    if mf.QgdQgsRatio > 1:
-        warnings.warn('%s: Qgd/Qgs %.1f > 1! LS might suffer from self turn-on' % (mf.part, mf.QgdQgsRatio))
+    # Only the UNVERIFIED case warns here. `Qgd/Qgs > 1` is REPORTED, not warned: it is a
+    # gate-driver constraint that applies to ~26% of the corpus (798 of 3081 ranked parts
+    # at the fugu2 point), so a per-part warning was 798 lines of noise saying the same
+    # thing the aggregate count next to the CSV path now says once. The per-row values
+    # live in the QgdQgs / QgdQgsth columns.
+    #
+    # The unverified branch stays because it is NOT the same statement. `> 1` alone is
+    # False for NaN, so a part with no gate-charge data used to pass silently -- the check
+    # went quiet exactly where the evidence was missing. It also could never fire at all
+    # from the LS ranking path until main.py stopped filtering on this same ratio:
+    # everything reaching here had already been screened to <= 1.
+    if not isnum(mf.QgdQgsRatio):
+        warnings.warn('%s: Qgd/Qgs is unavailable — LS self turn-on UNVERIFIED, not '
+                      'screened either way' % (mf.part,))
 
     von = gd.Von_GaN if isGaN else gd.Von
     assert von > 0

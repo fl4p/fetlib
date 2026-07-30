@@ -1026,6 +1026,22 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     unranked_rows = []
     ranked_parts = []  # (P_tot@1p, mfr, mpn), see the HS generator
 
+    # Self-turn-on census, reported next to the CSV path. This used to be a silent
+    # `if QgdQgsRatio > 1: continue`, which dropped 37.5% of the corpus (2283/6090 parts)
+    # with no unranked_rows entry and no count -- the one refusal in this file that broke
+    # the rule stated at main.py:835. It went for three reasons:
+    #   - Qgd/Qgs > 1 is a constraint on the GATE DRIVER (pull-down impedance, off-bias),
+    #     not a property that disqualifies a device. The filter cannot see which driver
+    #     the design has, so it was guessing.
+    #   - 1.0 is not a discriminator. On the basis the shoot-through criterion is actually
+    #     stated in (Qgd/Qgs1, see MosfetSpecs.QgdQgsThRatio) 78.4% of the corpus exceeds
+    #     it, so a hard gate on the correct denominator would discard 4 parts in 5.
+    #   - It kept dclib/powerloss.py's own self-turn-on warning from ever firing on this
+    #     path: everything reaching dcdc_buck_ls had already been screened to <= 1.
+    # The risk did not go away, it moved into the QgdQgs/QgdQgsth columns and this count.
+    n_self_turn_on = 0
+    n_self_turn_on_unverified = 0
+
     for ds in dss:
         fet_specs = get_fet_specs(ds, args.gateDrive)
         if fet_specs is None:
@@ -1034,9 +1050,13 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         if not dcdc.Id_in_range(fet_specs.Id, args.syncFet.maxParallel):
             continue
 
-        if fet_specs.QgdQgsRatio > 1:
-            # mosfet might self turn-on
-            continue
+        # NOT `> 1`, which is False for NaN and would have counted a part with no
+        # gate-charge data as screened. 217 parts (3.6%) reach here with an
+        # unevaluatable ratio; they are counted apart, never as "fine".
+        if not isnum(fet_specs.QgdQgsRatio):
+            n_self_turn_on_unverified += 1
+        elif fet_specs.QgdQgsRatio > 1:
+            n_self_turn_on += 1
 
         # Self-pairing: this CSV ranks LS candidates with
         # no named HS partner, so the commutation di/dt is the one the part's own turn-on
@@ -1169,6 +1189,15 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 didt_rr=None if qrr_didt is None else round_to_n(qrr_didt / 1e6, 3),
                 Vsd=fet_specs and (fet_specs.Vsd),
                 QgdQgs=fet_specs and fet_specs.QgdQgsRatio,
+                # Qgd/Qgs1 -- the ratio the shoot-through criterion is actually stated
+                # in (Qgs1 = Qg_th). Always >= QgdQgs, so a part can pass the QgdQgs<1
+                # gate above and still be > 1 here. _src travels with it because Qg_th is
+                # frequently absent from the datasheet and then estimated: an estimated
+                # ratio must not read as a measured one.
+                QgdQgsth=fet_specs and fet_specs.QgdQgsThRatio,
+                QgdQgsth_src=(
+                    '' if not fet_specs or fet_specs.QgdQgsThIsEstimate is None
+                    else ('est' if fet_specs.QgdQgsThIsEstimate else 'ds')),
 
                 errors=', '.join(ds.all_errors()),
 
@@ -1202,6 +1231,24 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
         write_csv(df, out_fn, power_value_digits=3, sort_by=['P_tot'])
         print('\n>>>', out_fn)
         print('>>>', price_lookup.stats())
+
+        # These parts are RANKED, unlike the unranked_rows below -- Qgd/Qgs > 1 is a
+        # gate-driver constraint, not a disqualification. Printed because the ranking
+        # itself cannot show it: no loss term models shoot-through, so a self-turn-on
+        # -prone part can sit at the top of the CSV on conduction loss alone. The
+        # unverified count is separate on purpose and is NOT folded into the clean
+        # count: a part with no gate-charge data has not been screened, and must not
+        # read as one that passed.
+        if n_self_turn_on or n_self_turn_on_unverified:
+            n_ranked = len(ranked_parts)
+            print('>>> self-turn-on screen (see the QgdQgs / QgdQgsth columns):')
+            if n_self_turn_on:
+                print('      %5d of %d ranked parts have Qgd/Qgs > 1 -- they need a '
+                      'low-impedance gate pull-down (or negative off-bias)'
+                      % (n_self_turn_on, n_ranked))
+            if n_self_turn_on_unverified:
+                print('      %5d of %d ranked parts are UNVERIFIED: no Qgd/Qgs at all, '
+                      'not screened either way' % (n_self_turn_on_unverified, n_ranked))
 
         # A shorter ranking than the input list is a result, not a detail. Report the
         # count and WHY at the same volume as the CSV path itself, so nobody reads a
