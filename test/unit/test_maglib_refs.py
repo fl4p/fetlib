@@ -36,8 +36,14 @@ from maglib.tests import (test_bpk_sinusoidal,  # noqa: F401,E402
                           test_coil,  # noqa: F401,E402
                           test_copper_resistivity_tempco,  # noqa: F401,E402
                           test_dc_bias_suppression_is_not_silent,  # noqa: F401,E402
+                          test_femmt_acr_result_conventions,  # noqa: F401,E402
+                          test_femmt_config_golden,  # noqa: F401,E402
+                          test_femmt_tool_paths_missing,  # noqa: F401,E402
+                          test_femmt_toroid_fem,  # noqa: F401,E402
                           test_mat,   # noqa: F401,E402
                           test_power_loss,  # noqa: F401,E402
+                          test_toroid_column_geometry,  # noqa: F401,E402
+                          test_toroid_packing,  # noqa: F401,E402
                           test_unusable_material_raises,  # noqa: F401,E402
                           test_winding_bore,  # noqa: F401,E402
                           test_winding_fit,  # noqa: F401,E402

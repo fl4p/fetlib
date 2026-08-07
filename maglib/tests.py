@@ -383,3 +383,154 @@ def test_wire():
             n_compared += 1
     # A skip-guarded loop that skips everything passes while testing nothing.
     assert n_compared == 12, n_compared
+
+
+def test_toroid_packing():
+    # T184 reference case (2026-08 FEMMT study): 1.9 mm-OD wire in the bore.
+    # Repo T184 ID is 24.13 mm (the study used a 24.11 mm datasheet reading;
+    # layer-1 capacity is 29 either way).
+    from maglib.cores import MicrometalsT184
+    from maglib.fem.toroid_packing import assign_layers, layer_capacity
+
+    core_id = MicrometalsT184.ID
+    assert abs(core_id - 24.13e-3) < 1e-6
+    wire_od = 1.9e-3
+    assert layer_capacity(1, core_id, wire_od) == 29
+    assert layer_capacity(2, core_id, wire_od) == 24
+    assert assign_layers(16, core_id, wire_od) == [16]
+    assert assign_layers(32, core_id, wire_od) == [29, 3]
+    assert assign_layers(48, core_id, wire_od) == [29, 19]
+    assert assign_layers(64, core_id, wire_od) == [29, 24, 11]
+    try:
+        assign_layers(2000, core_id, wire_od)
+        raise AssertionError('2000 wires must not fit')
+    except ValueError as e:
+        assert '2000' in str(e)
+
+
+def test_toroid_column_geometry():
+    from maglib.fem.toroid_packing import column_geometry, fem_sim_configs
+
+    core_id, wire_od = 24.13e-3, 1.9e-3
+    # single layer: pitch spreads over the full layer-1 circumference
+    g1 = column_geometry(16, core_id, wire_od)
+    assert g1.n_layers == 1 and g1.conductors_per_column == 16
+    assert 4e-3 < g1.pitch < 5e-3
+    assert abs(g1.window_h - g1.conductors_per_column * g1.pitch) < 1e-12
+
+    # divisible: one exact config
+    (w, g), = fem_sim_configs(48, core_id, wire_od)
+    assert w == 1.0 and g.n_layers == 2 and g.conductors_per_column == 24
+
+    # indivisible (64 wires, 3 layers): a short column skews the WHOLE model
+    # (measured 0.45 rel asymmetry for 22/22/20) -> column_geometry refuses,
+    # fem_sim_configs brackets with two all-full configs 63=3x21 / 66=3x22
+    try:
+        column_geometry(64, core_id, wire_od)
+        raise AssertionError('indivisible count must raise')
+    except ValueError as e:
+        assert 'fem_sim_configs' in str(e)
+    cfgs = fem_sim_configs(64, core_id, wire_od)
+    assert [g.n_wires for _, g in cfgs] == [63, 66]
+    assert [g.conductors_per_column for _, g in cfgs] == [21, 22]
+    assert all(g.n_layers == 3 for _, g in cfgs)
+    ws = [w for w, _ in cfgs]
+    assert abs(sum(ws) - 1.0) < 1e-12 and abs(ws[0] - 2 / 3) < 1e-12
+    assert all(g.pitch >= wire_od for _, g in cfgs)
+
+    # 53 wires (2-layer capacity is exactly 29+24=53): the upper bracket 54
+    # does NOT fit 2 layers — simulating 2x27 anyway would be a plausible Fr
+    # for a fictitious geometry (review finding). Expect capacity refusal
+    # from column_geometry and a single truncated-bracket config (52 = 2x26)
+    # from fem_sim_configs.
+    try:
+        column_geometry(54, core_id, wire_od, n_layers=2)
+        raise AssertionError('54 wires must not pack into 2 layers')
+    except ValueError as e:
+        assert 'capacity' in str(e)
+    (w, g), = fem_sim_configs(53, core_id, wire_od)
+    assert w == 1.0 and g.n_wires == 52 and g.n_layers == 2
+
+
+def test_femmt_acr_result_conventions():
+    # fr_total is TOTAL (Rac = Rdc * fr_total); fr_excess is the
+    # acr_factor_micrometals F_se+F_pe convention. Interp anchors at
+    # (100 Hz, 1.0) and extrapolates flat.
+    from maglib.fem.femmt_toroid import AcrResult, F_DC_REF
+
+    r = AcrResult(freqs=(40e3, 120e3), fr_total=(2.0, 4.0), p_dc_ref=1e-3,
+                  layers=(16,), n_layers=1, conductors_per_column=16,
+                  pitch=4.4e-3)
+    assert r.fr_excess == (1.0, 3.0)
+    assert abs(r.fr_at(F_DC_REF) - 1.0) < 1e-12
+    assert abs(r.fr_at(40e3) - 2.0) < 1e-12
+    assert abs(r.fr_at(120e3) - 4.0) < 1e-12
+    assert abs(r.fr_at(1e6) - 4.0) < 1e-12  # flat beyond last point
+    assert abs(r.fr_excess_at(40e3) - 1.0) < 1e-12
+    mid = r.fr_at(80e3)
+    assert 2.0 < mid < 4.0
+
+
+def test_femmt_config_golden():
+    from maglib.fem.femmt_toroid import _build_config, PROXY_LEG_DIAMETER
+
+    cfg = _build_config(wire_r_um=900, n_cond=16, conductors_per_column=16,
+                        n_layers=1, pitch_um=4363, freqs_hz=(40000, 120000),
+                        temp_c=60, mu_r=20000, leg_d_um=24000, yoke_um=6000,
+                        working_directory='/wd')
+    assert cfg == {
+        'schema': 1, 'wire_r': 900e-6, 'n_cond': 16,
+        'conductors_per_column': 16, 'n_layers': 1, 'pitch': 4363e-6,
+        'mu_r': 20000.0, 'temperature': 60.0,
+        'freqs': [100.0, 40000.0, 120000.0], 'working_directory': '/wd',
+        'core_inner_diameter': 24e-3, 'yoke': 6e-3,
+    }
+    assert abs(PROXY_LEG_DIAMETER - 24e-3) < 1e-12  # what callers pass as leg_d_um
+
+
+def test_femmt_tool_paths_missing():
+    # env is read at CALL time; a bogus home must raise ONE error naming
+    # every missing piece — never degrade to a silent no-FEM path.
+    import os
+    import tempfile
+    from maglib.fem.femmt_toroid import _tool_paths
+
+    prev = os.environ.get('FETLIB_FEMMT_HOME')
+    os.environ['FETLIB_FEMMT_HOME'] = tempfile.mkdtemp()
+    try:
+        _tool_paths()
+        raise AssertionError('empty FETLIB_FEMMT_HOME must raise')
+    except RuntimeError as e:
+        msg = str(e)
+        assert 'bin/python' in msg and 'femmt' in msg
+        assert 'FETLIB_FEMMT_HOME' in msg
+    finally:
+        if prev is None:
+            del os.environ['FETLIB_FEMMT_HOME']
+        else:
+            os.environ['FETLIB_FEMMT_HOME'] = prev
+
+
+def test_femmt_toroid_fem():
+    # Real FEM run, ~seconds-to-minutes. Opt-in via FETLIB_RUN_FEM_TESTS=1.
+    # When the flag IS set and the femmt venv is missing, the RuntimeError
+    # propagates — skipping then would be the skip-guarded false PASS above.
+    import os
+    if os.environ.get('FETLIB_RUN_FEM_TESTS') != '1':
+        import pytest
+        pytest.skip('set FETLIB_RUN_FEM_TESTS=1 to run the femmt FEM test')
+
+    from maglib.fem import femmt_toroid_acr
+    from maglib.wire import acr_factor_micrometals, MaterialResistivity
+
+    r = femmt_toroid_acr(core_id=24.13e-3, wire_d=1.8e-3, turns=16, strands=1,
+                         freqs=[40e3, 120e3], wire_od=1.9e-3)
+    assert r.fr_total[0] >= 1 and r.fr_total[1] >= r.fr_total[0]
+    assert r.provenance['guards']['column_symmetry_rel_dev'] < 0.05
+    f_se, f_pe = acr_factor_micrometals(
+        MaterialResistivity.CopperAnnealed.value, 1.8e-3, 40e3, 1, 16,
+        id=24.13e-3, od=46.74e-3)
+    # session-validated: TOTAL Fr agrees within ~9% for 1 layer (the EXCESS
+    # ratio is looser, ~17%, because the DC term is subtracted); 15% margin
+    assert abs(rel_err(r.fr_total[0], 1 + f_se + f_pe)) < 0.15, \
+        (r.fr_total[0], 1 + f_se + f_pe)
