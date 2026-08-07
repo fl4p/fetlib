@@ -140,6 +140,14 @@ MagInc_106_KoolMu60 = MagneticCoreSpecs('0077894A7', MagInc_KoolMu_60,
                                         Vol=4150e-9,  # mm3 eff. Volume
                                         )
 
+MicrometalsT130 = ToroidShape('130', l_e=8.15e-2, A_e=0.672e-4, Vol=5.69e-6, od=33.02e-3, id=19.94e-3, ht=10.67e-3)
+MicrometalsT132 = ToroidShape('132', l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
+MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6, od=46.74e-3, id=24.13e-3, ht=18.03e-3)
+# https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
+
+# https://www.semic.cz/media/pdf/Ljf_T184-S-125A_KD.pdf
+KDM_KS184 = ToroidShape('KS184', l_e=10.74e-2, A_e=1.99e-4, Vol=21.30e-6, od=46.7e-3, id=24.11e-3, ht=18.0e-3)
+
 # https://www.kdm-mag.com/products/details-toroidal-1375.html
 # https://semic.cz/!old/files/pdf_www/Ljf_KS130-060A_KD.pdf
 KDM_KS130_060A = MagneticCoreSpecs('KDM_KS130_060A', KDM_SendustKS_60,
@@ -151,15 +159,8 @@ KDM_KS130_060A = MagneticCoreSpecs('KDM_KS130_060A', KDM_SendustKS_60,
 
 KDM_KS184_125A = MagneticCoreSpecs('KDM_KS184_125A', materials.KDM_SendustKS_125,
                                    A_L=281e-9,  # nH/N2
-                                   l_e=10.74e-2,  # cm
-                                   A_e=1.99e-4,  # cm2
-                                   Vol=21.30e-6,
+                                   shape=KDM_KS184,  # supplies l_e/A_e/Vol + bore (KDM datasheet)
                                    )
-
-MicrometalsT130 = ToroidShape('130', l_e=8.15e-2, A_e=0.672e-4, Vol=5.69e-6, od=33.02e-3, id=19.94e-3, ht=10.67e-3)
-MicrometalsT132 = ToroidShape('132', l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
-MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6, od=46.74e-3, id=24.13e-3)
-# https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
 
 # https://datasheets.micrometals.com/MS-130060-2-DataSheet.pdf
 Micrometals_MS_130_060 = MagneticCoreSpecs('MS-130060-2',

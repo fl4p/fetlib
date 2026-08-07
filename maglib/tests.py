@@ -222,6 +222,81 @@ def test_coil():
     assert abs(rel_err(coil.bundle_diameter, 4.59e-3)) < 0.01
 
 
+def test_winding_fit():
+    """Bore-limited strand count, pinned against the hand-checked T184 case.
+
+    KDM KS184 (ID 24.11 mm), 1.8 mm G2 wire, 16 turns: one bore pass per
+    strand-turn, 0.4 area fill max for stiff hand-wound wire.
+    """
+    import pytest
+
+    from maglib.winding import (enameled_od, layer_fit, max_strands,
+                                mean_turn_length, strand_cut_length,
+                                window_fill)
+
+    # IEC 60317-0-1 overall diameters, exact table rows
+    assert abs(rel_err(enameled_od(1.8e-3, 2), 1.909e-3)) < 1e-6
+    assert abs(rel_err(enameled_od(1.8e-3, 1), 1.872e-3)) < 1e-6
+    assert abs(rel_err(enameled_od(1.0e-3, 3), 1.124e-3)) < 1e-6
+    # interpolated size lands between its neighbours
+    assert 1.706e-3 < enameled_od(1.65e-3, 2) < 1.809e-3
+    # refusals: outside the table, and grade 3 has no build above 1.32 mm
+    with pytest.raises(ValueError):
+        enameled_od(5e-3, 2)
+    with pytest.raises(ValueError):
+        enameled_od(0.1e-3, 2)
+    with pytest.raises(ValueError):
+        enameled_od(1.8e-3, 3)
+
+    # T184 case: 0.4*(24.11/1.9)^2 = 64.4 passes -> 64 -> 4 strands
+    assert max_strands(24.11e-3, 1.9e-3, 16, 0.4) == 4
+    assert max_strands(24.11e-3, 1.9e-3, 16, 0.33) == 3
+    assert window_fill(24.11e-3, 1.9e-3, 64) < 0.4 < window_fill(
+        24.11e-3, 1.9e-3, 65)
+
+    # monotone: fatter wire never gains strands
+    prev = 1000
+    for od in (1.0e-3, 1.5e-3, 1.9e-3, 2.5e-3, 3.5e-3):
+        s = max_strands(24.11e-3, od, 16, 0.4)
+        assert s <= prev, (od, s, prev)
+        prev = s
+    # impossible fit refuses, never returns 0-meaning-fine
+    with pytest.raises(ValueError):
+        max_strands(24.11e-3, 5e-3, 16, 0.4)
+    # garbage geometry raises ValueError, not assert (which dies under -O;
+    # negative wire_od once made layer_fit loop unbounded there)
+    with pytest.raises(ValueError):
+        max_strands(24.11e-3, -1.9e-3, 16, 0.4)
+    with pytest.raises(ValueError):
+        layer_fit(24.11e-3, -1.9e-3, 64)
+
+    # the KDM KS184 core carries its own datasheet bore (not the T184 clone)
+    core_id, core_od = cores.KDM_KS184_125A.winding_bore()
+    assert abs(rel_err(core_id, 24.11e-3)) < 1e-9 and abs(
+        rel_err(core_od, 46.7e-3)) < 1e-9
+    assert max_strands(core_id, enameled_od(1.8e-3, 2), 16, 0.4) == 3
+
+    # layer 1 ideal capacity: floor(2*pi*11.105/1.9) = 36
+    layers = layer_fit(24.11e-3, 1.9e-3, 36, packing=1.0)
+    assert layers[0][1] == 36 and layers[0][2] == 36 and len(layers) == 1
+    # 64 passes at practical packing spill into a third layer
+    layers = layer_fit(24.11e-3, 1.9e-3, 64, packing=0.8)
+    assert sum(l[2] for l in layers) == 64
+    assert all(l[2] <= l[1] for l in layers)
+    # hole shrinks monotonically and stays open
+    holes = [l[3] for l in layers]
+    assert all(a > b > 0 for a, b in zip(holes, holes[1:])) or len(holes) == 1
+    # overstuffing the bore refuses rather than returning a short list
+    with pytest.raises(ValueError):
+        layer_fit(24.11e-3, 1.9e-3, 500, packing=1.0)
+
+    # T184-S-125A: 46.7 x 24.11 x 18 mm -> ~70 mm/turn, ~1.4 m cut per strand
+    mlt = mean_turn_length(46.7e-3, 24.11e-3, 18e-3, 1.9e-3, layers=2)
+    assert 0.065 < mlt < 0.078, mlt
+    cut = strand_cut_length(mlt, 16)
+    assert 1.3 < cut < 1.6, cut
+
+
 def test_wire():
     from dslib import rel_err
 
