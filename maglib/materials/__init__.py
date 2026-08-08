@@ -51,10 +51,25 @@ class MagneticCoreMaterialSpecs:
                  core_loss_density: Callable,
                  dc_bias: Callable,
                  dc_magnetization: Callable = None,
+                 coef_source: str = None,
                  ):
+        """:param coef_source: where the curve coefficients came from --
+            ``'datasheet'`` (this exact part's own printed values),
+            ``'band'`` (a per-(material, permeability) fit shared across an OD
+            range), or None for the hand-entered materials in this module.
+
+        Provenance is carried rather than inferred because the two are not
+        equally trustworthy and the difference is one-directional: measured
+        against each datasheet's own printed nominals, the band fit runs up to
+        35% LOW on core loss and 22% HIGH on retained permeability. A core
+        served from the band therefore scores BETTER than the manufacturer
+        says, and in a loss ranking that means the worse-sourced a core is, the
+        more likely it is to win. A caller has to be able to see which it got.
+        """
         self.mfr = mfr
         self.mpn = mpn
         self.mu_r = mu_r
+        self.coef_source = coef_source
         assert isinstance(mu_r, int) and 10 <= mu_r <= 6000
         self.core_loss_density = _finite_or_raise(
             core_loss_density, mfr, mpn, 'core_loss_density')
@@ -198,8 +213,14 @@ def load_micrometals_parts():
     check is re-runnable as a test rather than a claim about a past run --
     see test_micrometals_per_part_coefficients. Worst residual: 0.32%.
 
-    The 43 dropped parts are not parse failures; those URLs return a 404 page,
-    i.e. the part number does not exist.
+    COVERAGE IS INCOMPLETE. 43 datasheet URLs return HTTP 403 AccessDenied (an
+    S3 error document, not a PDF), unchanged on re-fetch with browser headers.
+    Those part numbers ARE catalogued -- all 43 appear in the Micrometals
+    catalogue -- so this is a fetch gap, not a nonexistent-part gap, and it
+    falls on sizes 250-775 at mu 125-205, i.e. exactly the large cores a
+    loss ranking favours. An earlier version of this docstring called them
+    404s and said the parts did not exist; nothing had ever computed that, and
+    it was wrong on both halves.
     """
     import pandas as pd
     return pd.read_csv(os.path.dirname(__file__) + '/micrometals_parts.csv',
@@ -283,6 +304,7 @@ def micrometals_part_material(part: str, dc_magnetization: Callable = None):
         dc_bias=micrometals_dc_bias_model(
             r['ds_a'], r['ds_b'], r['ds_c'], r['ds_d']),
         dc_magnetization=dc_magnetization,
+        coef_source='datasheet',
     )
 
 
@@ -361,6 +383,7 @@ def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'E
         core_loss_density=micrometals_core_loss_model(*m[9:13]),
         dc_bias=micrometals_dc_bias_model(*m[5:9]),
         dc_magnetization=micrometals_dc_mag_model(ui, *m[23:28]),
+        coef_source='band',
     )
 
 

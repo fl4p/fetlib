@@ -299,6 +299,37 @@ def test_micrometals_size_dependent_coefficients():
         'drop this assert and re-check the T250-and-up OC numbers'
 
 
+def test_wound_pass_count_is_not_monotone_in_turns():
+    """More turns does NOT mean a worse winding fit. Pinning the counterexample.
+
+    A turns sweep that hits a fit failure is tempting to ``break`` out of, on
+    the reasoning that more turns can only fit worse. It is false: the wound
+    pass count is ``n * floor(passes / n)``, a step function that OSCILLATES --
+    50 turns wind 100 passes, 51 turns wind 51. Acting on the false version
+    deleted 40,433 of 42,445 candidates from apps/inductor_core_sweep.py at
+    --fill 0.40 --packing 0.45, silently, taking the whole top 10 with it, and
+    cost exactly nothing at the DEFAULT packing -- so no amount of
+    default-value testing could have found it.
+    """
+    from maglib.winding import max_strands
+
+    core_id, wire_od = 31.37e-3, 1.909e-3        # T250 coated bore, 1.8 mm G2
+    wound = [n * max_strands(core_id, wire_od, n, 0.4) for n in range(1, 109)]
+    assert wound[0] == 108, wound[0]             # the bore's whole pass budget
+
+    # If it were monotone non-increasing no later entry could exceed an
+    # earlier one. It does, repeatedly.
+    rises = [(n + 1, wound[n - 1], wound[n]) for n in range(1, len(wound))
+             if wound[n - 1] < wound[n]]
+    assert len(rises) > 10, rises
+
+    # The sharpest single step: 54 turns wind the full 108 passes, 55 turns
+    # wind 55 -- and yet n=56..108 climb back to 108 again. A fit failure
+    # anywhere in that valley says nothing whatsoever about larger n.
+    assert wound[53] == 108 and wound[54] == 55
+    assert max(wound[54:]) == 108
+
+
 def test_micrometals_per_part_coefficients():
     """Every per-part row must reproduce its own datasheet's printed numbers.
 
@@ -347,6 +378,74 @@ def test_micrometals_per_part_coefficients():
     assert t250.mat.dc_bias(H_oe=30) < 0.9 * band250.dc_bias(H_oe=30)
     assert t184.mat.core_loss_density(**at) == band184.core_loss_density(**at)
     assert t184.mat.dc_bias(H_oe=30) == band184.dc_bias(H_oe=30)
+
+    # The self-check above proves each row is INTERNALLY coherent. It cannot
+    # prove the block belongs to the part it is keyed under: swapping two
+    # rows' coefficients AND calibration together passes it untouched, and
+    # that mis-keying is 78% wrong at the operating point. So check the key
+    # against the row, and that no two rows are interchangeable.
+    for _, r in df.iterrows():
+        fam, rest = r['part'].split('-')[0], r['part'].split('-')[1]
+        assert fam == r['fam'], r['part']
+        assert rest[:3] == r['size'], r['part']
+        assert int(rest[3:]) == int(r['ui']), r['part']
+        assert r['part'].endswith('-2') or r['part'].endswith('-8'), r['part']
+    # Sharing a calibration fingerprint is legal and common (same material and
+    # permeability in several sizes). What must NOT happen is two rows sharing
+    # a fingerprint while carrying DIFFERENT coefficients -- that is precisely
+    # the pair a whole-row swap could exchange undetected.
+    grouped = df.groupby(['cal_bpk_g', 'cal_f_khz', 'cal_cl_nom_mw_cm3',
+                          'cal_h_oe', 'cal_perm_nom_pct'])
+    for _, g in grouped:
+        coefs = g[['cl_a', 'cl_b', 'cl_c', 'cl_d',
+                   'ds_a', 'ds_b', 'ds_c', 'ds_d']].drop_duplicates()
+        assert len(coefs) == 1, 'interchangeable rows: %s' % list(g['part'])
+
+    # The fingerprint check above still cannot catch a WHOLE-ROW swap, because
+    # moving coefficients and calibration together leaves both rows internally
+    # coherent. Catching that needs an anchor OUTSIDE the row: the band fit for
+    # the same (material, permeability). It is stale enough to disagree by up
+    # to 41%, but not arbitrarily -- so a row whose coefficients belong to a
+    # different material lands outside the legitimate spread.
+    at = dict(Bpk_tesla=0.04, f_khz=40)
+    ratios = []
+    for _, r in df.iterrows():
+        size = int(r['size'])
+        if size not in cores.MicrometalsToroidShapes:
+            continue
+        try:
+            band = M.micrometals_material(
+                r['fam'], 'T', int(r['ui']),
+                od=cores.MicrometalsToroidShapes[size].OD)
+        except (M.MaterialNotFound, M.AmbiguousMaterialSize):
+            continue
+        part = M.micrometals_part_material(r['part'])
+        ratios.append((part.core_loss_density(**at) / band.core_loss_density(**at),
+                       r['part']))
+    assert len(ratios) > 300, len(ratios)
+    for ratio, part in ratios:
+        assert 0.55 < ratio < 1.50, (part, ratio)
+
+    # Calibrate that bound against the exact failure it exists to catch: the
+    # OC-250090-2 row (rank #1 in a real sweep) carrying MS-130060-2's
+    # coefficients. Internally self-consistent, 78% wrong at the operating
+    # point, and invisible to every check above this one.
+    mis_keyed = M.micrometals_part_material('MS-130060-2')
+    band_oc = M.micrometals_material(
+        'OC', 'T', 90, od=cores.MicrometalsToroidShapes[250].OD)
+    bad_ratio = mis_keyed.core_loss_density(**at) / band_oc.core_loss_density(**at)
+    assert not (0.55 < bad_ratio < 1.50), bad_ratio
+
+    # provenance must be carried, not inferred: the band fit is optimistic
+    # (up to 35% low on core loss), so a caller ranking cores by loss has to
+    # be able to tell which coefficients it got
+    assert M.micrometals_part_material('MS-250125-2').coef_source == 'datasheet'
+    assert M.micrometals_material('MS', 'T', 125, od=46.74e-3).coef_source == 'band'
+    assert cores.MicrometalsToroid('MS', 125, 250).mat.coef_source == 'datasheet'
+    # GX has no per-part rows at all, so it can only come from the band --
+    # this is the case that silently held rank #2 in a loss sweep
+    assert 'GX' not in set(df['fam'])
+    assert cores.MicrometalsToroid('GX', 125, 250).mat.coef_source == 'band'
 
     # a part with no datasheet row must refuse, not fall through to nan
     with pytest.raises(M.PartNotFound):
