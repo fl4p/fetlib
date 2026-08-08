@@ -1,3 +1,5 @@
+import math
+
 from dslib import rel_err
 from dslib.spec_models import DcDcLoadParams
 from maglib import cores
@@ -121,6 +123,103 @@ def test_winding_bore():
                  cores.Micrometals_OE_226_060):
         with pytest.raises(ValueError, match=core.mpn):
             core.winding_bore()
+
+
+def test_micrometals_toroid_shapes():
+    """Pin the catalogue toroid sizes, and the coated-vs-bare bore distinction.
+
+    The library used to define exactly two toroid shapes with a bore (130 and
+    184) out of the 48 sizes Micrometals publishes. That is not a neutral gap:
+    winding fit is limited by BORE AREA, so a design sweep over the shapes
+    maglib happened to know silently answered a narrower question than it was
+    asked -- and answered it confidently, because ``winding_bore()`` refuses
+    shape-less cores rather than guessing, so the missing sizes never appeared
+    as failures. One size up (T250) beats three stacked T184s.
+
+    Reference values are the catalogue "Physical/Magnetic Dimensions" blocks,
+    cross-checked against the per-part datasheets. l_e/A_e/Vol are pinned
+    loosely (self-consistency) but OD/ID/Ht exactly, since those are what the
+    winding models consume.
+    """
+    import pytest
+
+    # (size, OD, ID_bare, ID_coated_min, Ht) in mm
+    catalogue = [
+        (130, 33.02, 19.94, 19.30, 10.67), (132, 33.02, 19.94, 19.30, 11.18),
+        (157, 39.88, 24.13, 23.32, 14.48), (184, 46.74, 24.13, 23.32, 18.03),
+        (185, 46.74, 28.70, 27.89, 15.24), (200, 50.80, 31.75, 30.94, 13.46),
+        (225, 57.15, 35.56, 34.75, 13.97), (226, 57.15, 26.39, 25.58, 15.24),
+        (250, 63.50, 31.37, 30.48, 25.00), (292, 74.10, 45.30, 44.10, 35.00),
+        (300, 77.80, 49.23, 47.96, 12.70), (301, 77.80, 49.23, 47.96, 15.88),
+    ]
+    for size, od, id_bare, id_coated, ht in catalogue:
+        sh = cores.MicrometalsToroidShapes[size]
+        assert abs(sh.OD - od * 1e-3) < 1e-9, (size, sh.OD)
+        assert abs(sh.ID - id_bare * 1e-3) < 1e-9, (size, sh.ID)
+        assert abs(sh.ID_coated - id_coated * 1e-3) < 1e-9, (size, sh.ID_coated)
+        assert abs(sh.HT - ht * 1e-3) < 1e-9, (size, sh.HT)
+        # the coating always costs bore, never adds it
+        assert 0 < sh.ID_coated < sh.ID < sh.OD
+        # A_e ~ (OD-ID)/2*Ht and l_e ~ pi*(OD+ID)/2, times a stacking factor.
+        # The catalogue quotes EFFECTIVE values, so the ratios sit at 0.94-0.98
+        # rather than 1.0; the point of the check is that an OD/ID/Ht mix-up in
+        # the parse breaks both, and cannot break neither. Calibrated below.
+        assert 0.93 < sh.A_e / ((sh.OD - sh.ID) / 2 * sh.HT) < 1.00, size
+        assert 0.94 < sh.l_e / (math.pi * (sh.OD + sh.ID) / 2) < 1.00, size
+
+    # Calibrate that pair against the failure it exists to catch: a shape whose
+    # OD and ID were read in the wrong order. A guard never seen to fire is not
+    # a guard, and this one is the only thing standing between a mis-parsed
+    # catalogue column and a plausible-looking core.
+    swapped = cores.ToroidShape('swapped', l_e=cores.MicrometalsT250.l_e,
+                                A_e=cores.MicrometalsT250.A_e,
+                                Vol=cores.MicrometalsT250.Vol,
+                                od=cores.MicrometalsT250.ID,   # <- swapped
+                                id=cores.MicrometalsT250.OD,
+                                ht=cores.MicrometalsT250.HT)
+    assert not (0.93 < swapped.A_e / ((swapped.OD - swapped.ID) / 2 * swapped.HT) < 1.00)
+    # ...and an OD/Ht swap, which leaves OD > ID intact and so slips past a
+    # naive ordering check
+    od_ht = cores.ToroidShape('od_ht', l_e=cores.MicrometalsT250.l_e,
+                              A_e=cores.MicrometalsT250.A_e,
+                              Vol=cores.MicrometalsT250.Vol,
+                              od=cores.MicrometalsT250.HT * 2.5,
+                              id=cores.MicrometalsT250.ID * 0.5,
+                              ht=cores.MicrometalsT250.OD)
+    assert not (0.94 < od_ht.l_e / (math.pi * (od_ht.OD + od_ht.ID) / 2) < 1.00)
+
+    # T130's Vol was T132's (5.69e-6). A_e*l_e disagreed by 3.8%, which is
+    # INSIDE ToroidShape's 0.9..1.1 consistency assert -- the guard could not
+    # see it. Pin the value itself, not just the ratio.
+    assert abs(cores.MicrometalsT130.Vol - 5.48e-6) < 1e-9
+    assert abs(cores.MicrometalsT132.Vol - 5.69e-6) < 1e-9
+
+    # A_L from geometry vs the catalogue's own nH/N^2 (MS 125u)
+    for size, a_l_cat_nh in ((250, 430), (184, 281), (226, 288)):
+        core = cores.MicrometalsToroid('MS', 125, size)
+        assert abs(core.A_L * 1e9 / a_l_cat_nh - 1) < 0.04, (size, core.A_L)
+
+    # the coated bore is what a winding fits through, and it is load-bearing:
+    # T250 at 15 turns takes 7 strands on the bare bore and only 6 on the real
+    # one, which is the difference between two competing designs
+    from maglib.winding import max_strands
+    t250 = cores.MicrometalsToroid('MS', 125, 250)
+    assert max_strands(t250.winding_bore()[0], 1.909e-3, 15) == 7
+    assert max_strands(t250.winding_bore_coated()[0], 1.909e-3, 15) == 6
+    assert max_strands(t250.winding_bore_coated()[0], 1.909e-3, 14) == 7
+
+    # unknown coated ID must REFUSE, not fall back to the bare ID: the fallback
+    # errs toward claiming a strand that does not physically fit
+    with pytest.raises(ValueError, match='coated'):
+        cores.KDM_KS184_125A.winding_bore_coated()
+    # ...and the shape-less cores still fail on the earlier, coarser check
+    with pytest.raises(ValueError, match=cores.KDM_KS130_060A.mpn):
+        cores.KDM_KS130_060A.winding_bore_coated()
+
+    # stacking is axial: the bore does not change, which is exactly why
+    # stacking cannot buy strands
+    assert cores.MicrometalsT250.stack(3).ID_coated == cores.MicrometalsT250.ID_coated
+    assert cores.MicrometalsT250.stack(3).HT == 3 * cores.MicrometalsT250.HT
 
 
 def test_dc_bias_suppression_is_not_silent():

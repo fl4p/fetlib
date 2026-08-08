@@ -9,7 +9,8 @@ from maglib.materials import MagInc_KoolMu_60, KDM_SendustKS_60, MagneticCoreMat
 
 
 class ToroidShape():
-    def __init__(self, name, l_e, A_e, Vol, od=math.nan, id=math.nan, ht=math.nan):
+    def __init__(self, name, l_e, A_e, Vol, od=math.nan, id=math.nan, ht=math.nan,
+                 id_coated=math.nan):
         """
 
         :param name:
@@ -17,8 +18,12 @@ class ToroidShape():
         :param A_e:
         :param Vol:
         :param od:
-        :param id:
+        :param id: BARE core nominal inner diameter
         :param ht:
+        :param id_coated: coated-core MINIMUM inner diameter, i.e. the bore a
+            winding actually has to pass through. Datasheets publish both; the
+            coating costs 0.8-1.3 mm of bore, which is a whole strand on a
+            small core. See ``winding_bore_coated()``.
         """
 
         # assert math.isnan(od), "not implemented"
@@ -32,6 +37,7 @@ class ToroidShape():
         self.ID = id
         self.OD=od
         self.HT=ht
+        self.ID_coated = id_coated
 
         assert 0.9 < (self.A_e * self.l_e / self.Vol) < 1.1, (self.A_e * self.l_e, self.Vol)
 
@@ -40,7 +46,7 @@ class ToroidShape():
 
     def stack(self, n):
         return ToroidShape(f'{n}s({self.name})', l_e=self.l_e, A_e=self.A_e*n, Vol=self.Vol*n, od=self.OD, id=self.ID,
-                           ht=self.HT*n
+                           ht=self.HT*n, id_coated=self.ID_coated
                            )
 
 
@@ -105,6 +111,33 @@ class MagneticCoreSpecs:
                 'with the datasheet OD/ID rather than guessing them.' % self.mpn)
         return self.shape.ID, self.shape.OD
 
+    def winding_bore_coated(self):
+        """(ID_coated_min, OD) in m — the bore a winding must actually fit through.
+
+        ``winding_bore()`` returns the BARE-core nominal ID, which no wire ever
+        sees: powder cores ship parylene/epoxy coated, and the datasheets quote
+        a separate coated-core MINIMUM ID that is 0.8-1.3 mm smaller. That is a
+        real strand on a small core -- on a T250 the bare bore admits 108
+        passes of 1.909 mm wire at 0.4 fill and the coated bore only 101, which
+        moves the optimum from 15 turns x 7 strands to 14 x 7.
+
+        This RAISES when the coated ID is unknown rather than falling back to
+        the bare ID. The fallback would be optimistic in exactly the direction
+        that matters -- it would silently claim a strand that does not fit --
+        and a strand-count model that quietly rounds in its own favour is worse
+        than one that refuses, because nothing downstream can tell the
+        difference between "measured" and "assumed".
+        """
+        id_bare, od = self.winding_bore()          # reuse its shape/OD checks
+        if not math.isfinite(getattr(self.shape, 'ID_coated', math.nan)):
+            raise ValueError(
+                '%s: coated-core minimum ID unknown -- the ToroidShape carries '
+                'only the bare ID (%.2f mm). Winding fit must not be computed '
+                'from the bare bore; the coating takes ~0.8-1.3 mm of it. Add '
+                'id_coated=<datasheet "Coated Core (min)" ID> to the shape.'
+                % (self.mpn, id_bare * 1e3))
+        return self.shape.ID_coated, od
+
     def stack(self, n):
         assert n > 0
         if n == 1:
@@ -140,9 +173,47 @@ MagInc_106_KoolMu60 = MagneticCoreSpecs('0077894A7', MagInc_KoolMu_60,
                                         Vol=4150e-9,  # mm3 eff. Volume
                                         )
 
-MicrometalsT130 = ToroidShape('130', l_e=8.15e-2, A_e=0.672e-4, Vol=5.69e-6, od=33.02e-3, id=19.94e-3, ht=10.67e-3)
-MicrometalsT132 = ToroidShape('132', l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6)
-MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6, od=46.74e-3, id=24.13e-3, ht=18.03e-3)
+# Toroid shapes from the Micrometals Alloy Powder Cores catalogue (2021),
+# "Physical Dimensions" / "Magnetic Dimensions" block per size:
+#   https://s3.amazonaws.com/micrometals-production/filer_public/2f/ed/
+#     2fedd6eb-44d0-4834-a442-8222486f0b77/micrometals_alloy-en-2021.pdf
+# od/id/ht are the BARE CORE NOMINAL values, id_coated the COATED CORE (min) ID.
+# Every one of these was cross-checked against the per-part datasheet at
+# https://datasheets.micrometals.com/<PN>-DataSheet.pdf, and structurally
+# against A_e ~ (OD-ID)/2*Ht and l_e ~ pi*(OD+ID)/2.
+#
+# Why the list is long: winding fit is limited by BORE AREA, not core volume,
+# so a sweep restricted to the two sizes this module used to define (130/184)
+# cannot see the answer -- one size up beats stacking, because stacking
+# multiplies A_L but adds exactly zero bore. `winding_bore()` correctly refused
+# the shape-less cores, which made the omission silent rather than wrong.
+MicrometalsT130 = ToroidShape('130', l_e=8.15e-2, A_e=0.672e-4, Vol=5.48e-6, od=33.02e-3, id=19.94e-3, ht=10.67e-3,
+                              id_coated=19.30e-3)
+# ^ Vol was 5.69e-6 here, which is T132's volume, not T130's. A_e*l_e = 5.48e-6
+#   disagreed with it by 3.8% -- inside the 0.9..1.1 consistency assert below,
+#   so it never fired. The catalogue and KDM_KS130_060A both say 5.48.
+MicrometalsT132 = ToroidShape('132', l_e=8.15e-2, A_e=0.698e-4, Vol=5.69e-6, od=33.02e-3, id=19.94e-3, ht=11.18e-3,
+                              id_coated=19.30e-3)
+MicrometalsT157 = ToroidShape('157', l_e=9.85e-2, A_e=1.07e-4, Vol=10.50e-6, od=39.88e-3, id=24.13e-3, ht=14.48e-3,
+                              id_coated=23.32e-3)
+MicrometalsT184 = ToroidShape('184', l_e=10.743e-2, A_e=1.99e-4, Vol=21.4e-6, od=46.74e-3, id=24.13e-3, ht=18.03e-3,
+                              id_coated=23.32e-3)
+MicrometalsT185 = ToroidShape('185', l_e=11.62e-2, A_e=1.34e-4, Vol=15.60e-6, od=46.74e-3, id=28.70e-3, ht=15.24e-3,
+                              id_coated=27.89e-3)
+MicrometalsT200 = ToroidShape('200', l_e=12.733e-2, A_e=1.25e-4, Vol=15.90e-6, od=50.80e-3, id=31.75e-3, ht=13.46e-3,
+                              id_coated=30.94e-3)
+MicrometalsT225 = ToroidShape('225', l_e=14.296e-2, A_e=1.44e-4, Vol=20.70e-6, od=57.15e-3, id=35.56e-3, ht=13.97e-3,
+                              id_coated=34.75e-3)
+MicrometalsT226 = ToroidShape('226', l_e=12.506e-2, A_e=2.29e-4, Vol=28.60e-6, od=57.15e-3, id=26.39e-3, ht=15.24e-3,
+                              id_coated=25.58e-3)
+MicrometalsT250 = ToroidShape('250', l_e=14.314e-2, A_e=3.89e-4, Vol=55.80e-6, od=63.50e-3, id=31.37e-3, ht=25.00e-3,
+                              id_coated=30.48e-3)
+MicrometalsT292 = ToroidShape('292', l_e=18.40e-2, A_e=4.94e-4, Vol=90.90e-6, od=74.10e-3, id=45.30e-3, ht=35.00e-3,
+                              id_coated=44.10e-3)
+MicrometalsT300 = ToroidShape('300', l_e=19.612e-2, A_e=1.77e-4, Vol=34.80e-6, od=77.80e-3, id=49.23e-3, ht=12.70e-3,
+                              id_coated=47.96e-3)
+MicrometalsT301 = ToroidShape('301', l_e=19.612e-2, A_e=2.22e-4, Vol=43.50e-6, od=77.80e-3, id=49.23e-3, ht=15.88e-3,
+                              id_coated=47.96e-3)
 # https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
 
 # https://www.semic.cz/media/pdf/Ljf_T184-S-125A_KD.pdf
@@ -213,7 +284,17 @@ Micrometals_OE_226_060 = MagneticCoreSpecs('OE-226060-2', materials.Micrometals_
 
 MicrometalsToroidShapes = {
     130: MicrometalsT130,
+    132: MicrometalsT132,
+    157: MicrometalsT157,
     184: MicrometalsT184,
+    185: MicrometalsT185,
+    200: MicrometalsT200,
+    225: MicrometalsT225,
+    226: MicrometalsT226,
+    250: MicrometalsT250,
+    292: MicrometalsT292,
+    300: MicrometalsT300,
+    301: MicrometalsT301,
 }
 
 
