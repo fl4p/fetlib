@@ -115,9 +115,18 @@ def _value_path(backlog_root: Path, item: dict[str, Any]) -> tuple[Path, Path]:
         for parent in (packet_file.parent, *packet_file.parents):
             candidates.append((parent / "review-backlog" / p, parent / "review-backlog"))
             candidates.append((parent / p, parent))
-    for review_backlog in sorted((REPO / "out").glob("**/review-backlog")):
-        candidates.append((review_backlog / p, review_backlog))
+    # The canonical backlog root comes BEFORE the out/ copies: it is the root
+    # build_html_review_packets was given (--root backlog), so it holds the extraction the
+    # reviewed card actually shows. The out/<project>/<run>/review-backlog trees are
+    # per-run copies left behind by older runs, and they were being preferred purely by
+    # path sort -- '...-refresh/' sorts before '...-refresh2/', so a GREEN card was gated
+    # against a July extraction with axis_calibration_trusted=False while the current one
+    # was trusted. That is a stale-value serve, not a rejection: the gate reported reasons
+    # belonging to a file the reviewer never saw.
     candidates.append((backlog_root / p, backlog_root))
+    for review_backlog in sorted((REPO / "out").glob("**/review-backlog"),
+                                 key=lambda d: d.stat().st_mtime, reverse=True):
+        candidates.append((review_backlog / p, review_backlog))
 
     seen = set()
     for path, root in candidates:
