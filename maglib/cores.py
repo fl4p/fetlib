@@ -302,4 +302,9 @@ def MicrometalsToroid(mat: materials.MicroMetalsMatLiteral, ui, shape: Union[Tor
     if isinstance(shape, int):
         shape = MicrometalsToroidShapes[shape]
     mpn = mat + '-' + shape.name + '%03d' % ui
-    return MagneticCoreSpecs(mpn, materials.micrometals_material(mat, 'T', ui), shape=shape)
+    # od= is what selects the right size band of curve-fit coefficients.
+    # Micrometals splits several materials at an OD threshold (OC 125u splits
+    # at exactly T250), and the shape knows its own OD, so there is no reason
+    # for a caller to have to supply it -- or to get the small-size fit for a
+    # large core, which is what happened before.
+    return MagneticCoreSpecs(mpn, materials.micrometals_material(mat, 'T', ui, od=shape.OD), shape=shape)

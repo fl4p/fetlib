@@ -41,6 +41,7 @@ from maglib.tests import (test_bpk_sinusoidal,  # noqa: F401,E402
                           test_femmt_tool_paths_missing,  # noqa: F401,E402
                           test_femmt_toroid_fem,  # noqa: F401,E402
                           test_mat,   # noqa: F401,E402
+                          test_micrometals_size_dependent_coefficients,  # noqa: F401,E402
                           test_micrometals_toroid_shapes,  # noqa: F401,E402
                           test_power_loss,  # noqa: F401,E402
                           test_toroid_column_geometry,  # noqa: F401,E402

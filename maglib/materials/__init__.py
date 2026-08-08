@@ -1,4 +1,6 @@
+import math
 import os.path
+import re
 import warnings
 from math import isfinite, nan
 from typing import Callable, Literal
@@ -191,13 +193,108 @@ class MaterialNotFound(Exception):
     pass
 
 
-def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int):
+class AmbiguousMaterialSize(Exception):
+    """Coefficients for this (material, shape, perm) depend on the core's OD.
+
+    Deliberately NOT a subclass of MaterialNotFound. Sweeps wrap the lookup in
+    ``except MaterialNotFound: continue`` to skip combinations that are not
+    manufactured; if this inherited from it, an ambiguous size would be
+    silently skipped or -- worse, before this existed -- silently resolved to
+    the small-size row. Callers must widen their except clause on purpose.
+    """
+
+
+# "T(OD=5.22-6.00 in)" -> ('T', 5.22, 6.00). Micrometals publishes separate
+# curve fits above a per-material OD threshold; the plain, unqualified row is
+# the SMALL-size fit and is implicitly bounded above by the qualified range.
+_PART_TYPE_OD_RE = re.compile(
+    r'^(?P<shape>[A-Z.]+)\(OD=(?P<lo>[\d.]+)-(?P<hi>[\d.]+)\s*in\)$')
+
+# The catalogue quotes the bounds rounded to 0.01 in, and real ODs sit just
+# outside them: T520 is 132.54 mm = 5.2181 in against a stated range start of
+# 5.22 in. A strict comparison drops T520 out of its own band and back onto the
+# small-size fit -- the exact silent-flattery this function exists to stop.
+_OD_BOUND_TOL_IN = 0.02
+
+
+def _part_type_od_range(part_type: str):
+    """(shape, od_min_m, od_max_m); an unqualified row spans (0, inf)."""
+    m = _PART_TYPE_OD_RE.match(part_type.strip())
+    if not m:
+        return part_type.strip(), 0.0, math.inf
+    lo = (float(m.group('lo')) - _OD_BOUND_TOL_IN) * 25.4e-3
+    hi = (float(m.group('hi')) + _OD_BOUND_TOL_IN) * 25.4e-3
+    return m.group('shape'), lo, hi
+
+
+def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int,
+                         od=None):
+    """Curve-fit coefficients for a Micrometals material.
+
+    :param od: core outer diameter in METRES. Required whenever the CSV holds
+        more than one row for this (mat, shape, ui) -- i.e. whenever the
+        coefficients are size-dependent. See AmbiguousMaterialSize.
+
+    ``micrometals.csv`` carries 16 rows whose PartType is size-qualified
+    (``T(OD=5.22-6.00 in)`` and friends). The old exact match on
+    ``PartType == 'T'`` could not reach any of them, so every caller silently
+    got the SMALL-size fit no matter how big the core. That error is
+    one-directional and points the wrong way: for OC 125u -- where the split is
+    at exactly T250, the size a design sweep is most likely to land on -- the
+    small-size row understates core loss by 25% and overstates retained
+    permeability by 22%. A sweep ranking cores by loss therefore promotes
+    precisely the large cores whose numbers are wrong, and nothing looks
+    broken, because the unreachable rows never surfaced as an error.
+    """
     df = load_micrometals_materials()
-    m = df[(df.iloc[:, 0] == mat) & (df.iloc[:, 1] == shape) & (df.iloc[:, 2] == str(ui))]
-    if len(m) == 0:
+    rows = df[(df.iloc[:, 0] == mat) & (df.iloc[:, 2] == str(ui))]
+    cand = []
+    for i in range(len(rows)):
+        row_shape, od_lo, od_hi = _part_type_od_range(str(rows.iloc[i, 1]))
+        if row_shape == shape:
+            cand.append((od_lo, od_hi, rows.iloc[i, :]))
+    if not cand:
         raise MaterialNotFound(str((mat, shape, ui)))
-    assert len(m) == 1, (mat, shape, ui, m)
-    m = list(map(try_float, m.iloc[0, :]))
+
+    if len(cand) == 1:
+        od_lo, od_hi, row = cand[0]
+        # A lone row may still be size-qualified; honour its band when we were
+        # told the OD, but do not invent a band for an unqualified row.
+        if od is not None and not (od_lo <= od <= od_hi):
+            raise MaterialNotFound(
+                '%s %s %du: the only coefficient set covers OD %.1f-%.1f mm, '
+                'but this core is %.1f mm' % (mat, shape, ui, od_lo * 1e3,
+                                              od_hi * 1e3, od * 1e3))
+    else:
+        if od is None:
+            raise AmbiguousMaterialSize(
+                '%s %s %du has %d size-dependent coefficient sets (%s) -- pass '
+                'od=<core OD in m>. Defaulting to any one of them would pick a '
+                'fit for the wrong core size, and the small-size fit is the '
+                'optimistic one (less loss, more retained permeability).'
+                % (mat, shape, ui, len(cand),
+                   ', '.join('%.1f-%.1f mm' % (lo * 1e3, hi * 1e3) for lo, hi, _ in cand)))
+        # The unqualified row is the SMALL-size fit, so once a qualified band
+        # exists the plain row is implicitly bounded ABOVE by where that band
+        # begins. Leaving it unbounded would make it a catch-all that quietly
+        # serves the small-size coefficients to a core larger than any band
+        # covers -- absence of a matching band must not resolve to the
+        # optimistic fit.
+        qualified = [c for c in cand if math.isfinite(c[1])]
+        lo_first = min(c[0] for c in qualified) if qualified else math.inf
+        bands = qualified + [(lo, min(hi, lo_first), row)
+                             for lo, hi, row in cand if not math.isfinite(hi)]
+        # Prefer the narrowest band containing od, so a qualified row always
+        # beats the small-size one at a shared boundary.
+        match = [c for c in bands if c[0] <= od <= c[1]]
+        if not match:
+            raise MaterialNotFound(
+                '%s %s %du: OD %.1f mm falls in none of the coefficient bands '
+                '(%s)' % (mat, shape, ui, od * 1e3,
+                          ', '.join('%.1f-%.1f mm' % (lo * 1e3, hi * 1e3) for lo, hi, _ in bands)))
+        row = min(match, key=lambda c: c[1] - c[0])[2]
+
+    m = list(map(try_float, row))
 
     return MagneticCoreMaterialSpecs(
         'micrometals', '%s%03u' % (mat, ui), mu_r=ui,
@@ -209,9 +306,12 @@ def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'E
 
 
 # https://www.micrometals.com/products/materials/ms/
-Micrometals_MS_T_060u = micrometals_material('MS', 'T', 60)
-Micrometals_MS_T_090u = micrometals_material('MS', 'T', 90)
-Micrometals_MS_T_125u = micrometals_material('MS', 'T', 125)
+# These three are the coefficients for the T184-and-below sizes -- the OD is
+# stated rather than defaulted, because MS 90u and 125u are size-split at
+# 5.22 in (T520) and an unqualified lookup would now refuse.
+Micrometals_MS_T_060u = micrometals_material('MS', 'T', 60, od=46.74e-3)
+Micrometals_MS_T_090u = micrometals_material('MS', 'T', 90, od=46.74e-3)
+Micrometals_MS_T_125u = micrometals_material('MS', 'T', 125, od=46.74e-3)
 
 # https://www.micrometals.com/products/materials/ms/
 Micrometals_Sendust_125u_2 = MagneticCoreMaterialSpecs(

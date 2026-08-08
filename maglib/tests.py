@@ -222,6 +222,74 @@ def test_micrometals_toroid_shapes():
     assert cores.MicrometalsT250.stack(3).HT == 3 * cores.MicrometalsT250.HT
 
 
+def test_micrometals_size_dependent_coefficients():
+    """Micrometals splits several materials' curve fits at an OD threshold.
+
+    ``micrometals.csv`` holds 16 rows whose PartType is size-qualified
+    (``T(OD=5.22-6.00 in)``). The lookup matched ``PartType == 'T'`` exactly, so
+    not one of them was reachable and every caller got the SMALL-size fit
+    regardless of core size. The error is one-directional -- the small-size fit
+    is the optimistic one, less loss and more retained permeability -- so a
+    sweep ranking cores by loss promoted exactly the large cores it was getting
+    wrong, with nothing surfacing as an error.
+    """
+    import pytest
+    from maglib import materials as M
+
+    assert M._part_type_od_range('T') == ('T', 0.0, math.inf)
+    shape, lo, hi = M._part_type_od_range('T(OD=5.22-6.00 in)')
+    assert shape == 'T' and 0.132 < lo < 0.133 and 0.152 < hi < 0.153
+
+    # T520 is 132.54 mm = 5.2181 in against a stated band start of 5.22 in.
+    # Strict comparison drops it out of its own band and back onto the
+    # small-size fit -- calibrate that the tolerance actually catches it.
+    assert lo <= 132.54e-3 <= hi
+    assert not (5.22 * 25.4e-3 <= 132.54e-3)     # ...which a strict bound would fail
+
+    # ambiguous without an OD must REFUSE, not silently pick one
+    with pytest.raises(M.AmbiguousMaterialSize):
+        M.micrometals_material('MS', 'T', 125)
+    # and must not be swallowed by a sweep's `except MaterialNotFound: continue`
+    assert not issubclass(M.AmbiguousMaterialSize, M.MaterialNotFound)
+
+    # direction: the small-size fit really is the flattering one
+    small = M.micrometals_material('MS', 'T', 125, od=46.74e-3)    # T184
+    large = M.micrometals_material('MS', 'T', 125, od=132.54e-3)   # T520
+    assert large.dc_bias(H_oe=30) < small.dc_bias(H_oe=30)
+    assert abs(rel_err(large.dc_bias(H_oe=30), small.dc_bias(H_oe=30))) > 0.1
+
+    # unambiguous materials keep working with no OD at all (back-compat)
+    assert M.micrometals_material('MS', 'T', 60).mu_r == 60
+
+    # A core LARGER than every band must refuse. The unqualified row is the
+    # small-size fit; treating it as an unbounded catch-all would serve the
+    # optimistic coefficients to the biggest cores of all, which is the same
+    # anti-monotone failure in a new place. MS 125u tops out at T600 (152.4 mm).
+    for oversize in (0.30, 2.0):
+        with pytest.raises(M.MaterialNotFound, match='none of the coefficient bands'):
+            M.micrometals_material('MS', 'T', 125, od=oversize)
+    # ...while a core below the split still gets the small-size fit, as it should
+    assert M.micrometals_material('MS', 'T', 125, od=33.02e-3).dc_bias(H_oe=30) \
+        == small.dc_bias(H_oe=30)
+
+    # MicrometalsToroid supplies the OD from the shape, so cores pick their own
+    # band; T184 and T250 are both below every MS split, T250 deliberately so
+    for size in (184, 250):
+        core = cores.MicrometalsToroid('MS', 125, size)
+        assert core.mat.dc_bias(H_oe=30) == small.dc_bias(H_oe=30), size
+
+    # OC 125u is documented as splitting at T250, but the CSV carries NO
+    # qualified row for it -- so this fix does not correct OC at 250 and up.
+    # Pinned so the gap is not mistaken for a fixed one; closing it needs the
+    # per-part datasheet coefficients, not a lookup change.
+    df = M.load_micrometals_materials()
+    qualified = {(r[0], int(r[2])) for r in
+                 df[df.iloc[:, 1].astype(str).str.startswith('T(')].values}
+    assert ('MS', 125) in qualified and ('MP', 125) in qualified
+    assert ('OC', 125) not in qualified, 'OC 125u large-size row landed -- ' \
+        'drop this assert and re-check the T250-and-up OC numbers'
+
+
 def test_dc_bias_suppression_is_not_silent():
     """no_raise=True may suppress the abort, not the fact.
 
