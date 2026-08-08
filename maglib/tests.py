@@ -157,6 +157,8 @@ def test_micrometals_toroid_shapes():
         assert abs(sh.OD - od * 1e-3) < 1e-9, (size, sh.OD)
         assert abs(sh.ID - id_bare * 1e-3) < 1e-9, (size, sh.ID)
         assert abs(sh.ID_coated - id_coated * 1e-3) < 1e-9, (size, sh.ID_coated)
+        # the coating always costs bore and always adds envelope
+        assert sh.OD < sh.OD_coated < sh.OD + 1.5e-3, (size, sh.OD_coated)
         assert abs(sh.HT - ht * 1e-3) < 1e-9, (size, sh.HT)
         # the coating always costs bore, never adds it
         assert 0 < sh.ID_coated < sh.ID < sh.OD
@@ -204,14 +206,21 @@ def test_micrometals_toroid_shapes():
     # one, which is the difference between two competing designs
     from maglib.winding import max_strands
     t250 = cores.MicrometalsToroid('MS', 125, 250)
-    assert max_strands(t250.winding_bore()[0], 1.909e-3, 15) == 7
-    assert max_strands(t250.winding_bore_coated()[0], 1.909e-3, 15) == 6
-    assert max_strands(t250.winding_bore_coated()[0], 1.909e-3, 14) == 7
+    assert max_strands(cores.MicrometalsT250.ID, 1.909e-3, 15) == 7   # bare
+    assert max_strands(t250.winding_bore()[0], 1.909e-3, 15) == 6     # real
+    assert max_strands(t250.winding_bore()[0], 1.909e-3, 14) == 7
+    # winding_bore() must hand back BOTH coated dimensions -- mixing a coated
+    # ID with a bare OD miscounts the radial build, and in the "it fits"
+    # direction on both sides
+    assert t250.winding_bore() == (cores.MicrometalsT250.ID_coated,
+                                   cores.MicrometalsT250.OD_coated)
+    assert cores.MicrometalsT250.OD_coated > cores.MicrometalsT250.OD
 
     # KDM's KS184 sheet is a scan; its OCR'd "After Coating" ID(Min) agrees
     # with Micrometals T184 to the digit, which is the reason it is trusted
     assert cores.KDM_KS184.ID_coated == cores.MicrometalsT184.ID_coated == 23.32e-3
-    assert cores.KDM_KS184_125A.winding_bore_coated()[0] == 23.32e-3
+    assert cores.KDM_KS184.OD_coated == cores.MicrometalsT184.OD_coated == 47.63e-3
+    assert cores.KDM_KS184_125A.winding_bore() == (23.32e-3, 47.63e-3)
 
     # unknown coated ID must REFUSE, not fall back to the bare ID: the fallback
     # errs toward claiming a strand that does not physically fit
@@ -220,14 +229,15 @@ def test_micrometals_toroid_shapes():
         shape=cores.ToroidShape('nc', l_e=8.15e-2, A_e=0.672e-4, Vol=5.48e-6,
                                 od=33.02e-3, id=19.94e-3, ht=10.67e-3))
     with pytest.raises(ValueError, match='coated'):
-        unknown.winding_bore_coated()
+        unknown.winding_bore()
     # ...and the shape-less cores still fail on the earlier, coarser check
     with pytest.raises(ValueError, match=cores.KDM_KS130_060A.mpn):
-        cores.KDM_KS130_060A.winding_bore_coated()
+        cores.KDM_KS130_060A.winding_bore()
 
     # stacking is axial: the bore does not change, which is exactly why
     # stacking cannot buy strands
     assert cores.MicrometalsT250.stack(3).ID_coated == cores.MicrometalsT250.ID_coated
+    assert cores.MicrometalsT250.stack(3).OD_coated == cores.MicrometalsT250.OD_coated
     assert cores.MicrometalsT250.stack(3).HT == 3 * cores.MicrometalsT250.HT
 
 
@@ -607,11 +617,25 @@ def test_winding_fit():
     with pytest.raises(ValueError):
         layer_fit(24.11e-3, -1.9e-3, 64)
 
-    # the KDM KS184 core carries its own datasheet bore (not the T184 clone)
+    # The KDM KS184 carries its own datasheet dimensions, not the T184 clone's:
+    # bare 24.11/46.70 as published...
+    assert abs(rel_err(cores.KDM_KS184.ID, 24.11e-3)) < 1e-9
+    assert abs(rel_err(cores.KDM_KS184.OD, 46.7e-3)) < 1e-9
+    # ...but winding_bore() hands back the COATED pair, because that is what a
+    # winding meets. This assertion used to pin the bare bore as correct, which
+    # made the optimistic geometry the default for every caller including
+    # dclib/powerloss's proximity term.
     core_id, core_od = cores.KDM_KS184_125A.winding_bore()
-    assert abs(rel_err(core_id, 24.11e-3)) < 1e-9 and abs(
-        rel_err(core_od, 46.7e-3)) < 1e-9
-    assert max_strands(core_id, enameled_od(1.8e-3, 2), 16, 0.4) == 3
+    assert (core_id, core_od) == (23.32e-3, 47.63e-3)
+    wire = enameled_od(1.8e-3, 2)
+    # 63 passes fit the bare bore, 59 the real one. At 16 turns both give 3
+    # strands, so a check at one turns count proves nothing either way; the
+    # difference bites where the floor divides differently.
+    assert max_strands(cores.KDM_KS184.ID, wire, 16, 0.4) == 3
+    assert max_strands(core_id, wire, 16, 0.4) == 3
+    for turns, bare_strands, real_strands in ((15, 4, 3), (20, 3, 2)):
+        assert max_strands(cores.KDM_KS184.ID, wire, turns, 0.4) == bare_strands
+        assert max_strands(core_id, wire, turns, 0.4) == real_strands
 
     # layer 1 ideal capacity: floor(2*pi*11.105/1.9) = 36
     layers = layer_fit(24.11e-3, 1.9e-3, 36, packing=1.0)

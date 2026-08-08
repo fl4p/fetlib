@@ -84,11 +84,12 @@ def sweep(vin, vout, pin, f, eff, wire_mm, grade, ripple_max, fill,
                         continue
                 for stk in stacks:
                     c = core.stack(stk)
-                    # The coating takes 0.8-1.3 mm of bore -- a whole strand on
-                    # a small core. Refuse rather than fall back to the bare
-                    # ID: that errs toward a strand that does not fit.
-                    core_id = (c.winding_bore_coated() if bore == 'coated'
-                               else c.winding_bore())[0]
+                    # Coated ID(min) and OD(max): the dimensions a winding
+                    # actually meets. winding_bore() refuses if they are
+                    # unknown rather than serving the optimistic bare ones.
+                    core_id, core_od = c.winding_bore()
+                    if bore == 'bare':
+                        core_id, core_od = c.shape.ID, c.shape.OD
                     for n in range(3, turns_max + 1):
                         h_oe = n * io / c.l_e / 79.577
                         r = c.mat.dc_bias(H_oe=h_oe)
@@ -119,7 +120,7 @@ def sweep(vin, vout, pin, f, eff, wire_mm, grade, ripple_max, fill,
                             # nothing at the DEFAULT packing, which is exactly
                             # why testing at defaults could never find it.
                             continue
-                        mlt = mean_turn_length(c.shape.OD, core_id, c.shape.HT,
+                        mlt = mean_turn_length(core_od, core_id, c.shape.HT,
                                                wire_od, len(layers))
                         rdc = rho * mlt * n / (a_cu * strands)
                         p_cu = rdc * (io ** 2 + d_i ** 2 / 12)
@@ -151,7 +152,9 @@ def main():
     p.add_argument('--stacks', type=int, nargs='+', default=[1, 2, 3])
     p.add_argument('--turns-max', type=int, default=80)
     p.add_argument('--max-od-mm', type=float, default=None)
-    p.add_argument('--bore', choices=('coated', 'bare'), default='coated')
+    p.add_argument('--bore', choices=('coated', 'bare'), default='coated',
+                   help="'bare' uses the published nominal ID/OD instead of the "
+                        "coated ones; optimistic, for comparison only")
     p.add_argument('--allow-band', action='store_true',
                    help='also rank cores whose coefficients come from the OD-band '
                         'fit rather than their own datasheet. Off by default: the '
@@ -166,8 +169,10 @@ def main():
         args.stacks, args.turns_max, args.bore, args.allow_band)
 
     if args.max_od_mm is not None:
+        # the COATED OD is the envelope the part occupies -- filtering on the
+        # bare OD keeps cores that do not fit the slot being filtered for
         keep = {s for s, sh in cores.MicrometalsToroidShapes.items()
-                if sh.OD * 1e3 <= args.max_od_mm}
+                if sh.OD_coated * 1e3 <= args.max_od_mm}
         dropped = len(rows)
         rows = [r for r in rows if r[2] in keep]
         # Say what was dropped. A silently truncated table reads as "these are
