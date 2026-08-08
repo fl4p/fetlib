@@ -157,8 +157,14 @@ def test_micrometals_toroid_shapes():
         assert abs(sh.OD - od * 1e-3) < 1e-9, (size, sh.OD)
         assert abs(sh.ID - id_bare * 1e-3) < 1e-9, (size, sh.ID)
         assert abs(sh.ID_coated - id_coated * 1e-3) < 1e-9, (size, sh.ID_coated)
-        # the coating always costs bore and always adds envelope
-        assert sh.OD < sh.OD_coated < sh.OD + 1.5e-3, (size, sh.OD_coated)
+        # The coating always costs bore and always adds envelope/height. The
+        # bands are tight enough to matter: real deltas are 0.81-1.27 mm on OD
+        # and 0.81-1.20 mm on Ht, so +1.4e-3 leaves little undetected slack.
+        assert sh.OD < sh.OD_coated < sh.OD + 1.4e-3, (size, sh.OD_coated)
+        assert sh.HT < sh.HT_coated < sh.HT + 1.4e-3, (size, sh.HT_coated)
+        # ...and the three must stay distinguishable: a coated ID that exceeds
+        # the coated Ht or OD means two of them were swapped
+        assert sh.ID_coated < sh.OD_coated, size
         assert abs(sh.HT - ht * 1e-3) < 1e-9, (size, sh.HT)
         # the coating always costs bore, never adds it
         assert 0 < sh.ID_coated < sh.ID < sh.OD
@@ -209,17 +215,25 @@ def test_micrometals_toroid_shapes():
     assert max_strands(cores.MicrometalsT250.ID, 1.909e-3, 15) == 7   # bare
     assert max_strands(t250.winding_bore()[0], 1.909e-3, 15) == 6     # real
     assert max_strands(t250.winding_bore()[0], 1.909e-3, 14) == 7
-    # winding_bore() must hand back BOTH coated dimensions -- mixing a coated
-    # ID with a bare OD miscounts the radial build, and in the "it fits"
-    # direction on both sides
-    assert t250.winding_bore() == (cores.MicrometalsT250.ID_coated,
-                                   cores.MicrometalsT250.OD_coated)
+    # winding_geometry() must hand back ALL THREE coated dimensions. Returning
+    # a subset is what let a coated ID/OD be combined with a BARE height, which
+    # left mean_turn_length 1.6-2.9% short -- optimistic, and larger than the
+    # error that adding the coated OD had just fixed.
+    assert t250.winding_geometry() == (cores.MicrometalsT250.ID_coated,
+                                       cores.MicrometalsT250.OD_coated,
+                                       cores.MicrometalsT250.HT_coated)
+    assert t250.winding_bore() == t250.winding_geometry()[:2]
     assert cores.MicrometalsT250.OD_coated > cores.MicrometalsT250.OD
+    assert cores.MicrometalsT250.HT_coated > cores.MicrometalsT250.HT
 
     # KDM's KS184 sheet is a scan; its OCR'd "After Coating" ID(Min) agrees
     # with Micrometals T184 to the digit, which is the reason it is trusted
     assert cores.KDM_KS184.ID_coated == cores.MicrometalsT184.ID_coated == 23.32e-3
     assert cores.KDM_KS184.OD_coated == cores.MicrometalsT184.OD_coated == 47.63e-3
+    assert cores.KDM_KS184.HT_coated == cores.MicrometalsT184.HT_coated == 18.92e-3
+    # The OD agreement is weaker evidence than it looks -- 47.63 mm is 1.875 in
+    # exactly, a round fraction any vendor lands on. The ID(min) agreement at
+    # 23.32 mm = 0.918 in is the one that is hard to reach by coincidence.
     assert cores.KDM_KS184_125A.winding_bore() == (23.32e-3, 47.63e-3)
 
     # unknown coated ID must REFUSE, not fall back to the bare ID: the fallback
@@ -230,6 +244,15 @@ def test_micrometals_toroid_shapes():
                                 od=33.02e-3, id=19.94e-3, ht=10.67e-3))
     with pytest.raises(ValueError, match='coated'):
         unknown.winding_bore()
+    # a shape with two of the three coated dims must still refuse, and name the
+    # missing one -- a partial set is what produced the bare-HT mix
+    partial = cores.MagneticCoreSpecs(
+        'partial-coating', cores.KDM_SendustKS_60,
+        shape=cores.ToroidShape('pc', l_e=8.15e-2, A_e=0.672e-4, Vol=5.48e-6,
+                                od=33.02e-3, id=19.94e-3, ht=10.67e-3,
+                                id_coated=19.30e-3, od_coated=33.83e-3))
+    with pytest.raises(ValueError, match='ht_coated'):
+        partial.winding_geometry()
     # ...and the shape-less cores still fail on the earlier, coarser check
     with pytest.raises(ValueError, match=cores.KDM_KS130_060A.mpn):
         cores.KDM_KS130_060A.winding_bore()
@@ -238,6 +261,8 @@ def test_micrometals_toroid_shapes():
     # stacking cannot buy strands
     assert cores.MicrometalsT250.stack(3).ID_coated == cores.MicrometalsT250.ID_coated
     assert cores.MicrometalsT250.stack(3).OD_coated == cores.MicrometalsT250.OD_coated
+    # ...but the coated HEIGHT is axial and must scale, exactly like HT
+    assert cores.MicrometalsT250.stack(3).HT_coated == 3 * cores.MicrometalsT250.HT_coated
     assert cores.MicrometalsT250.stack(3).HT == 3 * cores.MicrometalsT250.HT
 
 
@@ -708,6 +733,24 @@ def test_wire():
     from maglib.wire import acr_factor_micrometals
     assert abs(rel_err(2.5060, 1 + sum(
         acr_factor_micrometals(23e-9, 1e-3, 100e3, 1, 32, 14.1e-3, 27.69e-3)))) < 1e-4
+
+    # Every assertion above passes hardcoded id/od, so no test ever drove this
+    # from a real core -- which is how switching winding_bore() to the coated
+    # dimensions moved this consumer's numbers unnoticed. Pin one real core.
+    #
+    # Note the DIRECTION, because it is the opposite of the intuition: b_eq
+    # depends on the SUM ID+OD, and coating shrinks the bore ~0.9 mm while
+    # growing the OD ~1.3 mm, so the sum RISES and the proximity factor FALLS
+    # ~0.76%. "Coated is the pessimistic choice" holds for winding FIT, which
+    # depends on ID alone; it does not transfer to a different function of the
+    # same two numbers.
+    core = cores.MicrometalsToroid('MS', 125, 250)
+    core_id, core_od = core.winding_bore()
+    coated = sum(acr_factor_micrometals(23e-9, 1.8e-3, 40e3, 7, 15, core_id, core_od))
+    bare = sum(acr_factor_micrometals(23e-9, 1.8e-3, 40e3, 7, 15,
+                                      core.shape.ID, core.shape.OD))
+    assert 0.985 < coated / bare < 0.996, (coated, bare, coated / bare)
+    assert 10 < coated < 15, coated
 
     # Cross-check the two skin-effect models. Same convention fix:
     # ac_resistance_factor returns the TOTAL ratio (>= 1, it is Rac/Rdc for a

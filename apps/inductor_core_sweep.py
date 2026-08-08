@@ -84,12 +84,14 @@ def sweep(vin, vout, pin, f, eff, wire_mm, grade, ripple_max, fill,
                         continue
                 for stk in stacks:
                     c = core.stack(stk)
-                    # Coated ID(min) and OD(max): the dimensions a winding
-                    # actually meets. winding_bore() refuses if they are
-                    # unknown rather than serving the optimistic bare ones.
-                    core_id, core_od = c.winding_bore()
+                    # Coated ID(min)/OD(max)/Ht(max): the dimensions a winding
+                    # actually meets. winding_geometry() refuses if any are
+                    # unknown rather than serving the optimistic bare ones, and
+                    # returns all three so HT cannot be left bare while the
+                    # other two are coated -- HT dominates the mean turn length.
+                    core_id, core_od, core_ht = c.winding_geometry()
                     if bore == 'bare':
-                        core_id, core_od = c.shape.ID, c.shape.OD
+                        core_id, core_od, core_ht = c.shape.ID, c.shape.OD, c.shape.HT
                     for n in range(3, turns_max + 1):
                         h_oe = n * io / c.l_e / 79.577
                         r = c.mat.dc_bias(H_oe=h_oe)
@@ -120,7 +122,7 @@ def sweep(vin, vout, pin, f, eff, wire_mm, grade, ripple_max, fill,
                             # nothing at the DEFAULT packing, which is exactly
                             # why testing at defaults could never find it.
                             continue
-                        mlt = mean_turn_length(core_od, core_id, c.shape.HT,
+                        mlt = mean_turn_length(core_od, core_id, core_ht,
                                                wire_od, len(layers))
                         rdc = rho * mlt * n / (a_cu * strands)
                         p_cu = rdc * (io ** 2 + d_i ** 2 / 12)
@@ -185,6 +187,12 @@ def main():
           % (io, duty, args.wire_mm, wire_od * 1e3, args.ripple_max * 100, len(rows)))
     print('# loss = Rdc(%.0fC)*(Idc^2 + dI^2/12) + core loss; AC resistance NOT '
           'modelled (see module docstring)' % args.t_cu)
+    # Say which geometry produced the table. --bore bare is not cosmetic: it
+    # admits ~800 more candidates and changes the winner, and it reads BETTER,
+    # so a bare-mode table pasted into a design note must not be
+    # indistinguishable from a real one.
+    print('# bore=%s' % ('coated ID(min)/OD(max)/Ht(max)' if args.bore == 'coated'
+                         else 'BARE nominal ID/OD/Ht -- OPTIMISTIC, comparison only'))
     print('# cores skipped: %d not manufactured, %d with band-fit (not '
           'datasheet) coefficients%s'
           % (skipped['not_manufactured'], skipped['band_coefficients'],
