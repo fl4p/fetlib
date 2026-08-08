@@ -324,6 +324,27 @@ def test_family_mpn_infineon_packing_codes():
     assert family_mpn('infineon', 'BSC040N08NS5ATMA1') == 'bsc040n08ns5'
     assert family_mpn('infineon', 'BSC070N10NS3 G') == 'bsc070n10ns3g'  # no packing tail
     assert family_mpn('onsemi', 'FDMS86368AKSA1X') == 'fdms86368aksa1x'  # infineon-only
+    # F is a real leading block letter (5 corpus parts). While it was missing,
+    # IPW60R045CPFKSA1 joined no price record and ranked as its own row.
+    assert family_mpn('infineon', 'IPW60R045CPFKSA1') == 'ipw60r045cp'
+    # ... and the CPA die keeps its own family, it does not fold into CP
+    assert family_mpn('infineon', 'IPW60R045CPAFKSA1') == 'ipw60r045cpa'
+    # the package letter belongs to the stem, not the code (TOLL vs TOLG vs TOLT)
+    assert family_mpn('infineon', 'IAUTN15S6N025GATMA1') == 'iautn15s6n025g'
+
+
+def test_lead_count_suffix_is_not_a_packaging_suffix():
+    """'-7' is a Diodes reel diameter but an IXYS LEAD COUNT: IXTA150N15X4 is
+    TO-263-3 (2 leads + tab) and IXTA150N15X4-7 is TO-263-7 (6 leads + tab). All 8
+    corpus '-7' pairs are the IXYS case, so honouring it collapsed two real
+    orderables into one ranked row and let DigiKey price one package off the
+    other's listing."""
+    from dslib.prices import PACKAGING_SUFFIXES, suffix_extends_mpn
+    assert '-7' not in PACKAGING_SUFFIXES and '-13' not in PACKAGING_SUFFIXES
+    assert not suffix_extends_mpn('IXTA150N15X4-7', 'IXTA150N15X4')
+    # the reviewed tape/lead-free suffixes are unaffected
+    assert suffix_extends_mpn('SUP70042E-GE3', 'SUP70042E')
+    assert suffix_extends_mpn('IRFP4110PBF', 'IRFP4110')
 
 
 def test_lookup_joins_infineon_ordering_siblings(db):

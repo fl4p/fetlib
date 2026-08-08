@@ -236,26 +236,14 @@ class IndeterminateMatch(RuntimeError):
 # "any non-digit" rule admitted X1A, and a "separator-led" branch admitted X1-A; both
 # letter and separator continuations can be distinct electrical/qualification
 # variants, and a wrong-part price in the ranking is worse than a missing one.
-# T1G/T3G/T1/T3 = onsemi tape&reel; TR/TL/TF/CT = DigiKey carrier codes; TRPBF =
-# Infineon/IR tape&reel lead-free; -T1-GE3/-T1-RE3/-E3/-GE3 = Vishay carrier/lead
+# T1G/T3G/T1/T3 = onsemi tape&reel; TR/TL/TF/CT = DigiKey carrier codes; TRPBF/PBF =
+# Infineon/IR tape&reel / lead-free; -T1-GE3/-T1-RE3/-E3/-GE3 = Vishay carrier/lead
 # codes; -7/-13 = Diodes Inc 7"/13" reels; ,118/,127/,135 = Nexperia reel codes.
 # Extend deliberately, with a test; parts whose only listing falls outside this list
 # stay unpriced (indeterminate/catalog_miss) rather than risk a wrong attachment.
-PACKAGING_SUFFIXES = (
-    't1g', 't3g', 't1', 't3', 'tr', 'tl', 'tf', 'ct', 'trpbf',
-    '-t1-ge3', '-t1-re3', '-e3', '-ge3', '-t1', '-t3', '-tr', '-tl',
-    '-7', '-13', ',118', ',127', ',135',
-)
-
-
-def _suffix_extends_mpn(candidate: str, mpn: str) -> bool:
-    """True when candidate is mpn plus one COMPLETE reviewed packaging suffix
-    (NTMFS5C628NL -> NTMFS5C628NLT1G). Everything else -- digit continuations
-    (X1 -> X10), letter continuations (X1 -> X1A), unknown separator-led
-    continuations (X1 -> X1-A) -- is treated as a DIFFERENT part."""
-    from dslib.prices import norm_mpn
-    c, m = norm_mpn(candidate), norm_mpn(mpn)
-    return c.startswith(m) and c[len(m):] in PACKAGING_SUFFIXES
+# The list now lives in dslib/prices/__init__.py -- discovery's duplicate consolidation
+# needs the same rule and must not import the optional DigiKey SDK to get it.
+from dslib.prices import PACKAGING_SUFFIXES, suffix_extends_mpn as _suffix_extends_mpn  # noqa: E402
 
 
 def _iter_products(raw_response: dict, mfr: str, mpn: str):

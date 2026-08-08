@@ -509,10 +509,16 @@ def test_resolve_n_tau_four_states_and_the_ir_pool_scope():
     # a table-harvested variant spelling hits its own per-die row ...
     r = resolve_n_tau("infineon:IRFP4768PBF")
     assert r["state"] == "measured-fit" and abs(r["n_tau"] - 0.7815) < 1e-9
-    # ... an unharvested order-code spelling falls to the FAMILY POOL (0.666), not to
-    # the bound — is_orderable_variant does not span the PBF suffix, and the pool is
-    # the correct, in-family fallback for it.
+    # ... and so does the OTHER spelling of an already-measured die. PbF is IR's
+    # lead-free designator on the same datasheet, so serving the 0.666 family-pool
+    # AVERAGE to a part that has its own measured fit is strictly worse evidence.
+    # (This asserted 'ir-family-pool' until 2026-08-08, when is_orderable_variant
+    # started honouring the reviewed PACKAGING_SUFFIXES list.)
     r = resolve_n_tau("infineon:IRFB4137PBF")
+    assert r["state"] == "measured-fit" and abs(r["n_tau"] - 0.7496) < 1e-9
+    # an UNREVIEWED code on the same die still falls to the pool: the suffix list is
+    # an allowlist, not a pattern
+    r = resolve_n_tau("infineon:IRFB4137XYZ9")
     assert r["state"] == "ir-family-pool" and abs(r["n_tau"] - 0.666) < 1e-9
     assert resolve_n_tau("infineon:IRFZ44N")["state"] == "ir-family-pool"
     assert resolve_n_tau("infineon:AUIRF1324S")["state"] == "ir-family-pool"

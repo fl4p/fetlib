@@ -64,7 +64,11 @@ def norm_mpn(mpn: str) -> str:
 # both 25C (600V) and 150C (650V) for the SAME part, and the two spellings' specs
 # come from different scrape sources reading different rows -- a parsing/source
 # artifact, not a voltage bin. Infineon's OPN docs define this block as packing.
-_INFINEON_PACKING = __import__('re').compile(r'(.{6,}?)[ax][ktu][sm]a\d$')
+#
+# The leading letter is [axf], not [ax]: FKSA1 is a live code (IPW60R045CPFKSA1,
+# IPW60R045CPAFKSA1 and 3 more), and while it was missing those parts consolidated
+# with nothing and shipped as their own ranked CSV rows next to the bare spelling.
+_INFINEON_PACKING = __import__('re').compile(r'(.{6,}?)[axf][ktu][sm]a\d$')
 
 
 def family_mpn(mfr: str, mpn: str) -> str:
@@ -77,6 +81,38 @@ def family_mpn(mfr: str, mpn: str) -> str:
         if match:
             return match.group(1)
     return m
+
+
+# Reviewed distributor/vendor packing suffixes. Lives here (not in digikey_api) because
+# BOTH the DigiKey match tiers and discovery's duplicate consolidation need it, and
+# importing digikey_api pulls the optional DigiKey SDK.
+#
+# Deliberately NOT a pattern: every entry is a suffix somebody looked at. Generic
+# letter/digit/separator continuations (X1 -> X10, X1 -> X1A, X1 -> X1-A) are DIFFERENT
+# parts -- IRFB4110 vs IRFB4110G is a real example of a one-letter continuation that is
+# a distinct orderable with its own datasheet.
+#
+# '-7' and '-13' were removed 2026-08-08. They are reel diameters for Diodes/Zetex,
+# which is why they were listed, but for IXYS the same suffix is the LEAD COUNT:
+# IXTA150N15X4 is TO-263-3 (2 leads + tab) and IXTA150N15X4-7 is TO-263-7 (6 leads
+# + tab), a Kelvin-source package with its own parasitics. All 8 corpus pairs
+# ending in '-7' are that IXYS case and none is a Diodes reel, so the entries only
+# ever collapsed two real orderables into one ranked row and let DigiKey price one
+# package off the other's listing. Re-add only per-manufacturer.
+PACKAGING_SUFFIXES = (
+    't1g', 't3g', 't1', 't3', 'tr', 'tl', 'tf', 'ct', 'trpbf', 'pbf',
+    '-t1-ge3', '-t1-re3', '-e3', '-ge3', '-t1', '-t3', '-tr', '-tl',
+    ',118', ',127', ',135',
+)
+
+
+def suffix_extends_mpn(candidate: str, mpn: str) -> bool:
+    """True when `candidate` is `mpn` plus one COMPLETE reviewed packaging suffix
+    (NTMFS5C628NL -> NTMFS5C628NLT1G, SUP70042E -> SUP70042E-GE3). Everything else --
+    digit continuations, letter continuations, unknown separator-led continuations --
+    is treated as a DIFFERENT part. Equality is False (do the exact lookup first)."""
+    c, m = norm_mpn(candidate), norm_mpn(mpn)
+    return c.startswith(m) and c[len(m):] in PACKAGING_SUFFIXES
 
 
 class Offer:
