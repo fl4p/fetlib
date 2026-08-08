@@ -2,6 +2,7 @@ import json
 
 import argparse
 import asyncio
+import copy
 import math
 import os
 import sys
@@ -24,37 +25,146 @@ from dslib import mfr_tag
 from dslib.cache import disk_cache
 from dslib.discovery import DiscoveredPart, benchmark_mpns
 from dslib.fetch import fetch_datasheet, close_browser, get_datasheet_url
+from dslib.prices import PACKAGING_SUFFIXES, family_mpn
+
+
+def _valid_mpn(mpn):
+    return bool(mpn) and isinstance(mpn, str) and mpn.lower() != 'nan'
+
+
+def normal_mpn(mpn, mfr):
+    """Ordering-code-insensitive spelling of one MPN.
+
+    Strips only codes DOCUMENTED as packing codes for that manufacturer
+    (Infineon AKSA1/XKMA1/XTSA1/... -- family_mpn's regex, which supersedes the
+    four suffixes this used to hardcode). Generic continuations are left alone:
+    IRFB4110G is not IRFB4110. Cross-vendor carrier suffixes are handled by
+    _group_keys, which additionally requires the bare base to exist.
+
+    Case/whitespace are normalized too -- 'BSC070N10NS3 G' and 'BSC070N10NS3G'
+    are the same part. The returned value is a KEY, not a display MPN.
+    """
+    return family_mpn(mfr_tag(mfr), mpn)
+
+
+def _group_keys(parts: List[DiscoveredPart]) -> Dict[int, Tuple[str, str]]:
+    """Map id(part) -> consolidation key, joining ordering siblings.
+
+    Three links, all of which must hold the SAME die:
+      1. normal_mpn      -- documented packing codes (IPP039N10N5{,AKSA1,XKSA1})
+      2. mpn2            -- the manufacturer's own "this is the same part" pointer
+                            (Infineon lists IRFB4110 with mpn2=IRFB4110PBF)
+      3. prefix scan     -- a reviewed packaging suffix ON TOP of a base that is
+                            ITSELF present in the corpus. Never invents a base:
+                            two rows must exist for anything to merge.
+
+    Grouping here only proposes a merge; unique_parts still has to get it past
+    MosfetBasicSpecs.update's agreement asserts, and refuses the merge if not.
+    """
+    parent: Dict[Tuple[str, str], Tuple[str, str]] = {}
+
+    def find(k):
+        parent.setdefault(k, k)
+        while parent[k] != k:
+            parent[k] = parent[parent[k]]
+            k = parent[k]
+        return k
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            # shorter key wins as root, so the family root is the base MPN
+            lo, hi = sorted((ra, rb), key=lambda k: (len(k[1]), k[1]))
+            parent[hi] = lo
+
+    own: Dict[int, Tuple[str, str]] = {}
+    for part in parts:
+        tag = mfr_tag(part.mfr)
+        k = (tag, normal_mpn(part.mpn, part.mfr))
+        own[id(part)] = k
+        find(k)
+        mpn2 = getattr(part, 'mpn2', None)
+        if _valid_mpn(mpn2):
+            union(k, (tag, normal_mpn(mpn2, part.mfr)))
+
+    # (3) reviewed packaging suffix over a base that is itself in the corpus
+    present = set(parent)
+    for tag, mpn in sorted(present):
+        for suffix in sorted(PACKAGING_SUFFIXES, key=len, reverse=True):
+            base = mpn[:-len(suffix)]
+            # >=4 keeps a short MPN from being eaten by its own tail
+            if len(base) >= 4 and mpn.endswith(suffix) and (tag, base) in present:
+                union((tag, mpn), (tag, base))
+                break
+
+    return {i: find(k) for i, k in own.items()}
 
 
 def unique_parts(parts: List[DiscoveredPart]):
-    def normal_mpn(mpn, mfr):
-        if mfr_tag(mfr) == 'infineon':
-            if mpn.endswith('AKMA1') or mpn.endswith('AKSA1') or mpn.endswith('XKSA1') or mpn.endswith('XKMA1'):
-                mpn = mpn[:-5]
-
-        return mpn
+    valid = []
+    for part in parts:
+        if _valid_mpn(part.mpn):
+            valid.append(part)
+        else:
+            print('SKIP part with invalid mpn:', part.mfr, repr(part.mpn),
+                  part.specs and part.specs.source)
+    parts = valid
+    keys = _group_keys(parts)
 
     by: Dict[Tuple[str, str], DiscoveredPart] = {}
+    # group root -> every key the group ended up occupying, in insertion order. A
+    # refused merge spills to a new key, and the NEXT sibling has to be offered
+    # every spill before minting one of its own: IPP70N10S3L12AKSA1 and ...AKSA2
+    # agree with each other and disagree only with their (stale) base record, so
+    # trying just the first key left them as two rows.
+    spills: Dict[Tuple[str, str], list] = {}
     for part in parts:
-        if not (part.mpn and isinstance(part.mpn, str) and part.mpn.lower() != 'nan'):
-            print('SKIP part with invalid mpn:', part.mfr, repr(part.mpn), part.specs and part.specs.source)
+        root = keys[id(part)]
+        if root not in spills:
+            spills[root] = [root]
+            by[root] = part
             continue
-        k = part.mfr, normal_mpn(part.mpn, part.mfr)
-        if k in by:
-            if part.specs and part.specs.source == ['digikey']:
-                continue # digikey data is often wrong
-            by[k].package = by[k].package or part.package
+        if part.specs and part.specs.source == ['digikey']:
+            continue # digikey data is often wrong
+        # Trial-merge on a COPY. MosfetBasicSpecs.update asserts that the two
+        # sources agree (Vds exactly, Rds_on/ID within 45%, Qg within 1%) and
+        # mutates as it goes, so a failing merge would otherwise leave the
+        # survivor half-updated -- and it used to abort the whole run.
+        # Ordering siblings do sometimes carry different scraped values (the
+        # CoolMOS 25C/150C V(BR)DSS rows; Qg_typ read off a different table
+        # column). Refusing the merge keeps BOTH rows in the ranking, which is
+        # visible and inspectable; picking a winner here would publish one
+        # spelling's numbers under the other's name.
+        reasons = []
+        for k in spills[root]:
+            trial = copy.deepcopy(by[k].specs)
             try:
-                by[k].specs.update(part.specs)
-            except:
-                print('error updating specs for', k)
-                print(by[k].specs.fields(), 'from ', by[k].specs.source)
-                print('- and -')
-                print(part.specs.fields(), 'from ', part.specs.source)
-                raise
+                trial.update(part.specs)
+            except Exception as e:
+                reasons.append('%s (%s)' % (by[k].mpn, e))
+            else:
+                by[k].specs = trial
+                by[k].package = by[k].package or part.package
+                break
         else:
+            print('KEEPING duplicate %s separate, specs disagree with %s'
+                  % (part.mpn, ', '.join(reasons)))
+            k = _unmerged_key(root, part, by)
+            spills[root].append(k)
             by[k] = part
     return list(by.values())
+
+
+def _unmerged_key(group_key, part, by):
+    """A free key for a part whose merge into every key of its group was refused."""
+    base = (group_key[0], normal_mpn(part.mpn, part.mfr))
+    if base not in by:
+        return base
+    for n in range(2, 1000):
+        k = (base[0], '%s#%d' % (base[1], n))
+        if k not in by:
+            return k
+    raise RuntimeError('too many unmergeable spellings of %r' % (base,))
 
 
 @disk_cache(ttl='1d', hash_func_code=True)

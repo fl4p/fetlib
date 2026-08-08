@@ -28,10 +28,18 @@ YAML projects live in `apps/proj/*.yaml` (`buck.yaml`, `fugu*.yaml`, `mppt*.yaml
 Tests use pytest (no `pytest.ini` / `conftest.py`):
 
 ```bash
-pytest test/unit                  # focused unit tests (text norm, pdf tree, mosfet specs, etc.)
+pytest unit                       # ROOT-level suite: the loss/registry models — Coss & Ciss
+                                  # serving, Qrr op-point/Tj/layout, mpn_match, bv_specs (~2 min)
+pytest test/unit                  # focused parser unit tests (text norm, pdf tree, mosfet specs) (~8-14 min)
 pytest test/tests.py              # broader, heavier integration-style tests
 pytest test/unit/test_mosfet_specs.py::test_name   # single test
 ```
+
+**There are TWO pytest suites and `test/unit` is not the interesting one for model changes.**
+`unit/` (repo root) and `test/unit/` are different directories: everything that exercises
+`dslib/coss_curves.py`, `dclib/coss_loss.py` and the Qrr registries lives in the ROOT `unit/`.
+Running only `test/unit` after touching a curve/loss registry passes without executing a single
+test that covers it.
 
 Many tests under `test/` are loose scripts (`benchmark.py`, `pdf2table.py`, `plumber.py`, …) — not pytest, run directly with `python` when needed.
 
@@ -51,7 +59,29 @@ The pipeline in `main.py:run` is a linear flow; understanding it requires readin
 
 Per-manufacturer scrapers (`infineon.py`, `ti.py`, `toshiba.py`, `st.py`, `onsemi.py`, `vishay.py`, `nxp.py` (nexperia), `ao.py` (alpha&omega), `tw.py` (taiwansemi), `huayi.py`, `qorvo.py`, `epc.py` (GaN), `lcsc.py`, `digikey.py`, `china.py`) each return `List[DiscoveredPart]`. `discover_parts.py:discover_mosfets` runs them all (mostly `async`) and merges with `unique_parts`.
 
-`unique_parts` deduplicates by `(mfr, normalized_mpn)`. Infineon-specific suffix stripping (`AKMA1`, `AKSA1`, `XKSA1`, `XKMA1`) is applied. **Digikey rows are treated as untrustworthy** — if a duplicate already exists, a digikey-only entry is dropped rather than merged (comment: "digikey data is often wrong"). Otherwise `.specs.update(part.specs)` merges fields from later sources into earlier ones.
+`unique_parts` deduplicates by `(mfr_tag, consolidation_key)`. **Digikey rows are treated as untrustworthy** — if a duplicate already exists, a digikey-only entry is dropped rather than merged (comment: "digikey data is often wrong"). Otherwise `.specs.update(part.specs)` merges fields from later sources into earlier ones.
+
+Consolidation is union-find over three links (`_group_keys`), all of which must hold the same die — sources spell one part several ways and pre-2026-08 that shipped it as several competing CSV rows (603 extra rows out of 11,899 corpus-wide; `IPP039N10N5` / `…AKSA1` / `…XKSA1` were three rows, one of them holding the digitized Coss curve):
+
+1. `normal_mpn` → `dslib.prices.family_mpn`, i.e. Infineon's full packing-code regex (this replaced four hardcoded suffixes) plus case/whitespace folding.
+2. `mpn2` — the manufacturer's own "same part" pointer (`IRFB4110` ↔ `IRFB4110PBF`).
+3. A reviewed cross-vendor packaging suffix (`PACKAGING_SUFFIXES`, shared with the DigiKey matcher) **on top of a base that is itself in the corpus** — never invents a base, so a lone `SUP70042E-GE3` stays as it is.
+
+The merge is trial-run on a `deepcopy`: `MosfetBasicSpecs.update` asserts the sources agree (Vds exactly, Rds_on/ID within 45%, Qg within 1%) and mutates as it goes. On disagreement both rows are KEPT with a printed reason — a failed merge used to abort the whole run, and choosing a winner would publish one spelling's numbers under the other's name. Three parts are in that state today (`IAUCN10S5L094D`, `IAUCN10S7N021`, `IAUTN08S5N012L`: the base and `…ATMA1` listings disagree on Qg/ID).
+
+The same ambiguity reaches the curated registries from the other side: an entry landed as `IPP039N10N5AKSA1` has to serve a run that ranked `IPP039N10N5`. `mpn_match.lookup_base_variant` therefore falls back to `are_packing_siblings` (exact key → base direction → sibling direction). Two cases, with different safe rules:
+
+- **One side is the base** (`IQD020N10NM5` vs `…ATMA1`): `_is_packing_code` on the single remainder. The CG/SC **layout** allowance of `is_orderable_variant` is deliberately NOT applied — layout variants have their own datasheets and `COSS_CURVES` holds three distinct curves across `IQD020N10NM5`'s six spellings.
+- **Neither side is a base** (`AKSA1` vs `XKSA1`): split at the DOCUMENTED packing-block width and require equal stems plus `_INFINEON_PACKING_RE` on both tails. Both looser formulations are wrong, and each was caught by an exhaustive pairwise scan of the corpus (cheap — re-run it after touching this):
+  - splitting on the two MPNs' **common prefix** cuts inside the code when the codes share a leading letter (`AKSA1`/`ATMA1` → `KSA1`/`TMA1`);
+  - accepting a loose `[A-Z]{2,5}\d` on **both** tails at once reads a die letter as a code — `ISC007N06LM6` vs `ISC007N06NM6` leaves `LM6`/`NM6`, same length and same shape as the real `AKSA1`/`XKSA1`, yet Infineon's `L` is the logic-level die (Vgs_th 1.1–2.3 V vs 2.1–3.3 V). No generic rule separates those two; only the documented block does.
+
+**What counts as a packing code is reviewed, never guessed** — `_is_packing_code` accepts Infineon's fixed-width `[AXF][KTU][SM]A\d` block or a `PACKAGING_SUFFIXES` entry, and nothing else. Until 2026-08-08 the base direction used the same loose `[A-Z]{2,5}\d` shape, which cannot tell a packing code from a die/package letter *followed* by one, and it was live-serving curated `qrr_layout` rows across genuinely different parts. The corpus settles it: of the 2 992 Infineon MPNs whose stem is *also* a corpus part, 661 end in a width-5 block (14 distinct, all documented), and the only width-6 "codes" — `AXTMA1`, `TATMA1`, `GATMA1`, `AFKSA1` — are that same block with a letter stolen off the stem. `IAUTN15S6N025` is TOLL, `…G` is TOLG, `…T` is TOLT: three packages, three datasheets, and `qrr_layout` is layout-dependent. Two consequences worth knowing:
+
+- The block's leading letter is `[AXF]`, not `[AX]` — `FKSA1` is real (5 parts). `dslib/prices:_INFINEON_PACKING` was missing it too, so `IPW60R045CPFKSA1` joined no price record and shipped as its own ranked row.
+- `-7`/`-13` were **removed** from `PACKAGING_SUFFIXES`. They are reel diameters for Diodes/Zetex but the *lead count* for IXYS (`IXTA150N15X4` is TO-263-3, `…-7` is TO-263-7 with a Kelvin source), and all 8 corpus pairs are the IXYS case. Re-add only per-manufacturer.
+
+Since `is_orderable_variant` sees no manufacturer, its allowlist is the union across vendors; that is safe in the refusing direction only, so prefer adding evidence over widening the pattern.
 
 Digikey input is CSVs under `parts-lists/digikey/*.csv` (downloaded manually from the Digikey parametric search, 500 results max per CSV). LCSC discovery hits the live `wmsc.lcsc.com` JSON API per brand id, browser-proxied through Playwright because of an Akamai TLS-fingerprint WAF (`dslib/discovery/lcsc.py:fetch`); the raw catalog rows are cached 7d by `fetch_brand_rows_raw` and shared with the price harvester. (An older HTML-DOM-dump path, `read_lcsc_search_results`, is dead code — no dumps were ever committed.)
 
@@ -137,10 +167,18 @@ a column) and returns `None`, never 0, for unpriced parts.
   `add()` — per-brand batches would last-write-wins on cross-brand duplicates. Price-only path:
   it never feeds `DiscoveredPart`s into discovery. CLI: `python -m dslib.prices.lcsc
   --probe|--harvest|--find-brand NAME` (probe before harvesting after any brand/schema change).
-- **main.py**: `--fetch-prices` runs the LCSC harvest corpus-wide BEFORE the generators, then
+- **main.py**: price fetching is **ON by default** (`--no-fetch-prices` opts out; the old
+  opt-in `--fetch-prices` still exists and is now a no-op affirmation). It runs the LCSC
+  harvest corpus-wide BEFORE the generators, then
   a DigiKey fetch for the **top `priceTopN`** (YAML, default 100; 0 = uncapped) of the fresh
   HS+LS ranking (interleaved, best first — quota goes to the interesting parts), then
-  re-emits the CSVs if anything was fetched; the
+  re-emits the CSVs if anything was fetched. Repeat runs are near-free (LCSC raw lists
+  disk-cached 7d, DigiKey skips records younger than 7d); **both phases fail soft** — a
+  missing/broken DigiKey key or an LCSC error prints a warning and the run completes with
+  whatever the store holds, and neither writes a false "no price". The reason for the flip:
+  the columns only ever showed what some *earlier* run happened to fetch, so a manufacturer
+  that appears only in a config nobody had run with the flag (EPC, GaN-only) shipped 100%
+  empty price/stock cells next to priced Si rows. The
   `price_usd`/`price_src`/`price_date`/`stock_dk`/`stock_lcsc` CSV columns fill from the
   store either way
   (`priceQty` YAML knob, default 100; per-row price = price@priceQty × parallel count; staged
@@ -148,6 +186,60 @@ a column) and returns `None`, never 0, for unpriced parts.
   CSV path. Note each `asyncio.run` phase closes the shared Playwright browser on exit
   (`_discover_and_close_browser`) — `get_browser_page` asserts against contexts from dead
   event loops.
+
+### 3d. C(V) review packets — `dslib/coss_review.py` (2026-07-29)
+
+`main.py --coss-review N` builds a human-review packet for the top N parts of THIS run
+still carrying a `scalar:` `Coss_provenance` (P_coss from the unverified single-anchor
+1/√V guess, not a digitized curve). Which parts those are is design-dependent — the gan
+project's LS top-10 is 9/10 EPC, the Si LS1p project's is Infineon/NCE — so the corpus is
+derived from the ranking, never hand-listed. Parts are interleaved HS/LS, best first;
+`0` = off, `<0` = every scalar part.
+
+The work happens in **two other repos with their own venvs** (there is no importable path
+from py3.9/3.10 fetlib into the digitizer's 3.14 env), so every stage is a subprocess:
+`dsdig find` → `dsdig digitize-capacitance` → dsdig-verify-backlog
+`tools/import_capacitance_batch.py` (this is where the fail-closed eligibility gate lives:
+axis trust / trace validation / Qoss anchors — an ineligible row becomes a `gap`, never a
+value) → rank injection → `tools/build_html_review_packets.py`. Paths default to the
+checkouts under `~/dev/pv/ee/` and are overridable via `FETLIB_DSDIG_HOME` /
+`FETLIB_DSDIG_BACKLOG_HOME`; a missing tool **raises** rather than skipping quietly.
+Output: `out/<project>/coss-review-top<N>-<date>/`, packet HTML under
+`review-backlog/review-html/`.
+
+Load-bearing details, each of which cost a debugging round when absent:
+- **`--include-gaps`** on the packet build. The fail-closed rows ARE the review corpus
+  (25 of 48 cards in the first gan packet); without it the packet shows only extractions
+  that already passed, i.e. the ones needing the least attention.
+- **Rank injection.** The packet builder sorts cards on a `rank` field the importer does
+  not write; without it every card sorts at `+inf` and the reviewer's attention goes to an
+  arbitrary part.
+- **Corpus-keyed scan reuse.** `charts.json` is reused only when `pdfs.txt` matches the
+  requested PDF list exactly — keying on the directory alone would serve yesterday's scan
+  after the ranking moved (same N, same date, different parts).
+- **`source_head` says `-dirty`** when the digitizer worktree has uncommitted edits. A
+  bare sha would claim a reproducibility the packet does not have.
+- A part with unknown provenance is **counted and skipped**, never assumed scalar.
+- **The scan is sharded here, not upstream.** `find_charts.main` is a plain sequential
+  for-loop (~25 s/PDF) and per-PDF work is independent, so `_find_charts` splits the PDF
+  list round-robin (not contiguous — per-PDF cost varies several-fold with page count)
+  across `-j` processes, each with its own `--out`, then merges: `crop_png` is relative
+  and namespaced per part, so the merge is concatenate-JSON + move `crops/<PART>/`, with
+  the same final sort as `write_outputs`. Verified byte-identical to a sequential run on
+  the same corpus and the same digitizer code. **A failing shard aborts** — merging the
+  survivors would give the packet a silently short corpus, and a part missing from a
+  review looks exactly like a part reviewed and found clean; failed shard dirs are left
+  in place for debugging. Two datasheets mapping to one basename is refused up front
+  (dsdig keys crops and review ids by basename). `FETLIB_COSS_REVIEW_JOBS` overrides.
+  The **digitize stage is still sequential** — it's the smaller half.
+
+Verified curves do NOT flow back automatically: a Green verdict has to be landed in
+`dslib/coss_curves.py` as a `COSS_CURVES` entry **plus** a matching `COSS_CURVE_SOURCE`
+entry (`COSS_CURVE_META` is a comprehension over `COSS_CURVES` doing
+`**COSS_CURVE_SOURCE[key]` — a curve without its source entry is an import-time
+`KeyError`). Once landed, any run picks it up with no re-parse: the attach is
+`dslib/mosfet.py:attach_coss_registry`, reached via `get_mosfet_specs` on every run,
+so `--no-parse` runs see new curves too.
 
 ### 4. Modelling — `dclib/powerloss.py`
 

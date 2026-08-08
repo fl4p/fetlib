@@ -7,7 +7,7 @@ import os.path
 import random
 import sys
 import traceback
-from typing import List, Dict, Literal, Tuple, Optional, Union
+from typing import List, Dict, Literal, NamedTuple, Tuple, Optional, Union
 
 import pandas as pd
 
@@ -97,21 +97,53 @@ def main_yaml():
                         help='run Tabula even when text+v2 already satisfy need_symbols '
                              '(restores pre-2026-07 opportunistic harvesting of non-needed '
                              'fields into the DB; slower -- adds a Tabula pass per covered part)')
-    parser.add_argument('--fetch-prices', action='store_true',
-                        help='fetch distributor prices: LCSC brand-catalog harvest for the '
-                             'whole corpus BEFORE the CSVs, then a DigiKey fetch for the top '
-                             'priceTopN (default 100) of the fresh ranking, after which the '
-                             'CSVs are re-emitted (creds: env or data/.digikey-api*; a NEW '
-                             "key's first run opens a browser for OAuth). Results persist in "
-                             'data/prices-lib.sqlite3 (~7d fresh). Without this flag the '
-                             'price columns still fill from whatever the store holds (stale '
-                             'records suppressed).')
+    # ON BY DEFAULT (2026-07-28): the price columns are only as good as what the store
+    # holds, and the store only ever holds what some earlier run happened to fetch. That
+    # made a whole manufacturer invisible -- no GaN config had ever been run with the
+    # opt-in flag, so every EPC row shipped with empty price/stock cells while Si rows
+    # from older runs looked priced. Both phases are cheap on repeat runs (LCSC raw
+    # lists disk-cached 7d, DigiKey skips records younger than 7d), so the steady-state
+    # cost is ~0 and only genuinely new/aged-out parts spend quota.
+    parser.add_argument('--fetch-prices', dest='fetch_prices', action='store_true', default=True,
+                        help='fetch distributor prices (DEFAULT -- pass --no-fetch-prices to '
+                             'skip): LCSC brand-catalog harvest for the whole corpus BEFORE '
+                             'the CSVs, then a DigiKey fetch for the top priceTopN (default '
+                             '100) of the fresh ranking, after which the CSVs are re-emitted '
+                             '(creds: env or data/.digikey-api*; a NEW key\'s first run opens '
+                             'a browser for OAuth). Results persist in '
+                             'data/prices-lib.sqlite3 (~7d fresh).')
+    parser.add_argument('--no-fetch-prices', dest='fetch_prices', action='store_false',
+                        help='do not contact any distributor. The price columns still fill '
+                             'from whatever the store already holds (stale records '
+                             'suppressed) -- use for offline runs, or to keep DigiKey quota '
+                             'for a later run.')
     parser.add_argument('--price-qty', type=int, metavar='N',
                         help='qty basis for the price_usd/price_src columns (cheapest offer '
                              'evaluated at the largest ladder break <= max(N, MOQ), then x '
                              'parallel count per row). Overrides the YAML priceQty knob '
                              '(default 100) for this run -- no re-fetch needed, the stored '
                              'ladders are just read at a different break.')
+    parser.add_argument('--coss-review', type=int, metavar='N', default=0,
+                        help='after the CSVs, build a C(V) digitizer human-review packet '
+                             'for the top N unverified parts of this run that are still on '
+                             "a `scalar:` Coss_provenance (P_coss from the unverified "
+                             'single-anchor 1/sqrt(V) guess rather than a digitized '
+                             'curve). Parts are drawn round-robin from the HS and LS '
+                             'rankings, best first; 0 = off, <0 = every scalar part. '
+                             'Writes out/<project>/coss-review-top<N>-<date>/ and opens '
+                             'the packet; needs the datasheet-chart-digitizer and '
+                             'dsdig-verify-backlog checkouts (FETLIB_DSDIG_HOME / '
+                             'FETLIB_DSDIG_BACKLOG_HOME). Costs ~25 s/part to scan.')
+    parser.add_argument('--coss-review-side', choices=('both', 'hs', 'ls'), default='both',
+                        help='which ranking --coss-review draws its corpus from (default '
+                             'both, interleaved). Use hs/ls when the design is decided by '
+                             'one slot and the other slot would eat half the budget.')
+    parser.add_argument('--no-coss-review-dedupe', dest='coss_review_dedupe',
+                        action='store_false', default=True,
+                        help='review every ranked MPN separately, even when several are '
+                             'the same vendor datasheet republished under competitor '
+                             'cross-reference part numbers (HXY ships one document as 17 '
+                             'different MPNs). By default N counts DISTINCT documents.')
     parser.add_argument('--qrr-op', action='store_true',
                         help='force syncFet.qrrOperatingPoint on for this run: book the LS '
                              "reverse-recovery loss on the Qrr predicted at THIS converter's "
@@ -251,6 +283,9 @@ class RunArgs():
         assert not (substrates - {'GaN', 'Si', 'SiC'})
         self.substrates = substrates
 
+        if 'GaN' in self.substrates:
+            assert dcdc.gateDrive.Von_GaN > 0, dcdc.gateDrive.Von_GaN
+
         packages = set(map(lambda s: s.strip(), packages.split(',')) if isinstance(packages, str) else packages or [])
         assert not (packages - {'TO-220'})
         self.packages = set(packages)
@@ -268,8 +303,14 @@ async def _discover_and_close_browser(no_obsolete):
     # so leaving the browser open here would crash the next asyncio.run phase (e.g. the
     # --fetch-prices LCSC harvest).
     from dslib.fetch import close_browser
+    from discover_parts import unique_parts
     try:
-        return await discover_mosfets(no_obsolete=no_obsolete)
+        # unique_parts runs INSIDE discover_mosfets too; repeating it here is not
+        # redundant. discover_mosfets caches its post-merge output for a day under
+        # hash_func_code, which covers only its OWN body -- so a consolidation fix
+        # would otherwise not reach a warm corpus until the ttl expired. Re-running
+        # on an already-merged list is a no-op (every key is already distinct).
+        return unique_parts(await discover_mosfets(no_obsolete=no_obsolete))
     finally:
         await close_browser()
 
@@ -278,8 +319,15 @@ def run(args: RunArgs, cargs, name):
 
     if cargs.no_discover:
         # offline: candidate list is the stored discovered specs, no scrapers.
+        # unique_parts is NOT optional here: parts_db accumulates every ordering
+        # sibling any past run ever saw, so without it the offline corpus ships the
+        # duplicates (IPP039N10N5 / ...AKSA1 / ...XKSA1 as three ranked rows).
+        from discover_parts import unique_parts
         parts = [p.discovered for p in dslib.store.parts_db.load().values() if p.discovered]
-        print('Loaded', len(parts), 'parts from parts_db (--no-discover, offline)')
+        n_stored = len(parts)
+        parts = unique_parts(parts)
+        print('Loaded', n_stored, 'parts from parts_db (--no-discover, offline),',
+              len(parts), 'after consolidating ordering siblings')
     else:
         parts = asyncio.run(_discover_and_close_browser(no_obsolete=not args.includeObsolete))
     print('Discovered', len(parts), 'parts from manufacturers:', ', '.join(sorted(set(p.mfr for p in parts))))
@@ -320,6 +368,11 @@ def run(args: RunArgs, cargs, name):
 
         parts = list(filter(_match_part, parts))
 
+    n_before_channel_filter = len(parts)
+    parts = [p for p in parts if part_is_n_channel_or_unknown(p)]
+    if len(parts) != n_before_channel_filter:
+        print('Filtered out', n_before_channel_filter - len(parts), 'P-channel parts')
+
     print('Filtered', len(parts), 'parts:', ','.join(p.mpn for p in parts[:20]), '..', args.q)
 
     # pre-select mosfets by voltage and current
@@ -358,6 +411,10 @@ def run(args: RunArgs, cargs, name):
     with keep.running():
         # do all the magic: download datasheets, read them and compute power loss:
         dss = read_parts_datasheets(parts, dotdict(cargs.__dict__))
+        n_before_channel_filter = len(dss)
+        dss = [ds for ds in dss if datasheet_is_n_channel_or_unknown(ds)]
+        if len(dss) != n_before_channel_filter:
+            print('Filtered out', n_before_channel_filter - len(dss), 'parsed P-channel datasheets')
 
         dslib.store.parts_db.add([Part(discovered=ds.part, specs=mf) for ds in dss
                                   if (mf := get_fet_specs(ds, args.dcdc.gateDrive))])
@@ -390,12 +447,38 @@ def run(args: RunArgs, cargs, name):
             # (7d) skip for free, so repeat runs only top up what aged out.
             from dslib.prices import interleave_top
             from dslib.prices.digikey_api import fetch_digikey_prices
-            top = interleave_top([hs_rank, ls_rank], args.price_top_n)  # <=0: uncapped
-            summary = fetch_digikey_prices(top)
-            print('digikey top-%d fetch: %s' % (len(top), summary))
-            if summary.get('fetched'):
-                print('re-emitting CSVs with the freshly fetched prices')
-                _generate()
+            top = interleave_top([hs_rank.order, ls_rank.order],
+                                 args.price_top_n)  # <=0: uncapped
+            # Now that this runs by default, a missing/broken API key must not take the
+            # whole run down with it -- the CSVs are already on disk at this point, and
+            # a machine with no DigiKey creds still gets a complete (LCSC-priced) run.
+            # Same contract as the LCSC harvest above: warn loudly, continue. Nothing
+            # is written to prices_db on failure, so no false "no price" is persisted.
+            try:
+                summary = fetch_digikey_prices(top)
+            except Exception as e:
+                print('DigiKey price fetch FAILED (continuing, CSVs keep stored prices):', e)
+            else:
+                print('digikey top-%d fetch: %s' % (len(top), summary))
+                if summary.get('fetched'):
+                    print('re-emitting CSVs with the freshly fetched prices')
+                    # rebind: the review packet below must be built from the ranking the
+                    # CSVs on disk actually show, not the pre-price-fetch one
+                    hs_rank, ls_rank = _generate()
+
+        if cargs.coss_review:
+            # Which parts still lack a digitized Coss(V) is a property of THIS design's
+            # ranking, so the review corpus is derived here rather than hand-listed.
+            from dslib.coss_review import build_coss_review, open_packet
+            provenance = dict(hs_rank.coss_provenance)
+            provenance.update(ls_rank.coss_provenance)  # identical per part
+            side = cargs.coss_review_side
+            hs_order = hs_rank.order if side in ('both', 'hs') else []
+            ls_order = ls_rank.order if side in ('both', 'ls') else []
+            open_packet(build_coss_review(
+                hs_order, ls_order, provenance,
+                top_n=cargs.coss_review, name=name, jobs=int(cargs.j),
+                dedupe_documents=cargs.coss_review_dedupe))
 
 
 def compile_part_datasheet(part: DiscoveredPart, need_symbols, no_cache, no_ocr, no_download=False,
@@ -514,6 +597,18 @@ def gate_drive_vgs(ds: DatasheetFields, gd: GateDrive) -> float:
     return float(gd.Von)
 
 
+def part_is_n_channel_or_unknown(part) -> bool:
+    return getattr(getattr(part, 'specs', None), 'polarity', None) != 'P'
+
+
+def datasheet_is_n_channel_or_unknown(ds: DatasheetFields) -> bool:
+    part = ds.part
+    if not part_is_n_channel_or_unknown(part):
+        return False
+    vds = ds.get_max_or_min_or_typ('Vds')
+    return mosfet_polarity(vds) != 'P'
+
+
 def get_reference_fet_specs(ds: DatasheetFields):
     """Specs at the DATASHEET REFERENCE gate voltage, for generic parts-DB and utility use.
 
@@ -613,6 +708,7 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
             print('git clone error:', e)
 
     if not tabula_is_running():
+        print(args)
         raise RuntimeError('tabula is not running')
 
     if not fontforge_bin():
@@ -665,6 +761,20 @@ def read_parts_datasheets(parts: List[DiscoveredPart], args):
     return dss
 
 
+class Ranking(NamedTuple):
+    """What a CSV generator hands back.
+
+    `order` is the (mfr, mpn) rank order the DigiKey top-N fetch spends quota on.
+    `coss_provenance` maps each ranked part to its 1p `Coss_provenance` CSV cell,
+    so --coss-review can select the parts whose P_coss is still a `scalar:` guess
+    WITHOUT re-deriving the string (a re-derivation could disagree with the CSV
+    the user is reading, and then the review packet would cover the wrong parts).
+    A part absent from the map is 'provenance unknown' -- never treated as scalar.
+    """
+    order: List[Tuple[str, str]]
+    coss_provenance: Dict[Tuple[str, str], str]
+
+
 def _rank_order(ranked_parts):
     """Distinct (mfr, mpn) in rank order; NaN losses sort last, never first."""
     seen = set()
@@ -687,7 +797,8 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
     result_rows = []  # csv
     unranked_rows = []
-    ranked_parts = []  # (P_tot@1p, mfr, mpn) -- returned in rank order for the
+    coss_provenance = {}  # (mfr, mpn) -> the 1p Coss_provenance cell (see Ranking)
+    ranked_parts = []  # (P_tot, mfr, mpn) per CSV row -- returned in rank order for the
     #                    top-N price fetch (run() fetches DigiKey for the best
     #                    parts of THIS ranking, then re-emits the CSVs)
 
@@ -763,10 +874,21 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         pr = price_lookup.get(ds.part.mfr, ds.part.mpn)
         stocks = price_lookup.stocks(ds.part.mfr, ds.part.mpn)
-        ranked_parts.append((loss_spec.buck_hs(), ds.part.mfr, ds.part.mpn))
-
         for i in range(1, args.controlFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
+            # Rank on EVERY parallel count, not just 1p: the CSV is sorted on P_tot across
+            # all rows, so a part whose 2p row is near the top used to be ranked by its
+            # much worse 1p row. _rank_order sorts ascending and keeps the first hit per
+            # part, so appending each count ranks the part by its best row -- the same
+            # order the reader sees in the CSV. --coss-review and the DigiKey top-N both
+            # read this order, and both were covering a different set of parts than the
+            # CSV's head.
+            ranked_parts.append((ls.buck_hs(), ds.part.mfr, ds.part.mpn))
+            coss_prov = coss_provenance_summary(ls.get_cond('P_coss'))
+            if i == 1:
+                # the CSV cell verbatim (not a re-derivation), for --coss-review's
+                # 'scalar:' filter. 1p because that is the row the ranking is on.
+                coss_provenance[(ds.part.mfr, ds.part.mpn)] = coss_prov
             result_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
                 housing=normalize_housing(ds.part.package),
@@ -796,8 +918,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_sw=ls.P_sw,
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
-                Coss_provenance=coss_provenance_summary(
-                    ls.get_cond('P_coss')),
+                Coss_provenance=coss_prov,
                 P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
                 # curve_model_state, not model_state: the latter is the TRANSITION label
                 # ('hard-switch-default' for every production row, unavailable included)
@@ -1011,7 +1132,7 @@ def generate_HS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
     for p in no_qsw:
         print(p.part.mfr, p.part.mpn)
 
-    return _rank_order(ranked_parts)
+    return Ranking(_rank_order(ranked_parts), coss_provenance)
 
     # report
     # - total datasheets with at least 1 field
@@ -1029,7 +1150,8 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
     result_rows = []
     unranked_rows = []
-    ranked_parts = []  # (P_tot@1p, mfr, mpn), see the HS generator
+    coss_provenance = {}  # (mfr, mpn) -> 1p Coss_provenance cell, see the HS generator
+    ranked_parts = []  # (P_tot, mfr, mpn) per CSV row, see the HS generator
 
     # Self-turn-on census, reported next to the CSV path. This used to be a silent
     # `if QgdQgsRatio > 1: continue`, which dropped 37.5% of the corpus (2283/6090 parts)
@@ -1143,10 +1265,15 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
         pr = price_lookup.get(ds.part.mfr, ds.part.mpn)
         stocks = price_lookup.stocks(ds.part.mfr, ds.part.mpn)
-        ranked_parts.append((loss_spec.buck_ls(), ds.part.mfr, ds.part.mpn))
-
         for i in range(1, args.syncFet.maxParallel + 1):
             ls = loss_spec.parallel(i)
+            # see the HS generator: rank on every parallel count so `order` matches the
+            # CSV's own P_tot sort instead of the 1p row alone.
+            ranked_parts.append((ls.buck_ls(), ds.part.mfr, ds.part.mpn))
+            coss_prov = coss_provenance_summary(ls.get_cond('P_coss'))
+            if i == 1:
+                # see the HS generator: the CSV cell verbatim, for --coss-review
+                coss_provenance[(ds.part.mfr, ds.part.mpn)] = coss_prov
             result_rows.append(dict(
                 mpn=ds.part.mfr[:3] + ' ' + (ds.part.mpn if i == 1 else f'{i}p {ds.part.mpn}'),
                 housing=normalize_housing(ds.part.package),
@@ -1213,8 +1340,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
                 P_rr=ls.P_rr,
                 P_gd=ls.P_gd,
                 P_coss=ls.P_coss,
-                Coss_provenance=coss_provenance_summary(
-                    ls.get_cond('P_coss')),
+                Coss_provenance=coss_prov,
                 P_coss_scope=ls.get_cond('P_coss').get('accounting_scope'),
                 P_coss_state=ls.get_cond('P_coss').get('curve_model_state'),
                 P_coss_evidence=ls.get_cond('P_coss').get('evidence_quality'),
@@ -1274,7 +1400,7 @@ def generate_LS_power_loss_csv(dss: List[DatasheetFields], args: DcdcArgs, dcdc:
 
     # show_summary(dss)
 
-    return _rank_order(ranked_parts)
+    return Ranking(_rank_order(ranked_parts), coss_provenance)
 
 
 def show_summary(dss: List[DatasheetFields]):
