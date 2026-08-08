@@ -1,4 +1,5 @@
 import datetime
+import glob
 import math
 import os
 import re
@@ -251,19 +252,84 @@ def parts_list_file_name(mfr, fn_ext, prefix):
     return fn
 
 
+def parts_list_content_error(fn, fn_ext):
+    """Why `fn` is not a usable parts list, or None if it looks like one.
+
+    Content, not existence. The manufacturer sites answer a scripted export with
+    an anti-bot challenge or an error page roughly as often as with the file, and
+    download_with_chromium saves whatever came back under the requested name --
+    which os.path.isfile then accepts forever after. That is how an 8 MB HTML
+    page ended up as parts-lists/onsemi/low-medium-voltage-mosfets-2026-08.csv and
+    aborted every discovery run until someone deleted it by hand.
+    """
+    try:
+        with open(fn, 'rb') as f:
+            head = f.read(4096)
+    except OSError as e:
+        return 'unreadable: %s' % e
+    if not head.strip():
+        return 'empty file'
+    if fn_ext == 'xlsx':
+        # xlsx is a zip container; an HTML page obviously is not
+        return None if head[:2] == b'PK' else 'not a zip/xlsx container'
+    lead = head.lstrip()[:64].lower()
+    for marker in (b'<!doctype', b'<html', b'<?xml', b'<head', b'<script'):
+        if lead.startswith(marker):
+            return 'HTML/XML page (anti-bot challenge or error page), not %s' % fn_ext
+    return None
+
+
 async def download_parts_list(mfr, url, fn_ext: Literal['csv', 'xlsx'], prefix='mosfet', **kwargs):
     from dslib.fetch import download_with_chromium
 
     fn = parts_list_file_name(mfr, fn_ext, prefix)
 
+    err = None
     if not os.path.isfile(fn):
-        await download_with_chromium(
-            url,
-            filename=fn,
-            **kwargs,
-        )
+        try:
+            await download_with_chromium(
+                url,
+                filename=fn,
+                **kwargs,
+            )
+        except Exception as e:
+            # The export control never appeared, the click timed out, the site is
+            # down. Distinct from "a file arrived but is garbage" below, and it
+            # must NOT abort the other manufacturers' discovery.
+            err = '%s: %s' % (type(e).__name__, e)
 
-    return fn
+    # Validate on BOTH paths: a fresh download can be a challenge page, and a
+    # previously saved one can be a challenge page from an earlier run.
+    if err is None:
+        err = parts_list_content_error(fn, fn_ext)
+    if not err:
+        return fn
+
+    # Delete whatever landed. Leaving it behind is what makes a transient block
+    # permanent: the next run skips the download because the file exists, and
+    # fails identically forever.
+    if os.path.isfile(fn):
+        os.remove(fn)
+
+    # Fall back to the newest earlier export rather than dropping this
+    # manufacturer. Skipping it would quietly shrink the corpus, and a part that
+    # was never discovered is indistinguishable from a part that lost on merit --
+    # exactly the failure this is supposed to avoid. A month-old list is bounded,
+    # explicit staleness; say so loudly and never write it under today's name.
+    prev = sorted(f for f in glob.glob(
+        'parts-lists/%s/%s-*.%s' % (mfr, prefix, fn_ext))
+        if f != fn and not parts_list_content_error(f, fn_ext))
+    if not prev:
+        raise RuntimeError(
+            '%s parts list from %s is not usable (%s), removed %s, and no earlier '
+            'export is available. The site most likely served an anti-bot page; '
+            'retry, or export it by hand into that path.' % (mfr, url, err, fn))
+
+    warnings.warn(
+        '%s parts list %s could not be downloaded (%s) -- FALLING BACK to the '
+        'stale %s. Discovery for this manufacturer is out of date; re-run later '
+        'or export it by hand.' % (mfr, os.path.basename(fn), err, prev[-1]))
+    return prev[-1]
 
 
 @disk_cache(ttl='90d')
