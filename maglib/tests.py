@@ -208,10 +208,19 @@ def test_micrometals_toroid_shapes():
     assert max_strands(t250.winding_bore_coated()[0], 1.909e-3, 15) == 6
     assert max_strands(t250.winding_bore_coated()[0], 1.909e-3, 14) == 7
 
+    # KDM's KS184 sheet is a scan; its OCR'd "After Coating" ID(Min) agrees
+    # with Micrometals T184 to the digit, which is the reason it is trusted
+    assert cores.KDM_KS184.ID_coated == cores.MicrometalsT184.ID_coated == 23.32e-3
+    assert cores.KDM_KS184_125A.winding_bore_coated()[0] == 23.32e-3
+
     # unknown coated ID must REFUSE, not fall back to the bare ID: the fallback
     # errs toward claiming a strand that does not physically fit
+    unknown = cores.MagneticCoreSpecs(
+        'unknown-coating', cores.KDM_SendustKS_60,
+        shape=cores.ToroidShape('nc', l_e=8.15e-2, A_e=0.672e-4, Vol=5.48e-6,
+                                od=33.02e-3, id=19.94e-3, ht=10.67e-3))
     with pytest.raises(ValueError, match='coated'):
-        cores.KDM_KS184_125A.winding_bore_coated()
+        unknown.winding_bore_coated()
     # ...and the shape-less cores still fail on the earlier, coarser check
     with pytest.raises(ValueError, match=cores.KDM_KS130_060A.mpn):
         cores.KDM_KS130_060A.winding_bore_coated()
@@ -288,6 +297,68 @@ def test_micrometals_size_dependent_coefficients():
     assert ('MS', 125) in qualified and ('MP', 125) in qualified
     assert ('OC', 125) not in qualified, 'OC 125u large-size row landed -- ' \
         'drop this assert and re-check the T250-and-up OC numbers'
+
+
+def test_micrometals_per_part_coefficients():
+    """Every per-part row must reproduce its own datasheet's printed numbers.
+
+    micrometals_parts.csv is machine-extracted from 804 datasheet PDFs, so the
+    interesting failure is not "a row is missing" but "a row is subtly wrong" --
+    a mis-parsed exponent produces a completely plausible material. Each
+    datasheet prints a calibration point computed from the same coefficients
+    (Core Loss nominal at a stated Bpk/f, %Initial Perm nominal at a stated
+    H_DC), so every row can check itself. This runs that check on the shipped
+    data rather than trusting that it passed once during extraction.
+    """
+    from maglib import materials as M
+
+    df = M.load_micrometals_parts()
+    assert len(df) > 700, len(df)
+
+    worst_cl = worst_perm = 0.0
+    for _, r in df.iterrows():
+        mat = M.micrometals_part_material(r['part'])
+        cl = mat.core_loss_density(Bpk_tesla=r['cal_bpk_g'] * 1e-4,
+                                   f_khz=r['cal_f_khz'])
+        perm = mat.dc_bias(H_oe=r['cal_h_oe']) * 100
+        worst_cl = max(worst_cl, abs(cl / r['cal_cl_nom_mw_cm3'] - 1))
+        worst_perm = max(worst_perm, abs(perm / r['cal_perm_nom_pct'] - 1))
+    assert worst_cl < 0.02, worst_cl
+    assert worst_perm < 0.02, worst_perm
+    # the extraction really is tight, not just inside a loose bound
+    assert worst_cl < 0.005 and worst_perm < 0.005, (worst_cl, worst_perm)
+
+    # Calibrate: a mangled coefficient must FAIL that check, or it is not a
+    # check. One decade on the core-loss 'a' term is a realistic parse slip.
+    bad = M.micrometals_core_loss_model(1.394e11, 1.034e09, 1.244e07, 4.007e-14)
+    assert abs(bad(Bpk_tesla=0.1, f_khz=50) / 276.0 - 1) > 0.02
+
+    # The reason this file exists: OC 125u splits at exactly T250 and
+    # micrometals.csv has no qualified row to express it, so the band model
+    # serves the small-size fit to a T250 core. Per-part fixes it; pin both the
+    # fix and the fact that the small sizes did NOT move.
+    import pytest
+    t250 = cores.MicrometalsToroid('OC', 125, 250)
+    t184 = cores.MicrometalsToroid('OC', 125, 184)
+    band250 = M.micrometals_material('OC', 'T', 125, od=t250.shape.OD)
+    band184 = M.micrometals_material('OC', 'T', 125, od=t184.shape.OD)
+    at = dict(Bpk_tesla=0.04, f_khz=40)
+    assert t250.mat.core_loss_density(**at) / band250.core_loss_density(**at) > 1.3
+    assert t250.mat.dc_bias(H_oe=30) < 0.9 * band250.dc_bias(H_oe=30)
+    assert t184.mat.core_loss_density(**at) == band184.core_loss_density(**at)
+    assert t184.mat.dc_bias(H_oe=30) == band184.dc_bias(H_oe=30)
+
+    # a part with no datasheet row must refuse, not fall through to nan
+    with pytest.raises(M.PartNotFound):
+        M.micrometals_part_material('MS-999999-2')
+
+    # dc_magnetization is not printed as coefficients, so a bare per-part
+    # material must RAISE on it rather than return nan (which reads as zero)
+    bare = M.micrometals_part_material('MS-250125-2')
+    with pytest.raises(Exception):
+        bare.dc_magnetization(H_oe=10)
+    # ...but MicrometalsToroid supplies it from the band model
+    assert cores.MicrometalsToroid('MS', 125, 250).mat.dc_magnetization is not None
 
 
 def test_dc_bias_suppression_is_not_silent():

@@ -217,7 +217,12 @@ MicrometalsT301 = ToroidShape('301', l_e=19.612e-2, A_e=2.22e-4, Vol=43.50e-6, o
 # https://datasheets.micrometals.com/MS-184125-2-DataSheet.pdf
 
 # https://www.semic.cz/media/pdf/Ljf_T184-S-125A_KD.pdf
-KDM_KS184 = ToroidShape('KS184', l_e=10.74e-2, A_e=1.99e-4, Vol=21.30e-6, od=46.7e-3, id=24.11e-3, ht=18.0e-3)
+# That sheet is a scan with no text layer; the "After Coating" row (OD max
+# 47.63, ID min 23.32, Ht max 18.92) was read by OCR. The coated ID matches
+# Micrometals T184's 23.32 mm exactly -- two independent sources for the same
+# physical size class, which is why it is trusted here.
+KDM_KS184 = ToroidShape('KS184', l_e=10.74e-2, A_e=1.99e-4, Vol=21.30e-6, od=46.7e-3, id=24.11e-3, ht=18.0e-3,
+                        id_coated=23.32e-3)
 
 # https://www.kdm-mag.com/products/details-toroidal-1375.html
 # https://semic.cz/!old/files/pdf_www/Ljf_KS130-060A_KD.pdf
@@ -302,9 +307,23 @@ def MicrometalsToroid(mat: materials.MicroMetalsMatLiteral, ui, shape: Union[Tor
     if isinstance(shape, int):
         shape = MicrometalsToroidShapes[shape]
     mpn = mat + '-' + shape.name + '%03d' % ui
-    # od= is what selects the right size band of curve-fit coefficients.
-    # Micrometals splits several materials at an OD threshold (OC 125u splits
-    # at exactly T250), and the shape knows its own OD, so there is no reason
-    # for a caller to have to supply it -- or to get the small-size fit for a
-    # large core, which is what happened before.
-    return MagneticCoreSpecs(mpn, materials.micrometals_material(mat, 'T', ui, od=shape.OD), shape=shape)
+    part = mpn + '-2'
+    try:
+        # The part's own datasheet coefficients, when we have them. This is
+        # strictly better than the band model: no OD reasoning at all, and it
+        # represents splits the band CSV cannot (OC 125u changes at exactly
+        # T250, with no qualified row in micrometals.csv to express it).
+        # dc_magnetization is not printed as coefficients on the datasheets,
+        # so take that one curve from the band model.
+        try:
+            dc_mag = materials.micrometals_material(mat, 'T', ui, od=shape.OD).dc_magnetization
+        except (materials.MaterialNotFound, materials.AmbiguousMaterialSize):
+            dc_mag = None
+        m = materials.micrometals_part_material(part, dc_magnetization=dc_mag)
+    except materials.PartNotFound:
+        # od= selects the right size band. Micrometals splits several materials
+        # at an OD threshold and the shape knows its own OD, so a caller never
+        # has to supply it -- nor silently get the small-size fit for a large
+        # core, which is what happened before.
+        m = materials.micrometals_material(mat, 'T', ui, od=shape.OD)
+    return MagneticCoreSpecs(mpn, m, shape=shape)

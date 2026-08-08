@@ -179,6 +179,33 @@ def load_micrometals_materials():
     return df
 
 
+@mem_cache(ttl='1h')
+def load_micrometals_parts():
+    """Per-PART curve-fit coefficients, keyed by full part number.
+
+    ``micrometals.csv`` is per (material, permeability) with a coarse OD band;
+    this is per orderable part, straight off each datasheet's own printed
+    coefficients. It exists because the band model cannot represent every
+    split: OC 125u changes coefficients at exactly T250 and the band CSV has no
+    qualified row for it at all, so a T250 OC core silently used the small-size
+    fit -- 25% low on core loss, 22% high on retained permeability.
+
+    Built by parsing 804 datasheets; 761 carry a usable coefficient block.
+    Every row was validated against the calibration point printed on its OWN
+    datasheet (Core Loss nominal at cal_bpk_g/cal_f_khz, %Initial Perm nominal
+    at cal_h_oe) and rows that disagreed by more than 2% were dropped rather
+    than kept with a caveat. The calibration columns are carried here so that
+    check is re-runnable as a test rather than a claim about a past run --
+    see test_micrometals_per_part_coefficients. Worst residual: 0.32%.
+
+    The 43 dropped parts are not parse failures; those URLs return a 404 page,
+    i.e. the part number does not exist.
+    """
+    import pandas as pd
+    return pd.read_csv(os.path.dirname(__file__) + '/micrometals_parts.csv',
+                       dtype={'size': str})
+
+
 def try_float(s):
     try:
         return float(s)
@@ -186,7 +213,7 @@ def try_float(s):
         return float('nan')
 
 
-MicroMetalsMatLiteral = Literal['MS', 'OE', 'OC', 'GX', 'SM', 'MP']
+MicroMetalsMatLiteral = Literal['MS', 'SH', 'MP', 'HF', 'FS', 'OC', 'OD', 'OE', 'SM', 'GX']
 
 
 class MaterialNotFound(Exception):
@@ -225,6 +252,38 @@ def _part_type_od_range(part_type: str):
     lo = (float(m.group('lo')) - _OD_BOUND_TOL_IN) * 25.4e-3
     hi = (float(m.group('hi')) + _OD_BOUND_TOL_IN) * 25.4e-3
     return m.group('shape'), lo, hi
+
+
+class PartNotFound(Exception):
+    pass
+
+
+def micrometals_part_material(part: str, dc_magnetization: Callable = None):
+    """Material curves from one orderable part's OWN datasheet coefficients.
+
+    Preferred over ``micrometals_material`` wherever the part number is known,
+    because it needs no OD band reasoning at all -- the split IS the row.
+
+    ``dc_magnetization`` is not printed as coefficients on the datasheets, so
+    it is not carried here; pass it in when a caller needs it. Leaving it None
+    means the returned material RAISES on use of that curve (via
+    _finite_or_raise) rather than returning nan, which is the right failure:
+    absent coefficients must not read as zero.
+    """
+    df = load_micrometals_parts()
+    m = df[df['part'] == part]
+    if len(m) == 0:
+        raise PartNotFound(part)
+    assert len(m) == 1, (part, m)
+    r = m.iloc[0]
+    return MagneticCoreMaterialSpecs(
+        'micrometals', part, mu_r=int(r['ui']),
+        core_loss_density=micrometals_core_loss_model(
+            r['cl_a'], r['cl_b'], r['cl_c'], r['cl_d']),
+        dc_bias=micrometals_dc_bias_model(
+            r['ds_a'], r['ds_b'], r['ds_c'], r['ds_d']),
+        dc_magnetization=dc_magnetization,
+    )
 
 
 def micrometals_material(mat: MicroMetalsMatLiteral, shape: Literal['B', 'E', 'EQ', 'PQ', 'T'], ui: int,
