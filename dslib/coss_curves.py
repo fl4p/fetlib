@@ -119,6 +119,45 @@ COSS_CURVES = {
         (60, 2400, 40), (70, 1847, 28.4), (80, 1492, 22.2), (90, 1334, 18.9),
         (100, 1176, 17.1), (110, 1063, 16.1), (120, 960, 15.6),
     ],
+    # Infineon IPP039N10N5 Rev 2.0 (2016-11-22), Diagram 11 (VGS=0, f=1 MHz) -- 100 V OptiMOS5.
+    # THE PART ACTUALLY FITTED as Fugu2's low side, 2x parallel (Q2 + the D9 footprint),
+    # confirmed by Fab 2026-08-11. HS is 2x IPP050N10NF2S, also 100 V.
+    #
+    # It was ABSENT from this registry, which is very likely why
+    # dcdc-tools/loss/examples/fugu2-dualLS.yaml substitutes the 80 V IPP019N08NF2S -- the loss
+    # tool cannot use a curve that is not here. That substitution is not cosmetic: every
+    # avalanche warning that model raises is against an 80 V rating with BV_min(Tj)=82.2 V, and
+    # the deck's ~83 V die peak is a 3 V VIOLATION against 80 V but a ~17 V MARGIN against
+    # 100 V. The 5.8 W avalanche line at the 72 V golden point is an artefact of simulating 80 V
+    # substitutes for 100 V hardware. NOTE dslib.bv_specs still has NO 100 V part curated (6
+    # entries, all N08), so fixing the config alone does not fix the rating -- see fetlib TODO.
+    #
+    # Digitized with dsdig (datasheet-chart-digitizer), p.8 Diagram 11:
+    #   dsdig find datasheets/infineon/IPP039N10N5.pdf --out OUT/IPP039N10N5
+    #   dsdig digitize-capacitance OUT/IPP039N10N5/charts.json --out OUT/IPP039N10N5/cap \
+    #     --datasheet-root datasheets/infineon
+    #   dsdig export-coss-dslib OUT/IPP039N10N5/cap/capacitance_digitization.json --out .../dslib
+    # Gates all green: status ok, axis_calibration_trusted, trace_validation pass,
+    # shared_collapse_spans [] (no Ciss/Coss snap in the low-V approach, checked at 5x),
+    # identity_diagnostics changed=False (ciss_already_flatter), qoss_validation pass, no
+    # top-decade clip. OVERLAY HUMAN-VERIFIED by Fab, 2026-08-11.
+    #
+    # Anchors @50V: Coss=830pF (knot 849.8, +2.4%), Crss=37pF (36.6, -1.1%), Ciss=5400pF (-1.3%).
+    # Qoss is anchored 0-50V -- the Table's Vint is 50 V, NOT the 100 V axis end: 98.3 nC
+    # digitized vs 98.0 nC Table (+0.3%), and re-integrating the LANDED KNOTS gives 99.4 nC
+    # (+1.5%), against +1.7% for the already-verified IPA050N10NM5S and IPP083N10N5 entries.
+    # Integrating these knots to 100 V instead gives 132 nC and looks like a 35% error -- it is
+    # not, it is the wrong upper limit, and EVERY entry in this file shows the same offset that
+    # way. Co_er 1511 pF, Co_tr 1966 pF (Co_tr x 50 V = 98.3 nC, the same identity).
+    # Knots are the dsdig ADAPTIVE set, dense where the curve is steep; uniform 5 V sampling
+    # misrepresents the low-V knee badly (it over-integrated Qoss by 35% in a first attempt).
+    ("infineon", "IPP039N10N5"): [
+        (0, 4696, 1132), (0.6871, 4486, 1046), (1.4272, 4187, 909.9), (2.9075, 3566, 658.1),
+        (3.8327, 3179, 532.1), (7.9034, 2770, 395.2), (16.230, 2228, 244.9),
+        (26.037, 1791, 137.1), (32.513, 1561, 91.3), (39.729, 1227, 53.5),
+        (50.0, 849.8, 36.6), (51.757, 802.4, 35.2), (55.642, 757.7, 32.1),
+        (77.106, 623.4, 25.8), (100.05, 562.3, 24.5),
+    ],
     # Infineon IPP050N10NF2S Rev 2.1 (2022-06-15), Diagram 11 (VGS=0, f=1 MHz) -- 100 V
     # StrongIRFET2 Fugu2 HS candidate (dcdc-tools#15: like-for-like IPP055N08NF2S
     # replacement, 2x parallel). Digitized with the dcdc-tools vector-first C(V) digitizer:
@@ -1023,6 +1062,11 @@ COSS_CURVE_SOURCE = {
         datasheet_revision="2.1", source_figure="Diagram 11", source_page=8,
         digitization_method="raster-dark-pixel-column-trace",
         validation_method="overlay + Coss/Crss@40V + Qoss(0-40V) table anchors"),
+    ("infineon", "IPP039N10N5"): dict(
+        datasheet_revision="2.0 (2016-11-22)", source_figure="Diagram 11", source_page=8,
+        digitization_method="dsdig-vector-first-adaptive-knots",
+        validation_method="human overlay (Fab 2026-08-11) + Coss/Crss/Ciss@50V + Qoss(0-50V) "
+                          "table anchor (98.3 vs 98.0 nC, +0.3%; landed knots 99.4, +1.5%)"),
     ("infineon", "IPP019N08NF2S"): dict(
         datasheet_revision="2.1", source_figure="Diagram 11", source_page=None,
         digitization_method="dcdc-tools-vector-first",
