@@ -37,6 +37,22 @@ BV_SPECS = {
     ("infineon", "IPP019N08NF2S"): dict(bv_min_25c=80.0, bv_tc=0.040, tj_min=-55.0, tj_max=175.0),
     ("infineon", "IPP022N12NM6"): dict(bv_min_25c=120.0, bv_tc=0.075, tj_min=-55.0, tj_max=175.0),
     ("infineon", "IPP040N06N"): dict(bv_min_25c=60.0, bv_tc=0.030, tj_min=-55.0, tj_max=175.0),
+    # --- The two 100 V parts Fugu2 is ACTUALLY built with (HS 2x IPP050N10NF2S, LS 2x
+    # IPP039N10N5, confirmed by Fab 2026-08-11). Added 2026-08-11, same dsdig
+    # digitize-breakdown-voltage pipeline, same MIN-ANCHORED contract as above: chart V(25 C)
+    # equals the parameter-table V(BR)DSS minimum (100.0 V, spec p.4) and the anchor verdict is
+    # "verified"/absolute_axis_meets_spec_min on both. status verified, warnings [], errors [],
+    # value_basis absolute_axis (calibrated from printed ticks, not normalized), 453 and 518
+    # source points with 0 withheld, line-fit RMS 9.3 and 9.7 mV -- inside the 15 mV the
+    # docstring claims for this family.
+    #
+    # THIS FILE HAD NO 100 V PART AT ALL until now, and that gap was not benign: loss.py fell
+    # back to a `vds_max+5` heuristic and modelled the onset at 105.0 V, which is 2.25 V
+    # OPTIMISTIC against the curated 102.75 V at Tj=80 C. On the fugu2 ftall run that moved the
+    # LS margin from -0.9 V to -3.15 V and promoted the HS from "graze, may not avalanche"
+    # (+0.4 V) to a real -1.85 V violation. Curating this made the verdict WORSE, not better.
+    ("infineon", "IPP050N10NF2S"): dict(bv_min_25c=100.0, bv_tc=0.050, tj_min=-55.0, tj_max=175.0),
+    ("infineon", "IPP039N10N5"): dict(bv_min_25c=100.0, bv_tc=0.050, tj_min=-55.0, tj_max=175.0),
 }
 
 
