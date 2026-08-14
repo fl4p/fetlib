@@ -45,6 +45,21 @@ GATE_SPECS = {
                                         Vgs_th=3.0, Id_vsd=100.0),
     ("infineon", "IPP024N08NF2S"): dict(Id_gc=100.0, gfs_min=94.0, Id_gfs=100.0,
                                         Vgs_th=3.0, Id_vsd=100.0),
+    # The two 100 V parts Fugu2 is actually built with (HS 2x IPP050N10NF2S, LS 2x
+    # IPP039N10N5, attested 2026-08-11). Added 2026-08-14 from the local datasheets
+    # (desk item dslib-curation-gaps): every loss run warned that Id_vsd was missing and
+    # the body-diode Vf anchor drifted to 30/50/60 A depending on model tier.
+    # IPP050N10NF2S Rev 2.1: Qg table VDD=50 V, ID=60 A; gfs 57 S MIN-only at ID=60 A
+    # (|VDS|>=2*ID*RDSon_max); VGS(th) 2.2/3.0/3.8; VSD 0.92/1.2 at VGS=0, IF=60 A.
+    ("infineon", "IPP050N10NF2S"): dict(Id_gc=60.0, gfs_min=57.0, Id_gfs=60.0,
+                                        Vgs_th=3.0, Id_vsd=60.0),
+    # IPP039N10N5 Rev 2.0: Qg table VDD=50 V, ID=50 A; gfs 65 min / 130 typ at ID=50 A;
+    # VGS(th) 2.2/3.0/3.8; VSD 0.9/1.2 at VGS=0, IF=50 A. NB the 130 S typ is the value
+    # the channel fit already rejects (transfer exponent outside [1.05, 2.8]) — curated
+    # faithfully anyway; resolving that rejection needs the transfer-curve digitisation,
+    # not a different number here.
+    ("infineon", "IPP039N10N5"): dict(Id_gc=50.0, gfs_min=65.0, gfs_typ=130.0,
+                                      Id_gfs=50.0, Vgs_th=3.0, Id_vsd=50.0),
 }
 
 
