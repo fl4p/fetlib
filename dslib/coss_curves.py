@@ -884,70 +884,68 @@ COSS_CURVES = {
     ],
 
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 616 pF@50V (-2.2%), Crss 5.8 pF@50V (+0.0%), Ciss 1777 pF@50V (-5.2%).
+    # Re-curated 2026-08-15 from the d902 LOG panel.  The table and the chart disagree on
+    # Crss at 50 V by -23.9% (table 5.8 pF, chart 4.413 pF), which is past the 15% Crss
+    # anchor tolerance, so the library's documented treatment applies: the CHART supplies
+    # the shape, the TABLE supplies the absolute position, joined by ONE additive offset of
+    # +1.387 pF across the whole trace (tiny_crss_anchor_offset -- spec 5.8 pF is inside the
+    # 15 pF regime and the digitized value sits below it, so the offset lifts, never cuts).
+    # Additive and not multiplicative on purpose: a scale would multiply the tail error by
+    # the same factor as the knee, and the tail is where Cgd sets the Miller plateau.  The
+    # lift is +49.4% at the 100 V tail and +1.0% at the knee.  Coss is NOT corrected -- its
+    # -2.4% residual is inside the 8% tolerance, so the exporter records agreement and
+    # changes nothing.
+    # 30 -> 14 knots, chosen jointly against the corrected ink: Coss 3.85% -> 2.83%,
+    # Crss 4.04% -> 2.67%.  A knot is PINNED at the 50 V anchor: greedy thinning has no
+    # reason to place one there and drifted it -1.7% on the first pass, which would have
+    # quietly undone the offset.  After pinning it lands at 5.800 pF, +0.00%.
     ('epc', 'EPC2306'): [
-        (0, 1723, 141),
-        (0.169264068, 1723, 141),
-        (2.021232321, 1684, 123.1),
-        (4.984381525, 1572, 82.04),
-        (7.021546604, 1468, 57.34),
-        (9.429105332, 1340, 38.47),
-        (11.83666406, 1195, 25.96),
-        (13.31823866, 1116, 21.39),
-        (16.28138787, 929.7, 15.91),
-        (22.02248945, 774.4, 11.46),
-        (29.80075611, 723.1, 9.037),
-        (31.83792119, 690.8, 8.529),
-        (45.72768309, 630.5, 6.224),
-        (45.91287991, 616.2, 6.224),
-        (50, 602.3, 5.8),
-        (52.76516245, 602.3, 5.506),
-        (52.95035927, 588.7, 5.506),
-        (56.83949261, 588.7, 5.232),
-        (57.02468943, 575.4, 5.232),
-        (60.54342911, 575.4, 5.06),
-        (60.72862594, 562.4, 5.06),
-        (64.24736562, 562.4, 4.895),
-        (64.43256244, 549.7, 4.895),
-        (67.7661053, 549.7, 4.737),
-        (67.95130212, 537.3, 4.737),
-        (71.28484498, 537.3, 4.587),
-        (71.4700418, 525.2, 4.587),
-        (76.65555291, 525.2, 4.514),
-        (76.84074974, 513.3, 4.514),
-        (99.9903529, 490.4, 4.174),
+        (0, 1715, 143.9),
+        (0.0951853, 1715, 143.9),
+        (0.761894, 1715, 141),
+        (1.26193, 1680, 132.6),
+        (3.76208, 1612, 99.8),
+        (7.2623, 1455, 54.5),
+        (11.5959, 1209, 26.72),
+        (13.4294, 1091, 20.78),
+        (15.5962, 984.3, 16.54),
+        (19.4297, 835, 12.99),
+        (24.43, 753.4, 10.45),
+        (50, 600.9, 5.8),
+        (57.9322, 576.7, 5.131),
+        (99.9348, 489.3, 4.194),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 616 pF@50V (-2.2%), Crss 5.8 pF@50V (+0.0%), Ciss 1777 pF@50V (-5.2%).
+    # Re-curated 2026-08-15 from the d902 LOG panel.  The table and the chart disagree on
+    # Crss at 50 V by -23.9% (table 5.8 pF, chart 4.413 pF), which is past the 15% Crss
+    # anchor tolerance, so the library's documented treatment applies: the CHART supplies
+    # the shape, the TABLE supplies the absolute position, joined by ONE additive offset of
+    # +1.387 pF across the whole trace (tiny_crss_anchor_offset -- spec 5.8 pF is inside the
+    # 15 pF regime and the digitized value sits below it, so the offset lifts, never cuts).
+    # Additive and not multiplicative on purpose: a scale would multiply the tail error by
+    # the same factor as the knee, and the tail is where Cgd sets the Miller plateau.  The
+    # lift is +49.4% at the 100 V tail and +1.0% at the knee.  Coss is NOT corrected -- its
+    # -2.4% residual is inside the 8% tolerance, so the exporter records agreement and
+    # changes nothing.
+    # 30 -> 14 knots, chosen jointly against the corrected ink: Coss 3.85% -> 2.83%,
+    # Crss 4.04% -> 2.67%.  A knot is PINNED at the 50 V anchor: greedy thinning has no
+    # reason to place one there and drifted it -1.7% on the first pass, which would have
+    # quietly undone the offset.  After pinning it lands at 5.800 pF, +0.00%.
     ('epc', 'EPC2306ENGRT'): [
-        (0, 1723, 141),
-        (0.169264068, 1723, 141),
-        (2.021232321, 1684, 123.1),
-        (4.984381525, 1572, 82.04),
-        (7.021546604, 1468, 57.34),
-        (9.429105332, 1340, 38.47),
-        (11.83666406, 1195, 25.96),
-        (13.31823866, 1116, 21.39),
-        (16.28138787, 929.7, 15.91),
-        (22.02248945, 774.4, 11.46),
-        (29.80075611, 723.1, 9.037),
-        (31.83792119, 690.8, 8.529),
-        (45.72768309, 630.5, 6.224),
-        (45.91287991, 616.2, 6.224),
-        (50, 602.3, 5.8),
-        (52.76516245, 602.3, 5.506),
-        (52.95035927, 588.7, 5.506),
-        (56.83949261, 588.7, 5.232),
-        (57.02468943, 575.4, 5.232),
-        (60.54342911, 575.4, 5.06),
-        (60.72862594, 562.4, 5.06),
-        (64.24736562, 562.4, 4.895),
-        (64.43256244, 549.7, 4.895),
-        (67.7661053, 549.7, 4.737),
-        (67.95130212, 537.3, 4.737),
-        (71.28484498, 537.3, 4.587),
-        (71.4700418, 525.2, 4.587),
-        (76.65555291, 525.2, 4.514),
-        (76.84074974, 513.3, 4.514),
-        (99.9903529, 490.4, 4.174),
+        (0, 1715, 143.9),
+        (0.0951853, 1715, 143.9),
+        (0.761894, 1715, 141),
+        (1.26193, 1680, 132.6),
+        (3.76208, 1612, 99.8),
+        (7.2623, 1455, 54.5),
+        (11.5959, 1209, 26.72),
+        (13.4294, 1091, 20.78),
+        (15.5962, 984.3, 16.54),
+        (19.4297, 835, 12.99),
+        (24.43, 753.4, 10.45),
+        (50, 600.9, 5.8),
+        (57.9322, 576.7, 5.131),
+        (99.9348, 489.3, 4.194),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 1600 pF@50V (-0.1%), Crss 61 pF@50V (-1.1%), Ciss 11000 pF@50V (+2.4%).
     ('infineon', 'IPM018N10NM5LF2AUMA1'): [
