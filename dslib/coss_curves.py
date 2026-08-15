@@ -883,18 +883,9 @@ COSS_CURVES = {
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 590 pF@50V (+7.2%), Crss 8 pF@50V (+0.0%), Ciss 2170 pF@50V (-5.9%).
     ('epc', 'EPC2367'): [
-        (0, 1861, 217.6),
-        (3.12255449, 1803, 181.4),
-        (6.649695107, 1716, 138.1),
-        (11.47630858, 1586, 94.71),
-        (13.88961532, 1463, 73.03),
-        (17.04547798, 1203, 58.58),
-        (22.80028635, 1008, 36.9),
-        (32.4535133, 769.7, 15.23),
-        (38.39396066, 697.4, 15.23),
-        (50.08921639, 632.4, 8),
-        (56.4009417, 574.6, 8),
-        (100.2117409, 560.1, 8),
+        (0, 1840, 211.7), (11.9684, 1566, 87.14), (16.5856, 1230, 56.92),
+        (23.8412, 965.9, 28.97), (29.4478, 822.2, 18.58), (36.2087, 714, 12.12),
+        (49.4007, 632.7, 8.068), (57.4808, 560.7, 7.459), (99.8602, 549.5, 7.006),
     ],
 
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 616 pF@50V (-2.2%), Crss 5.8 pF@50V (+0.0%), Ciss 1777 pF@50V (-5.2%).
@@ -1359,7 +1350,7 @@ COSS_CURVE_SOURCE = {
         source_page=3, digitization_method="dsdig-auto-vector-adaptive-knots",
         validation_method='export gate on FETLIB-served anchors (dslib.coss_anchors): Coss/Crss + Qoss; human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50 001, exported 2026-07-29T10:27:33.961Z)'),
     ('epc', 'EPC2367'): dict(
-        datasheet_revision="unknown", source_figure='Diagram 901',
+        datasheet_revision="unknown", source_figure='Diagram 902',
         source_page=3, digitization_method="dsdig-auto-vector-adaptive-knots",
         validation_method='export gate on FETLIB-served anchors (dslib.coss_anchors): Coss/Crss/Ciss + Qoss; human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50 001, exported 2026-07-29T10:27:33.961Z)'),
 
@@ -1807,11 +1798,7 @@ CISS_CURVES = {
     ],
 
     ('epc', 'EPC2367'): [
-        (0, 2244),
-        (3.67947143, 2208),
-        (27.06998289, 2049),
-        (50, 2041),
-        (100.2117409, 2041),
+        (0, 2251), (21.8624, 2035), (99.8602, 2035),
     ],
 
     ('epc', 'EPC2306'): [
