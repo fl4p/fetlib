@@ -361,13 +361,23 @@ COSS_CURVES = {
     ],
     # infineon IPP038N15NM6AKSA1, Diagram 11 p.8 (VGS=0, f=1 MHz). dsdig adaptive-knot vector trace,
     # human overlay review GREEN (packet coss-review-top50-2026-07-28-refresh), export gate anchors: Ciss 4900 pF@75V (+0.3%), Coss 1500 pF@75V (+1.7%), Crss 19 pF@75V (+0.6%).
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 16 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  11 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 5.62%->1.98% anchor +1.9%(+1.7%); Crss 14.09%->2.95% anchor +0.0%(+0.6%)
     ("infineon", "IPP038N15NM6AKSA1"): [
-        (0, 5306, 747.2), (0.14, 5306, 747.2), (1.59, 5043, 692.2),
-        (5.06, 4328, 536.7), (30.2, 2844, 98.73), (41.48, 2472, 54.28),
-        (57.38, 2017, 28.72), (70.38, 1687, 20.89), (75, 1525, 19.11),
-        (75.59, 1524, 18.63), (81.66, 1275, 17.04), (85.13, 1123, 16.41),
-        (96.4, 692.2, 14.63), (99.58, 641.3, 14.26), (125.02, 523.2, 12.72),
-        (149.88, 472.5, 12.09),
+        (0, 5296, 746.9),
+        (0.187919, 5296, 746.9),
+        (7.47429, 3932, 451.2),
+        (19.1845, 3163, 195.5),
+        (28.2925, 2886, 110.3),
+        (38.9618, 2544, 60.77),
+        (50.1516, 2192, 36.71),
+        (75, 1529, 19),
+        (99.8551, 643.5, 14.19),
+        (130.822, 517.7, 12.51),
+        (150.079, 472.3, 12.08),
     ],
     # infineon IPP039N10N5AKSA1, Diagram 11 p.8 (VGS=0, f=1 MHz). dsdig adaptive-knot vector trace,
     # human overlay review GREEN (packet coss-review-top50-2026-07-28-refresh), export gate anchors: Ciss 5400 pF@50V (-1.3%), Coss 830 pF@50V (+2.4%), Crss 37 pF@50V (-0.9%).
@@ -512,37 +522,81 @@ COSS_CURVES = {
     # epc EPC2071, Diagram 902 p.3 (VGS=0, f=1 MHz). dsdig adaptive-knot vector
     # trace, human overlay GREEN; anchors served BY FETLIB (dslib.coss_anchors)
     # -- the digitizer's own table scraper reads nothing on this vendor. Ciss 2664 pF@50V (-7.7%), Coss 878 pF@50V (-2.8%), Crss 5.4 pF@50V (-10.7%)
+    # Re-thinned 2026-08-15 against the d902 ink: the previous
+    # 24 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  18 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.25%->2.70% anchor -1.7%(-2.8%); Crss 12.41%->2.97% anchor -9.5%(-10.7%)
     ("epc", "EPC2071"): [
-        (0, 2867, 186.8), (0.02, 2867, 186.8), (2.39, 2805, 171),
-        (6.4, 2626, 92.32), (8.41, 2352, 50.93), (9.32, 1972, 39.97),
-        (9.87, 1728, 34.26), (10.6, 1548, 28.73), (11.69, 1417, 22.06),
-        (23.91, 1188, 10.9), (34.13, 1018, 7.5), (36.87, 953.3, 6.86),
-        (41.79, 932.5, 5.88), (43.98, 892.3, 5.51), (49.27, 872.9, 4.83),
-        (50, 853.9, 4.83), (51.1, 835.3, 4.72), (54.02, 835.3, 4.52),
-        (54.2, 817.1, 4.52), (63.5, 817.1, 4.23), (63.68, 799.3, 4.23),
-        (69.52, 799.3, 4.04), (69.7, 781.9, 4.04), (99.99, 781.9, 3.96),
+        (0, 2893, 187.6),
+        (0.107405, 2893, 187.6),
+        (3.55535, 2726, 153.9),
+        (4.54048, 2672, 131.3),
+        (5.19723, 2672, 121.3),
+        (6.18236, 2620, 95.63),
+        (7.82424, 2469, 61.83),
+        (9.30193, 1946, 38.42),
+        (10.2871, 1596, 30.29),
+        (10.7796, 1534, 27.43),
+        (11.4364, 1445, 22.95),
+        (16.362, 1309, 13.98),
+        (22.437, 1209, 11.47),
+        (29.8254, 1074, 8.861),
+        (35.2436, 991.8, 7.125),
+        (50, 863.3, 4.889),
+        (64.6333, 797.5, 4.172),
+        (99.9337, 781.9, 4.01),
     ],
     # epc EPC2088, Diagram 902 p.3 (VGS=0, f=1 MHz). dsdig adaptive-knot vector
     # trace, human overlay GREEN; anchors served BY FETLIB (dslib.coss_anchors)
     # -- the digitizer's own table scraper reads nothing on this vendor. Ciss 1864 pF@50V (-9.4%), Coss 557 pF@50V (+2.6%), Crss 3.6 pF@50V (-10.1%)
+    # Re-thinned 2026-08-15 against the d902 ink: the previous
+    # 21 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  17 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.82%->2.34% anchor +2.2%(+2.6%); Crss 10.23%->2.85% anchor -10.5%(-10.1%)
     ("epc", "EPC2088"): [
-        (0, 1886, 145.1), (3.05, 1845, 127.1), (7.81, 1689, 65.46),
-        (9.09, 1616, 45.96), (10.37, 1479, 33.72), (12.93, 1062, 20.73),
-        (14.21, 971.8, 17.76), (15.13, 971.8, 15.9), (17.14, 909.4, 14.24),
-        (24.28, 851, 11.41), (27.02, 779, 9.78), (28.85, 682.2, 8.19),
-        (30.13, 652.7, 6.86), (36.36, 624.4, 3.86), (36.54, 610.8, 3.78),
-        (40.2, 610.8, 3.38), (40.38, 597.4, 3.38), (50, 571.6, 3.24),
-        (62.34, 559.1, 3.24), (62.53, 546.9, 3.24), (99.86, 534.9, 3.24),
+        (0, 1878, 144.2),
+        (0.046839, 1878, 144.2),
+        (5.31751, 1769, 100.8),
+        (6.63517, 1734, 79.35),
+        (7.62342, 1700, 67.67),
+        (8.94109, 1602, 48.25),
+        (11.247, 1339, 28.19),
+        (13.5529, 1013, 19.32),
+        (17.3412, 917.5, 13.77),
+        (21.4589, 864.3, 12.72),
+        (25.2472, 830.6, 10.85),
+        (27.5531, 737.1, 9.435),
+        (31.3414, 641.2, 5.97),
+        (36.6121, 616.2, 3.703),
+        (41.2239, 592.2, 3.286),
+        (50, 569.1, 3.221),
+        (99.8601, 536.1, 3.221),
     ],
     # epc EPC2092, Diagram 902 p.3 (VGS=0, f=1 MHz). dsdig adaptive-knot vector
     # trace, human overlay GREEN; anchors served BY FETLIB (dslib.coss_anchors)
     # -- the digitizer's own table scraper reads nothing on this vendor. Ciss 1686 pF@50V (-3.6%), Coss 568 pF@50V (+1.0%), Crss 4.3 pF@50V (-4.3%)
+    # Re-thinned 2026-08-15 against the d902 ink: the previous
+    # 15 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  14 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.98%->2.74% anchor +1.0%(+1.0%); Crss 21.44%->2.91% anchor -3.8%(-4.3%)
     ("epc", "EPC2092"): [
-        (0, 1662, 123), (2.93, 1589, 98.04), (5.93, 1451, 69.8),
-        (12.29, 1131, 25.77), (26.14, 719.2, 7.25), (32.87, 687.3, 6.05),
-        (37.55, 642.2, 5.4), (40.17, 642.2, 5.05), (40.36, 627.8, 5.05),
-        (44.66, 627.8, 4.61), (48.4, 573.4, 4.31), (50, 573.4, 4.12),
-        (52.52, 560.6, 3.93), (56.82, 523.8, 3.59), (100.23, 478.4, 1.78),
+        (0, 1655, 121.8),
+        (0.125755, 1655, 121.8),
+        (6.5252, 1406, 64.78),
+        (8.54608, 1296, 46.75),
+        (13.7667, 1057, 20.69),
+        (17.8084, 897.9, 12.18),
+        (22.5238, 778.5, 8.439),
+        (32.965, 661.4, 5.968),
+        (43.0694, 635, 4.769),
+        (50, 573.4, 4.135),
+        (53.1738, 539.4, 3.89),
+        (70.5197, 507.4, 2.695),
+        (91.7389, 487.2, 1.985),
+        (100.159, 477.3, 1.793),
     ],
     # epc EPC2218, Diagram 902 p.3 (VGS=0, f=1 MHz). dsdig adaptive-knot vector
     # trace, human overlay GREEN; anchors served BY FETLIB (dslib.coss_anchors)
@@ -574,12 +628,26 @@ COSS_CURVES = {
     # infineon IPA030N10N3GXKSA1, Diagram 11 p.6 (VGS=0, f=1 MHz). dsdig adaptive-knot vector
     # trace, human overlay GREEN; anchors served BY FETLIB (dslib.coss_anchors)
     # -- the digitizer's own table scraper reads nothing on this vendor. Ciss 11100 pF@50V (+0.8%), Coss 1940 pF@50V (+1.1%), Crss 69 pF@50V (+0.8%)
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 14 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  14 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.92%->2.25% anchor +1.1%(+1.1%); Crss 10.32%->2.62% anchor +1.1%(+0.8%)
     ("infineon", "IPA030N10N3GXKSA1"): [
-        (0, 11010, 2492), (0.03, 11010, 2492), (0.73, 10170, 2025),
-        (1.09, 9091, 1448), (2.15, 7749, 896.4), (6.05, 6711, 683.2),
-        (9.23, 6001, 564), (14.01, 5115, 416.3), (20.92, 4090, 274.8),
-        (28, 3323, 184.3), (41.11, 2376, 97.27), (50, 1961, 69.54),
-        (63.77, 1543, 49.72), (80.06, 1294, 40.4),
+        (0, 10870, 2365),
+        (0.126624, 10870, 2365),
+        (0.604857, 10410, 2019),
+        (1.08309, 9143, 1450),
+        (1.40191, 8757, 1220),
+        (1.88015, 8268, 1012),
+        (2.19897, 7805, 864),
+        (3.15543, 7369, 804.1),
+        (13.1983, 5217, 439.4),
+        (22.6036, 3857, 247.2),
+        (30.7335, 3064, 158.2),
+        (50, 1962, 69.75),
+        (72.021, 1409, 43.36),
+        (79.9915, 1293, 40.35),
     ],
     # infineon ISC0802NLSATMA1, Diagram 11 p.8 (VGS=0, f=1 MHz). dsdig adaptive-knot vector
     # trace, human overlay GREEN; anchors served BY FETLIB (dslib.coss_anchors)
@@ -601,24 +669,50 @@ COSS_CURVES = {
     # epc EPC2090, Diagram 902 p.3 (VGS=0, f=1 MHz). dsdig adaptive-knot vector trace,
     # human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50-001,
     # exported 2026-07-29). Export gate on fetlib-served anchors: Ciss 1046 pF@50V (-3.4%), Coss 364 pF@50V (-3.1%), Crss 2.9 pF@50V (-5.4%).
+    # Re-thinned 2026-08-15 against the d902 ink: the previous
+    # 18 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  13 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.38%->2.48% anchor -3.1%(-3.1%); Crss 16.42%->2.94% anchor -5.2%(-5.4%)
     ("epc", "EPC2090"): [
-        (0, 923.6, 73.65), (3.302, 903.2, 55.05), (7.333, 825.8, 32.9),
-        (11.18, 706.1, 19.23), (11.55, 675.2, 18.39), (13.75, 617.4, 13.44),
-        (15.58, 552, 10.99), (18.88, 493.6, 7.681), (48.19, 360.8, 2.869),
-        (50, 352.8, 2.744), (54.42, 329.9, 2.399), (61.38, 322.6, 1.918),
-        (61.57, 315.5, 1.918), (67.8, 308.5, 1.603), (67.98, 301.6, 1.603),
-        (85.39, 288.4, 1.253), (85.57, 282.1, 1.226), (99.86, 282.1, 1.172),
+        (0, 927.8, 73.32),
+        (0.0956117, 927.8, 73.32),
+        (6.03202, 855.9, 39.27),
+        (9.33002, 758.5, 24.71),
+        (13.1227, 632.7, 14.63),
+        (18.2346, 507, 7.997),
+        (23.8412, 449.3, 5.345),
+        (29.9425, 431.5, 4.283),
+        (40.9908, 382.4, 3.502),
+        (50, 352.8, 2.75),
+        (68.3643, 300.3, 1.564),
+        (80.402, 288.4, 1.279),
+        (99.8602, 282.7, 1.18),
     ],
     # epc EPC7018, Diagram 902 p.3 (VGS=0, f=1 MHz). dsdig adaptive-knot vector trace,
     # human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50-001,
     # exported 2026-07-29). Export gate on fetlib-served anchors: Ciss 1828 pF@50V (-10.7%), Coss 1025 pF@50V (+6.6%), Crss 5.8 pF@50V (+4.3%).
+    # Re-thinned 2026-08-15 against the d902 ink: the previous
+    # 19 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  15 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 5.05%->2.86% anchor +6.6%(+6.6%); Crss 16.80%->2.96% anchor +4.1%(+4.3%)
     ("epc", "EPC7018"): [
-        (0, 2787, 224.2), (4.052, 2726, 167.8), (9.398, 2493, 85.95), (11.61, 2280, 61.52),
-        (14.01, 1908, 43.05), (17.33, 1460, 27.56), (20.64, 1306, 18.87),
-        (49.4, 1117, 6.186), (49.59, 1092, 6.186), (50, 1092, 6.05), (61.39, 1045, 5.175),
-        (61.57, 1022, 5.175), (73.74, 977.1, 4.629), (73.92, 955.6, 4.629),
-        (78.35, 955.6, 4.527), (78.53, 934.5, 4.527), (83.14, 934.5, 4.427),
-        (83.33, 913.9, 4.427), (100.1, 854.7, 4.33),
+        (0, 2806, 223.7),
+        (0.10625, 2806, 223.7),
+        (3.25879, 2750, 183.1),
+        (4.42026, 2695, 159.1),
+        (6.24541, 2642, 132.8),
+        (8.23649, 2589, 100.3),
+        (15.0393, 1733, 36.75),
+        (17.3623, 1476, 27.75),
+        (18.8556, 1362, 22.7),
+        (25.3266, 1283, 12.94),
+        (31.1339, 1232, 9.771),
+        (50, 1092, 6.036),
+        (54.0313, 1071, 5.799),
+        (62.6593, 1029, 5.039),
+        (100.158, 858.6, 4.378),
     ],
     # infineon IPF019N12NM6ATMA1, Diagram 11 p.8 (VGS=0, f=1 MHz). dsdig adaptive-knot vector trace,
     # human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50-001,
@@ -660,14 +754,28 @@ COSS_CURVES = {
     # infineon IPTG020N13NM6ATMA1, Diagram 11 p.8 (VGS=0, f=1 MHz). dsdig adaptive-knot vector trace,
     # human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50-001,
     # exported 2026-07-29). Export gate on fetlib-served anchors: Ciss 11000 pF@68V (-2.7%), Coss 2200 pF@68V (-2.4%), Crss 28 pF@68V (-2.0%).
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 23 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  16 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.94%->2.56% anchor -2.1%(-2.4%); Crss 10.80%->2.78% anchor -2.8%(-2.0%)
     ("infineon", "IPTG020N13NM6ATMA1"): [
-        (0, 7441, 1674), (0.9619, 7161, 1383), (3.034, 6385, 841.2), (10.55, 5693, 492.4),
-        (23.5, 4526, 229.2), (39.56, 3463, 95.1), (42.41, 3208, 81.61),
-        (46.55, 3087, 67.4), (49.66, 2860, 57.84), (53.55, 2753, 47.77),
-        (56.4, 2550, 42.6), (60.54, 2454, 35.86), (63.65, 2274, 31.97), (68, 2147, 27.44),
-        (76.34, 1914, 21.4), (78.42, 1807, 20.21), (90.33, 1551, 16.06),
-        (99.66, 1331, 14.32), (110.5, 1187, 13.27), (113.1, 1121, 13.02),
-        (117, 1099, 13.02), (123.2, 999.1, 12.53), (134.1, 908, 12.29),
+        (0, 7564, 1664),
+        (0.0693909, 7564, 1664),
+        (1.00221, 7308, 1401),
+        (1.93503, 6706, 975.9),
+        (3.10106, 6479, 807.6),
+        (8.46478, 5843, 543.6),
+        (13.5953, 5270, 412.8),
+        (16.3938, 5092, 341.6),
+        (33.4177, 3800, 130.3),
+        (49.0425, 2936, 59.04),
+        (68, 2154, 27.22),
+        (77.7267, 1845, 20.31),
+        (84.2565, 1693, 18.01),
+        (87.5214, 1580, 16.52),
+        (116.905, 1101, 12.99),
+        (133.929, 910.9, 12.33),
     ],
 
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 800 pF@50V (-1.4%), Crss 14 pF@50V (+5.8%), Ciss 1270 pF@50V (-1.7%).
@@ -684,56 +792,52 @@ COSS_CURVES = {
         (100.2791129, 633.8, 8.392),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 2200 pF@68V (-2.4%), Crss 28 pF@68V (-2.0%), Ciss 11000 pF@68V (-2.7%).
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 23 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  16 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.94%->2.56% anchor -2.1%(-2.4%); Crss 10.81%->2.78% anchor -2.8%(-2.0%)
     ('infineon', 'IPT020N13NM6ATMA1'): [
-        (0, 7441, 1674),
-        (0.9619139454, 7161, 1383),
-        (3.034295535, 6385, 841.2),
-        (10.5466788, 5693, 492.4),
-        (23.49906373, 4526, 229.2),
-        (39.56002105, 3463, 95.1),
-        (42.40954574, 3208, 81.61),
-        (46.55430892, 3087, 67.4),
-        (49.6628813, 2860, 57.84),
-        (53.54859678, 2753, 47.77),
-        (56.39812147, 2550, 42.6),
-        (60.54288465, 2454, 35.86),
-        (63.65145703, 2274, 31.97),
-        (68, 2147, 27.44),
-        (76.34479427, 1914, 21.4),
-        (78.41717586, 1807, 20.21),
-        (90.33337, 1551, 16.06),
-        (99.65908715, 1331, 14.32),
-        (110.5390905, 1187, 13.27),
-        (113.1295675, 1121, 13.02),
-        (117.015283, 1099, 13.02),
-        (123.2324277, 999.1, 12.53),
-        (134.1124311, 908, 12.29),
+        (0, 7564, 1664),
+        (0.0693909, 7564, 1664),
+        (1.00221, 7308, 1401),
+        (1.93503, 6706, 975.9),
+        (3.10106, 6479, 807.6),
+        (8.46478, 5843, 543.6),
+        (13.5953, 5270, 412.8),
+        (16.3938, 5092, 341.6),
+        (33.4177, 3800, 130.3),
+        (49.0425, 2936, 59.04),
+        (68, 2154, 27.22),
+        (77.7267, 1845, 20.31),
+        (84.2565, 1693, 18.01),
+        (87.5214, 1580, 16.52),
+        (116.905, 1101, 12.99),
+        (133.929, 910.9, 12.33),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 2200 pF@68V (-2.4%), Crss 28 pF@68V (-2.0%), Ciss 11000 pF@68V (-2.7%).
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 23 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  16 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.94%->2.56% anchor -2.1%(-2.4%); Crss 10.81%->2.78% anchor -2.8%(-2.0%)
     ('infineon', 'IPTC020N13NM6ATMA1'): [
-        (0, 7441, 1674),
-        (0.9619139454, 7161, 1383),
-        (3.034295535, 6385, 841.2),
-        (10.5466788, 5693, 492.4),
-        (23.49906373, 4526, 229.2),
-        (39.56002105, 3463, 95.1),
-        (42.40954574, 3208, 81.61),
-        (46.55430892, 3087, 67.4),
-        (49.6628813, 2860, 57.84),
-        (53.54859678, 2753, 47.77),
-        (56.39812147, 2550, 42.6),
-        (60.54288465, 2454, 35.86),
-        (63.65145703, 2274, 31.97),
-        (68, 2147, 27.44),
-        (76.34479427, 1914, 21.4),
-        (78.41717586, 1807, 20.21),
-        (90.33337, 1551, 16.06),
-        (99.65908715, 1331, 14.32),
-        (110.5390905, 1187, 13.27),
-        (113.1295675, 1121, 13.02),
-        (117.015283, 1099, 13.02),
-        (123.2324277, 999.1, 12.53),
-        (134.1124311, 908, 12.29),
+        (0, 7564, 1664),
+        (0.0693909, 7564, 1664),
+        (1.00221, 7308, 1401),
+        (1.93503, 6706, 975.9),
+        (3.10106, 6479, 807.6),
+        (8.46478, 5843, 543.6),
+        (13.5953, 5270, 412.8),
+        (16.3938, 5092, 341.6),
+        (33.4177, 3800, 130.3),
+        (49.0425, 2936, 59.04),
+        (68, 2154, 27.22),
+        (77.7267, 1845, 20.31),
+        (84.2565, 1693, 18.01),
+        (87.5214, 1580, 16.52),
+        (116.905, 1101, 12.99),
+        (133.929, 910.9, 12.33),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 1800 pF@50V (+1.7%), Crss 35 pF@50V (+0.1%), Ciss 13000 pF@50V (+1.0%).
     ('infineon', 'IPT017N10NM5LF2ATMA1'): [
@@ -779,31 +883,29 @@ COSS_CURVES = {
         (100.071147, 1239, 17.76),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 2200 pF@68V (-2.4%), Crss 28 pF@68V (-2.0%), Ciss 11000 pF@68V (-2.7%).
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 24 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  17 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 3.99%->2.92% anchor -2.1%(-2.4%); Crss 10.81%->2.80% anchor -2.8%(-2.0%)
     ('infineon', 'IPF021N13NM6ATMA1'): [
-        (0, 7441, 1674),
-        (0.9619139454, 7161, 1383),
-        (3.034295535, 6385, 841.2),
-        (10.5466788, 5693, 492.4),
-        (23.49906373, 4526, 229.2),
-        (39.56002105, 3463, 95.1),
-        (53.54859678, 2753, 47.77),
-        (56.91621686, 2550, 41),
-        (58.47050306, 2550, 38.71),
-        (63.65145703, 2274, 31.97),
-        (68, 2147, 27.44),
-        (76.34479427, 1914, 21.4),
-        (81.00765284, 1740, 19.08),
-        (82.56193904, 1740, 18.36),
-        (83.59812983, 1674, 18.36),
-        (90.33337, 1551, 16.06),
-        (99.65908715, 1331, 14.32),
-        (104.3219457, 1281, 13.78),
-        (108.9848043, 1187, 13.52),
-        (111.0571859, 1187, 13.27),
-        (114.9429014, 1099, 13.02),
-        (120.9009984, 1058, 12.77),
-        (125.0457616, 980.2, 12.53),
-        (134.1124311, 908, 12.53),
+        (0, 7564, 1664),
+        (0.0693909, 7564, 1664),
+        (1.00221, 7308, 1401),
+        (1.93503, 6706, 975.9),
+        (2.63465, 6591, 865.1),
+        (8.23158, 5843, 553),
+        (11.03, 5549, 481.9),
+        (16.1606, 5092, 347.5),
+        (34.1174, 3735, 125.9),
+        (42.5127, 3311, 83.3),
+        (49.0425, 2936, 59.04),
+        (68, 2154, 27.22),
+        (81.458, 1722, 18.96),
+        (90.553, 1553, 15.96),
+        (93.5847, 1450, 15.42),
+        (116.905, 1101, 12.99),
+        (133.929, 910.9, 12.33),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 1500 pF@60V (-1.7%), Crss 27 pF@60V (-1.0%), Ciss 5000 pF@60V (-0.5%).
     ('infineon', 'IPTC026N12NM6ATMA1'): [
@@ -822,18 +924,22 @@ COSS_CURVES = {
         (120.060435, 595.5, 11.91),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 1200 pF@60V (+2.2%), Crss 23 pF@60V (+1.3%), Ciss 4200 pF@60V (-1.4%).
+    # Re-thinned 2026-08-15 against the d11 ink: the previous
+    # 11 knots were too sparse to carry the Crss shape and departed
+    # where they ran out, not where the trace was read.  10 knots chosen
+    # jointly over Coss and Crss, with a knot pinned at each table anchor.
+    # Coss 7.03%->1.77% anchor +2.4%(+2.2%); Crss 11.68%->2.72% anchor +0.5%(+1.3%)
     ('infineon', 'ISC030N12NM6ATMA1'): [
-        (0, 4486, 723.7),
-        (0.8245068642, 4284, 660.2),
-        (11.48246692, 2968, 266.7),
-        (22.14042697, 2499, 141.9),
-        (30.13389701, 2228, 90.72),
-        (36.12899955, 2009, 65.79),
-        (50.11757212, 1526, 33.82),
-        (60, 1227, 23.29),
-        (64.32818552, 1119, 20.18),
-        (76.76247225, 811.7, 14.98),
-        (120.060435, 501.3, 10.86),
+        (0, 4468, 718.5),
+        (0.0594872, 4468, 718.5),
+        (4.05729, 3524, 446.8),
+        (10.6537, 2987, 280.8),
+        (31.0425, 2169, 86.52),
+        (43.0359, 1746, 46.57),
+        (60, 1229, 23.11),
+        (79.0161, 788.4, 14.35),
+        (105.402, 584.4, 11.32),
+        (119.994, 500.6, 10.86),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 1500 pF@60V (-2.2%), Crss 27 pF@60V (-1.4%), Ciss 5000 pF@60V (-0.4%).
     # Re-thinned 2026-08-15: 11 knots jumped 1.5 -> 14.2 V straight across the knee, reading
