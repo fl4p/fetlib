@@ -869,17 +869,9 @@ COSS_CURVES = {
 
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 1147 pF@50V (+1.1%), Crss 12 pF@50V (+0.0%), Ciss 4094 pF@50V (-8.5%).
     ('epc', 'EPC2361'): [
-        (0, 3323, 290.6),
-        (0.0336455249, 3323, 290.6),
-        (1.88702931, 3214, 236.2),
-        (6.335150395, 2866, 116.7),
-        (8.929887695, 2529, 73.17),
-        (14.11936229, 1844, 40.56),
-        (23.5716196, 1474, 18.82),
-        (50, 1159, 12),
-        (53.41109854, 1137, 12),
-        (75.83704235, 985.2, 12),
-        (99.93103156, 941.7, 12),
+        (0, 3341, 287.6), (8.83593, 2535, 79.37), (12.3511, 1984, 49.35), (16.201, 1755, 34.16),
+        (21.7248, 1552, 24.01), (29.4247, 1352, 17.41), (41.6441, 1234, 12.62),
+        (57.7133, 1108, 10.82), (100.23, 936.1, 10.34),
     ],
     # human overlay review GREEN (fugu2-100v-LS2p-gan-coss-scalar-top50 001); export anchors: Coss 590 pF@50V (+7.2%), Crss 8 pF@50V (+0.0%), Ciss 2170 pF@50V (-5.9%).
     ('epc', 'EPC2367'): [
@@ -1346,7 +1338,7 @@ COSS_CURVE_SOURCE = {
         validation_method='export gate on FETLIB-served anchors (dslib.coss_anchors): Coss/Crss/Ciss + Qoss; human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50 001, exported 2026-07-29T10:27:33.961Z)'),
 
     ('epc', 'EPC2361'): dict(
-        datasheet_revision="unknown", source_figure='Diagram 901',
+        datasheet_revision="unknown", source_figure='Diagram 902',
         source_page=3, digitization_method="dsdig-auto-vector-adaptive-knots",
         validation_method='export gate on FETLIB-served anchors (dslib.coss_anchors): Coss/Crss + Qoss; human overlay review GREEN (packet fugu2-100v-LS2p-gan-coss-scalar-top50 001, exported 2026-07-29T10:27:33.961Z)'),
     ('epc', 'EPC2367'): dict(
@@ -1408,6 +1400,11 @@ COSS_CURVE_META = {
 
 # Optional (Vds_V, Ciss_pF) input-capacitance curves from the same datasheet graph.
 CISS_CURVES = {
+    # EPC2361 Ciss from Diagram 902 (log panel). The part had NO Ciss entry; the linear
+    # panel it was previously read from cannot resolve the small-capacitance end.
+    ('epc', 'EPC2361'): [
+        (0, 4077), (16.5358, 3776), (100.23, 3776),
+    ],
     # Infineon IPP019N08NF2S Rev 2.1, Diagram 11. Anchors: Ciss=8700pF@40V
     # (tool 8665, snapped to spec).
     ("infineon", "IPP019N08NF2S"): [
