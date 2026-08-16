@@ -33,6 +33,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(
 
 # Imported for collection by pytest -- each is a real test function.
 from maglib.tests import (test_bpk_sinusoidal,  # noqa: F401,E402
+                          test_ks184_125a_dc_bias_against_flu_bench,  # noqa: F401,E402
+                          test_ks184_125a_reproduces_its_own_datasheet_dc_bias_point,  # noqa: F401,E402
                           test_coil,  # noqa: F401,E402
                           test_copper_resistivity_tempco,  # noqa: F401,E402
                           test_dc_bias_suppression_is_not_silent,  # noqa: F401,E402

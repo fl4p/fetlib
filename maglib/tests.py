@@ -938,3 +938,76 @@ def test_femmt_toroid_fem():
     # ratio is looser, ~17%, because the DC term is subtracted); 15% margin
     assert abs(rel_err(r.fr_total[0], 1 + f_se + f_pe)) < 0.15, \
         (r.fr_total[0], 1 + f_se + f_pe)
+
+
+def test_ks184_125a_dc_bias_against_flu_bench():
+    """KDM_KS184_125A + 17 turns, checked against a BENCH MEASUREMENT of flu's inductor.
+
+    This is the first hardware validation of a core model in this library: everything else in
+    this file is vendor-traceable (datasheet against model), which says the arithmetic is right,
+    not that the physics is. Here the model is checked against a converter running on a bench.
+
+    HOW THE MEASUREMENT WAS MADE, because that is what makes it admissible. A Rogowski coil
+    (PEM CWT UM/06) around the low-side drain lead of dcdc-tools' `flu` buck. The coil is
+    AC-coupled and therefore CANNOT read DC -- but the STEP across the switch-node edge is
+    exactly the inductor valley current, and a step is a level difference, immune to the
+    integration/window defects that invalidated the charge results from the same captures
+    (dcdc-tools verifications/loaded-capture/RESULTS-*-20260816.md). L then follows from
+    L = Vout*(1-D)/(dI*fsw) with dI = 2*(I_out - I_valley).
+
+    Agreement is 0.3% at the bottom widening to 9% at the top, and the residual has the right
+    SIGN and the right GROWTH: the datasheet law gives L at the DC bias, while the measurement
+    averages over a ripple that dips into higher-permeability territory, and that ripple itself
+    grows 5.5 -> 8.4 A across these rungs. The +-8% A_L tolerance covers the rest. So the
+    tolerance below is 12%, not 1% -- tightening it would be pinning the measurement's own
+    method error as if it were the model's.
+    """
+    from maglib.cores import KDM_KS184_125A as core
+
+    N = 17
+    L0 = N * N * core.A_L
+    assert abs(L0 - 81.2e-6) < 0.5e-6, f"L(0)={L0*1e6:.1f} uH, expected 281 nH * 17^2"
+
+    # (I_out [A], L measured [uH]) -- dcdc-tools flu, counts 829/832/838/844, 2026-08-16
+    bench = [(6.09, 72.7), (8.93, 67.2), (14.39, 56.2), (19.39, 46.9)]
+    for i_out, l_meas_uh in bench:
+        h = N * i_out / core.l_e                      # A/m
+        mu = core.mat.permeability_dc_bias(h, no_raise=True)
+        l_pred_uh = L0 * (mu / core.mat.mu_r) * 1e6
+        rel = abs(l_meas_uh - l_pred_uh) / l_pred_uh
+        assert rel < 0.12, (
+            f"I_out={i_out} A: maglib {l_pred_uh:.1f} uH vs bench {l_meas_uh:.1f} uH "
+            f"({rel*100:.0f}% off)")
+        # The measurement must not come out BELOW the DC-bias prediction: averaging over the
+        # ripple can only sample higher permeability, never lower.
+        assert l_meas_uh >= l_pred_uh * 0.99, (
+            f"I_out={i_out} A: bench {l_meas_uh:.1f} uH is below the DC-bias prediction "
+            f"{l_pred_uh:.1f} uH -- ripple averaging cannot do that, so one of them is wrong")
+
+
+def test_ks184_125a_reproduces_its_own_datasheet_dc_bias_point():
+    """The KDM sheet's own DC-bias row, which the flu check leans on indirectly.
+
+    'phi 0.8mm/57Ts, 20kHz/1V, Idc=7.5A (Hdc=50Oe) -> 344.4 uH (Min.)', against a stated
+    L(0) of 913.0 uH +-8%. Two independent things are pinned:
+
+      * the H conversion -- 57 turns at 7.5 A over l_e must land on the sheet's own 50 Oe, which
+        is what licenses using N*I/l_e everywhere else here;
+      * the bias law itself, whose typical must sit ABOVE a Min. figure but not absurdly so.
+    """
+    from maglib.cores import KDM_KS184_125A as core
+    from maglib import H2oe
+
+    n_ds, i_ds = 57, 7.5
+    l0 = n_ds * n_ds * core.A_L
+    assert abs(l0 - 913.0e-6) < 5e-6, f"L(0)={l0*1e6:.1f} uH vs the sheet's 913.0 uH"
+
+    h = n_ds * i_ds / core.l_e
+    assert abs(H2oe(h) - 50.0) < 0.5, f"H={H2oe(h):.2f} Oe, the sheet says 50 Oe"
+
+    mu = core.mat.permeability_dc_bias(h, no_raise=True)
+    l_typ = l0 * (mu / core.mat.mu_r)
+    assert l_typ > 344.4e-6, f"typical {l_typ*1e6:.1f} uH must exceed the 344.4 uH Min."
+    assert l_typ < 344.4e-6 * 1.35, (
+        f"typical {l_typ*1e6:.1f} uH is more than 35% above the Min. -- the bias law or A_L "
+        f"is wrong, not merely conservative")
