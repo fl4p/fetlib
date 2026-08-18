@@ -109,6 +109,185 @@ Entry point is `dslib.pdf.parse.parse_datasheet(...)`, called from `main.py:comp
 
 The PDF cache (`@disk_cache` from `dslib/cache.py`) is keyed by file content + args and stored under `data/cache/`. Disable globally with `--no-cache` (calls `disk_cache_disable(True)`); per-worker, this must be re-called inside the worker (see `compile_part_datasheet`).
 
+### 3a-bis. Scrambled font encodings — `dslib/pdf/fix_encoding.py` + two delegates (2026-08-18)
+
+`fix_pdf_font_encoding` repairs PDFs whose embedded fonts use a scrambled encoding (text
+extracts as `%&$!"#` but renders as `OptiMOS`) by deciding what each glyph IS and injecting a
+fresh `/ToUnicode`. It runs from `pdf/pipeline.py` and sits **upstream of the entire
+derivation** — a matcher change rewrites every value parsed from such a sheet, which is why
+all three modules are in `_PARSE_DERIVATION_SOURCES`.
+
+Four stages now decide a glyph, in descending order of evidence. Each **abstains** rather
+than guessing, and the next one picks up what it left:
+
+1. **`dslib/pdf/glyph_exact.py` — outline fingerprint.** A large share of broken files embed a
+   standard face IN FULL (Arial, Arial-BoldMT, TimesNewRomanPSMT, Calibri) and merely withhold
+   the `/ToUnicode`. Hash each glyph's decomposed outline at 1/1000 em and match against an
+   index of installed system fonts (262 faces / 21k outlines here, cached to
+   `data/cache/glyph-outline-index-v*.pkl`, ~7 s to build). Where it fires it is a lookup, not
+   a similarity score. **Coverage is bimodal at 0.0 and 1.0** — the right face explains 60/60,
+   82/82, 26/26 and every wrong one explains 0 — so `_MIN_COVERAGE` is a formality, not a tuned
+   threshold. Requires the exact cut to be installed; abstains otherwise.
+   - **Dead end, recorded so it is not re-attempted:** those Infineon fonts DO carry `post` and
+     `cmap` with 84/87 glyphs "named" — but the names are `uniF020`, `uniF021`… i.e. the
+     symbol-range spelling of the *scrambled* code, written by the subsetter after the scramble.
+     Decoding them yields the identity map dressed as evidence, confidently wrong for 5 of the
+     8 known-broken datasheets. Outline geometry is the only internal evidence not overwritten.
+2. **`dslib/pdf/glyph_fontid.py` — face identification (biggest single win).** The pixel matcher
+   used to compare every vendor face against DejaVu Sans regular+bold. Identifying the face
+   first turns a cross-face comparison into a same-face one, and the face is a far easier
+   question than the glyph: one font supplies 50–150 glyphs of evidence for a single answer.
+   Two stages, and both are necessary:
+   - **Width shortlist.** Nothing NAMES a scrambled font — Infineon's `name` table is the temp
+     filename and PANOSE is zeroed. But METRICS survive: `Z_C00220.tmp`'s `/Widths` is
+     `278 333 333 277 … 556 556 … 722 722 666`, Helvetica/Arial exactly (278 space, 556 digits,
+     889 for `%`, 584 for the comparison operators). The widths are in *scrambled* code order so
+     they identify no individual glyph, but as a MULTISET they fingerprint the face: over 184
+     installed faces, `Z_C00220`→Arial Bold and `Z_C00222`→Microsoft Sans Serif/Arial. Correct
+     both times (the first is the heading font, the second body text; MS Sans Serif is metrically
+     identical to Arial by design).
+   - **Visual rerank**, because obliquing a face does not change its advances, so widths cannot
+     tell an upright from an italic — the two are separated by 0.3 out of 16.
+
+   **The acceptance test is the whole safety argument, and the naive version regressed.** A face
+   is used only if it beats the incumbent on BOTH `top1` and `margin`. Requiring both is not
+   belt-and-braces:
+   - `top1` alone cannot discriminate at all — it maxes over ~130 reference characters, so
+     something always resembles the glyph. Measured on an Arial subset: DejaVu 0.9637, Arial
+     0.9634. **DejaVu is already an excellent proxy for Arial-like faces**, which is why this
+     stage correctly does nothing for most of the corpus.
+   - `margin` alone picked **Verdana Italic** for an upright Verdana and cost 7.4 points
+     (88.0%→80.6%). The italic is metrically perfect (EMD 2.75, obliquing preserves advances)
+     and slanted glyphs are *more* mutually distinguishable, so it won on margin while losing
+     0.018 of top-1. Margin says "this reference decides confidently"; top-1 says "about the
+     right shapes". Pinned by `test_wrong_weight_or_slope_is_rejected`.
+3. **The pixel matcher**: `cosine_blur` over baseline-anchored inked-pixel arrays, with the
+   advance-width and hole-count tie-breakers. When stage 2 accepted a face, its bitmaps AND its
+   metrics become the reference — so the width tie-break compares against the true advances
+   rather than a fitted scale factor.
+
+   **The metric was chosen by measurement** (`FETLIB_GLYPH_METRIC` to re-run it; 24 fonts,
+   `holdout=family`):
+
+   | metric | vision | +fontid |
+   |---|---|---|
+   | `cosine` (the original) | 69.9% | 75.9% |
+   | `zncc` | 69.1% | 75.2% |
+   | **`cosine_blur`** | **71.7%** | **80.0%** |
+   | `zncc_blur` | 71.5% | 79.9% |
+
+   Two ideas were tried and one paid. **Blurring** (a separable box blur, chamfer-matching
+   without needing a distance transform or scipy) stops charging full price for a one-pixel
+   offset between two renderings of the same letter. **Mean-centring** — expected to help by
+   decompressing cosine's narrow high band — did not: it is a wash at best. The compression is
+   real but harmless, because the median correct top1-vs-top2 gap is ~0.13, not the ~0.003 seen
+   on the few genuinely hard pairs. `test/fix_enc_eval.py --calibrate` prints the distributions
+   each metric's thresholds would need; carrying thresholds across a metric change is meaningless.
+
+   **`dslib/pdf/fonts/` — the reference is bundled, not borrowed from the host.** It used to be
+   whatever `fc-match sans-serif` returned: Arial on this Mac, DejaVu on a Linux box. Same
+   commit, same PDF, different text — and this file previously *documented* it as DejaVu while
+   the code was in fact using Arial. Now: **Liberation Sans** regular+bold (metric-compatible
+   with Arial, which is what these datasheets are set in), gap-filled from **DejaVu Sans** for
+   the two characters Liberation lacks (`℃℉`). The split is load-bearing — `_break_tie`
+   separates `l` from `I` on advance width because vision cannot, and Liberation/Arial put them
+   25% apart (222/278) where DejaVu puts them 6% apart (278/295). Switching the reference to
+   DejaVu broke four tie-break tests outright. The bundle also gives `glyph_fontid` metric
+   stand-ins for Arial/Times/Courier on a machine licensing none of them.
+4. **`dslib/pdf/glyph_lm.py` — document-level n-gram arbitration.** The CIDs are not
+   independent, they spell words. Coordinate ascent maximising `visual + LM(text) - collisions`,
+   over an interpolated character 3-gram model trained on `dslib/pdf/glyph_lm_corpus.txt.gz`
+   (regenerate: `apps/build_glyph_lm_corpus.py`). This is the shape the literature uses for
+   exactly this problem (Krutko/Stefanovitch/Postanogov, DAS 2018 — CNN symbol recognition
+   *with language model*; recovering CID→Unicode is a monoalphabetic substitution cipher).
+
+**Four guards on the LM, each measured, not assumed** — the first version scored *worse* than no
+LM at all (76.9% vs 78.3%) and every intermediate fix is load-bearing:
+   - `_VIS_TEMP` converts cosine to a log-likelihood. Without it the two terms are in different
+     units, vision contributes no dynamic range (its whole shortlist sits inside 0.05), and the
+     LM decides every glyph on fluency alone.
+   - `_CAND_BAND` — only candidates within 0.06 of the CID's best may be proposed. Unrestricted,
+     the error profile was pure frequency preference: `9`→`0`, `q`→`o`, `μ`→`u`, `®`→`C`.
+   - `_MIN_CID_OCCURRENCES` — a CID seen once is one n-gram window; deciding from it is
+     noise-fitting, and every wrong move in the unrestricted run was a single-occurrence CID.
+   - `_COLLISION_PENALTY` — a substitution cipher is near-injective and a font has no five
+     identical glyphs. Nothing expressed this before, which is how `OptiMOS Power-Transistor`
+     could read `Op//MOS Power-7rans/s/or` with `t`, `i` and `l` all collapsed onto `/`.
+
+   **`cid_runs` assembles LINES from `Tm`/`Td` geometry, not from text-showing operands.**
+   Infineon's distiller emits one `Tm <XX> Tj` PER GLYPH, so operand grouping hands the model
+   one-character documents and it can do nothing at all. This is the difference between the LM
+   working and not working — do not "simplify" it back.
+
+**Face detection improves in aggregate but is NOT monotone per font, and no available statistic
+fixes that.** Measured over ten faces at `holdout=family`: Times +5.6, Georgia +7.1, Trebuchet
++7.2, Arial +1.8, but **Verdana −5.5 and Tahoma −6.5**. Gain does not separate the groups
+(Verdana harms at 0.040, Times helps at 0.056), nor does incumbent quality (Verdana 0.898 harms,
+Trebuchet 0.895 helps), nor width consistency (it passes DejaVu for Verdana at 0.022 against the
+incumbent's 0.063). The aggregate scores measure how well a face's repertoire *covers* the page,
+and two sans faces can cover it equally well while disagreeing about which glyph is which. Where
+the incumbent is the wrong CATEGORY (sans reference, monospace text) the gain is large and
+reliable; where it is already a decent generic sans the swap is lateral, and lateral moves are
+near coin flips. Raising the acceptance bar to suppress them costs more than they do — at a 0.05
+gain threshold only Times survives, +5.6 against +9.7. So the contract asserted by
+`test_improves_in_aggregate_with_bounded_individual_loss` is aggregate gain with a bounded tail,
+not no-regression; the first version of that test asserted no-regression and was simply false.
+
+**Accuracy is measured** — `test/fix_enc_eval.py`. It draws the matcher's own `_COMMON_GLYPHS`
+plus real datasheet prose with a real font via pymupdf, records the correct `/ToUnicode`, then
+deletes it; truth is known by construction.
+
+**`--holdout` is not optional rigour, it is what makes the number mean anything.** Every trial is
+drawn with an INSTALLED face, so without it `glyph_exact` finds the very file it was drawn from
+and reports 100% — the harness handing the answer to the thing it tests. Three levels, 30 fonts:
+
+| holdout | vision | +fontid | +exact | +lm | full |
+|---|---|---|---|---|---|
+| `none` — this exact cut installed | 73.4% | 100.0% | 100.0% | 77.2% | 100.0% |
+| `file` — exact cut hidden, relatives visible | 73.4% | **94.9%** | 73.4% | 77.2% | **95.5%** |
+| `family` — whole name stem hidden | 73.4% | **79.9%** | 73.4% | 77.2% | **82.4%** |
+
+Cost: `fontid` is ~1.7 s/font against 0.5 for vision alone, because `_SHORTLIST` is 28 faces and
+each needs rendering. Per-face renderings are cached across a run, and the stage is skipped
+entirely when `glyph_exact` already resolved the font.
+
+Read down the `exact` column: it is 100% or nothing, which is the method being honest. Read
+across `fontid`: **face identification is the largest single improvement** and it degrades
+gracefully rather than falling off a cliff, because a near-relative is still a far better
+reference than DejaVu. `family` is the closest analogue to the Infineon subsets, whose true face
+is installed nowhere here.
+
+**`test/fix_enc_corpus_survey.py`** takes the same question to the REAL corpus, where no truth
+exists at any price. It ranks files by the mean log-probability per character of the repaired
+text under the `glyph_lm` model — a proxy, not accuracy, and one that lies in three known ways
+(a font that declines every glyph scores WELL, since spaces contain no improbable n-grams; a page
+of legitimate numbers scores BADLY), so `blank_frac` and `alpha_frac` are printed beside every
+score and the pre-repair text is scored as a baseline. It defaults to running the matcher WITHOUT
+its LM stage, because scoring a stage with its own objective is circular.
+
+What it found on a 160-file sample: **most suspect fonts carry almost no text** — 113 files
+produced under 50 characters, i.e. the suspect font is a logo or a few symbols while the body
+text sits in an unaffected font. That is consistent with the pipeline note that only 88 of 2 368
+suspect PDFs fail validation. The files where repair clearly helps are visible in the delta
+(HY3503C2 −4.89→−2.86, HY1603C2 −4.54→−2.81, AON6220 −4.88→−2.70); at the median the delta is
+about zero, which the proxy cannot distinguish from "there was little to fix". The report
+accounts for every file it could not score rather than dropping them, because a survey that
+lists only what it managed to score reads as a statement about the corpus.
+
+The LM's value does not show in that table at all, because its production job is the subsets the
+other two abstain on. It is demonstrated instead by a known-bad calibration in
+`test/unit/test_glyph_exact_and_lm.py`: with `_break_tie` reverted to the raw visual winner,
+`BSC190N15NS3_G.pdf` reproduces the documented `N-channeI, normaI IeveI` and **the LM repairs it
+to `N-channel, normal level` on its own**, while leaving the already-correct mapping untouched
+when the tie-breakers are on.
+
+**Bug the harness found:** `_build_pil_font_for_gid_render` mapped *every* gid to
+`_PUA_BASE + gid`, but the BMP Private Use Area is 6 400 codes and a format-4 cmap is 16-bit.
+Any font over ~6 400 glyphs failed to compile, returned None, and produced **no mapping at
+all** — silently, since a missing repair looks like a font that needed none. Arial Unicode has
+50 377 glyphs; `MCAC100N08Y-TP.pdf` embeds MicrosoftYaHei at 30 133 and SegoeUISymbol at 9 209.
+Now only the page's used gids are packed into the PUA.
+
 ### 3b. The object stores — `dslib/store.py` (SQLite as of 2026-07-27)
 
 `parts_db` and `datasheets_db` are **SQLite, one row per record, value = a pickle BLOB** (`data/parts-lib.sqlite3`, `data/datasheets-lib.sqlite3`), zlib-compressed. They used to be single whole-file pickles; the `.pkl` files are kept as rollback snapshots.

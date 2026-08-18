@@ -228,6 +228,17 @@ _PARSE_DERIVATION_SOURCES = (
     ('pdf', 'sheet', '__init__.py'),
     ('pdf', 'pdf2txt', '__init__.py'),
     ('pdf', 'fix_encoding.py'),
+
+    # The two stages fix_encoding DELEGATES the character decision to, added with
+    # them. Both sit at the same place in the derivation as fix_encoding itself --
+    # upstream of every value parsed out of a scrambled sheet -- and neither is
+    # visible to any other key here. Marginal cost of adding them was zero: they
+    # arrived in the same commit that edited fix_encoding.py, which already turns
+    # this generation over.
+    ('pdf', 'glyph_exact.py'),   # outline-fingerprint identification
+    ('pdf', 'glyph_fontid.py'),  # face identification -> which reference to match against
+    ('pdf', 'glyph_lm.py'),      # document-level n-gram arbitration
+
     ('pdf', 'pipeline.py'),
 
     # dslib/v2 -- the spatial extraction stage parse_datasheet CALLS (see the
@@ -279,6 +290,19 @@ def _compute_parse_code_sig(root=None):
     if root is None:
         from dslib.pdf.fix_encoding import reference_font_salt
         h.update(reference_font_salt().encode())
+
+        # Same argument, one stage further out. `glyph_exact` resolves a glyph by
+        # matching its outline against the fonts INSTALLED ON THIS MACHINE, so
+        # installing Calibri turns a file that abstained into one that decodes
+        # exactly -- a different text layer from identical code. `glyph_fontid`
+        # reads the same font set to choose the comparison reference, and is
+        # covered by the same salt. `glyph_lm` arbitrates from a corpus file
+        # whose contents are equally load-bearing and equally invisible to a
+        # source hash of the module that reads it.
+        from dslib.pdf.glyph_exact import index_salt
+        from dslib.pdf.glyph_lm import corpus_salt
+        h.update(index_salt().encode())
+        h.update(corpus_salt().encode())
 
     return 'parse-src:' + h.hexdigest()[:16]
 

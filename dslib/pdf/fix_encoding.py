@@ -67,7 +67,7 @@ import pathlib
 import re
 import warnings
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 import numpy as np
 import pymupdf
@@ -81,6 +81,9 @@ logging.getLogger('fontTools.ttLib.tables._h_e_a_d').setLevel(logging.ERROR)
 
 _GLYPH_SIZE = 64
 _PUA_BASE = 0xE000  # render glyphs through PUA codes mapped to their GID
+_PUA_SIZE = 0xF8FF - 0xE000 + 1  # 6400: the BMP Private Use Area, and the hard
+                                 # ceiling on how many glyphs one patched
+                                 # format-4 cmap can expose at once.
 
 _REF_FONT_CANDIDATES: List[Tuple[str, str]] = [
     # (regular, bold) pairs; first one whose files both exist wins.
@@ -174,17 +177,76 @@ def _fc_match(query: str) -> Optional[str]:
     return path
 
 
-def _find_reference_fonts() -> Tuple[Union[str, bytes], Union[str, bytes]]:
-    """Locate a regular + bold sans-serif font on this system. Returns paths
-    or in-memory font bytes — either form is accepted by PIL's
-    `ImageFont.truetype`. Order of preference:
+BUNDLED_FONT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                'fonts')
 
-        1. The hardcoded `_REF_FONT_CANDIDATES` for fast, deterministic lookup.
+# Characters missing from the primary reference are taken from here. DejaVu Sans
+# is the only bundled face carrying all 113 of `_COMMON_GLYPHS`; Liberation and
+# Arial both lack the degree-Celsius and degree-Fahrenheit ligatures, and a
+# character absent from the reference can never be emitted at all.
+_REF_FILL_FONTS = ('DejaVuSans.ttf', 'DejaVuSans-Bold.ttf')
+
+
+def bundled_fonts() -> List[str]:
+    """The reference faces shipped with this repo, sorted.
+
+    `dslib/pdf/fonts/` carries DejaVu (Sans/Serif/Mono) and Liberation
+    (Sans/Serif/Mono, four weights each), with both licences alongside. They are
+    here for two reasons, and the first is correctness rather than accuracy:
+
+    * **Determinism.** The reference used to be whatever `fc-match sans-serif`
+      returned, which is a property of the HOST, not of this code. On this Mac
+      that resolves to Arial; on a Linux CI box it resolves to DejaVu. Same
+      commit, same PDF, different extracted text -- and the only thing that made
+      it detectable at all was `reference_font_salt()` forcing a cache miss.
+      Note this repo's own documentation said "DejaVu regular+bold" while the
+      code was in fact using Arial, for exactly that reason.
+    * **Coverage where it is needed.** Liberation Sans/Serif/Mono are METRICALLY
+      COMPATIBLE with Arial/Times New Roman/Courier New -- the three families
+      vendor datasheets actually use -- so `glyph_fontid` has a usable stand-in
+      for each even on a machine that licenses none of them. Measured: vision
+      alone scores in the thirties on Courier-set text against a sans reference,
+      and ~89% once a monospace reference is available.
+
+    DejaVu Sans is the fallback REFERENCE (rather than Liberation Sans, which is
+    the closer match to most datasheet text) purely on alphabet coverage: it is
+    the only one of the three that carries all 113 of `_COMMON_GLYPHS`.
+    Liberation and Arial both lack ℃ and ℉, and a character absent from the
+    reference can never be emitted at all.
+    """
+    try:
+        return sorted(
+            os.path.join(BUNDLED_FONT_DIR, f)
+            for f in os.listdir(BUNDLED_FONT_DIR)
+            if f.lower().endswith(('.ttf', '.otf')))
+    except Exception:
+        return []
+
+
+def _find_reference_fonts() -> Tuple[Union[str, bytes], Union[str, bytes]]:
+    """Locate the regular + bold reference faces. Returns paths or in-memory
+    font bytes — either form is accepted by PIL's `ImageFont.truetype`.
+
+    Order of preference:
+
+        0. The BUNDLED Liberation Sans (see `bundled_fonts` -- deterministic,
+           and metric-compatible with Arial, which most datasheet text is).
+           `_reference_glyphs` fills the two characters it lacks from the
+           bundled DejaVu Sans, so coverage is not sacrificed for metrics.
+        1. The hardcoded `_REF_FONT_CANDIDATES`.
         2. fontconfig (`fc-match`), if installed.
         3. Pillow's bundled DejaVu Sans (recent Pillow versions), as a last
            resort: regular is real, bold is the same regular font (some
            matching quality is lost but it works everywhere Pillow does).
+
+    Steps 1-3 are kept as fallbacks for a checkout without the font directory,
+    but they are host-dependent by nature -- see `bundled_fonts`.
     """
+    reg = os.path.join(BUNDLED_FONT_DIR, 'LiberationSans-Regular.ttf')
+    bold = os.path.join(BUNDLED_FONT_DIR, 'LiberationSans-Bold.ttf')
+    if os.path.exists(reg) and os.path.exists(bold):
+        return reg, bold
+
     for reg, bold in _REF_FONT_CANDIDATES:
         if os.path.exists(reg) and os.path.exists(bold):
             return reg, bold
@@ -318,6 +380,24 @@ def _render_glyph(pil_font: ImageFont.FreeTypeFont, code: int, size: int = _GLYP
 def _reference_glyphs() -> Dict[str, List[np.ndarray]]:
     """For each char in `_COMMON_GLYPHS`, the rendering from each available
     reference font (regular + bold). Returns char → list of inked arrays.
+
+    Built from Liberation Sans, then GAP-FILLED from DejaVu Sans. The split is
+    deliberate and the reason is the width tie-break, not the pixels:
+
+        advance (1/1000 em)      'l'     'I'    apart
+        Arial / Liberation Sans  222     278      25%
+        DejaVu Sans              278     295       6%
+
+    `_break_tie` separates 'l' from 'I' on advance width because vision cannot
+    -- the cosine gap is 0.003. That only works if the REFERENCE metrics
+    actually distinguish them, and DejaVu's barely do: switching the reference
+    to DejaVu broke four tie-break tests outright. Liberation is metrically
+    identical to Arial, which is what these datasheets are set in, so the width
+    evidence stays as sharp as it was on a host that happened to have Arial
+    installed -- but now by construction rather than by luck.
+
+    DejaVu is still the fill, because it is the only bundled face with the full
+    alphabet, and a missing reference character is unrecoverable.
     """
     global _REF_CACHE, _REF_ADV_CACHE
     if _REF_CACHE is not None:
@@ -339,6 +419,20 @@ def _reference_glyphs() -> Dict[str, List[np.ndarray]]:
     # the kind of parallel table that drifts.
     adv_per_font = [_font_advances(s) for s in srcs]
 
+    # Gap-fill sources, appended so the primary face always wins a character it
+    # has. Only consulted for characters the primary lacks -- mixing metrics
+    # from two faces for the SAME character would corrupt the width
+    # calibration, which fits a single scale factor across all of them.
+    fill_fonts, fill_advs = [], []
+    for name in _REF_FILL_FONTS:
+        fp = os.path.join(BUNDLED_FONT_DIR, name)
+        if os.path.isfile(fp):
+            try:
+                fill_fonts.append(_load(fp))
+                fill_advs.append(_font_advances(fp))
+            except Exception:
+                pass
+
     refs: Dict[str, List[np.ndarray]] = {}
     advs: Dict[str, List[float]] = {}
     for ch in _COMMON_GLYPHS:
@@ -350,6 +444,13 @@ def _reference_glyphs() -> Dict[str, List[np.ndarray]]:
                 variants.append(arr)
                 if ch in adv:
                     widths.append(adv[ch])
+        if not variants:
+            for f, adv in zip(fill_fonts, fill_advs):
+                arr = _render_glyph(f, ord(ch))
+                if arr is not None:
+                    variants.append(arr)
+                    if ch in adv:
+                        widths.append(adv[ch])
         if variants:
             refs[ch] = variants
             if widths:
@@ -370,10 +471,111 @@ def _reference_advances() -> Dict[str, List[float]]:
     return _REF_ADV_CACHE or {}
 
 
+def _box_blur(arr: np.ndarray, passes: int = 2, k: int = 3) -> np.ndarray:
+    """Separable box blur, repeated -- a cheap Gaussian approximation.
+
+    Why blur at all: raw pixel overlap is unforgiving about POSITION. Two
+    renderings of the same letter at slightly different weight or hinting share
+    most of their ink but not the same pixels, and a hard overlap charges full
+    price for a one-pixel offset. Blurring makes a near miss score nearly as
+    well as a hit, which is the whole idea behind chamfer / distance-transform
+    matching -- without needing a distance transform, and so without scipy,
+    which is not in requirements.txt.
+    """
+    out = arr
+    for _ in range(passes):
+        pad = k // 2
+        p = np.pad(out, pad, mode='constant')
+        acc = np.zeros_like(out)
+        for dy in range(k):
+            for dx in range(k):
+                acc += p[dy:dy + out.shape[0], dx:dx + out.shape[1]]
+        out = acc / (k * k)
+    return out
+
+
+# Which comparison the pixel matcher uses. CHOSEN BY MEASUREMENT, on 24 fonts
+# of test/fix_enc_eval.py at holdout=family:
+#
+#     metric        vision   +fontid
+#     cosine         69.9%     75.9%     <- the original
+#     zncc           69.1%     75.2%
+#     cosine_blur    71.7%     80.0%     <- chosen
+#     zncc_blur      71.5%     79.9%
+#
+# Two ideas were tried and only one paid. BLURRING is worth ~1.8 points on its
+# own and ~4 once face detection can act on the cleaner ranking, because it
+# stops charging full price for a one-pixel offset between two renderings of
+# the same letter. MEAN-CENTRING (the 'z') was expected to help by decompressing
+# cosine's narrow high band and did not -- it is a wash at best and slightly
+# negative without blur. The compression is real, but it turns out to be
+# harmless: the median correct top1-vs-top2 gap is ~0.13, not the ~0.003 seen on
+# the few genuinely hard pairs, so there was little range to recover.
+#
+# Override with FETLIB_GLYPH_METRIC to re-run that comparison without editing
+# code; `test/fix_enc_eval.py --calibrate` prints the distributions each
+# metric's thresholds would need.
+_METRIC = os.environ.get('FETLIB_GLYPH_METRIC', 'cosine_blur')
+
+_METRICS = ('cosine', 'zncc', 'cosine_blur', 'zncc_blur')
+
+
+def _prepare(arr: np.ndarray) -> np.ndarray:
+    """Put one inked-pixel array into the form `_similarity_prepared` compares.
+
+    Both improvements over the original raw cosine are applied here rather than
+    in the comparison, so each array is transformed ONCE and every comparison is
+    then a plain dot product -- with ~130 reference characters per glyph, that
+    is also faster than the original, which recomputed both norms every time.
+
+    MEAN-CENTRING (the 'z' in zncc). Cosine over non-negative ink is compressed
+    into a narrow high band: every candidate scores 0.9+, and the pairs that
+    actually matter are separated by thousandths -- 'l' vs 'I' by 0.003, 'p' vs
+    'mu' by 0.008. That compression is not a property of the glyphs, it is an
+    artefact of comparing two vectors that are both entirely non-negative and
+    therefore always point into the same orthant. Subtracting the mean lets a
+    pixel that is ink in one image and blank in the other push the score DOWN
+    instead of merely failing to push it up, which is what restores the dynamic
+    range. It is also why `glyph_lm._VIS_TEMP` had to exist: the emission term
+    had no range to contribute.
+
+    BLURRING trades positional precision for tolerance to weight and hinting
+    differences -- see `_box_blur`.
+    """
+    if _METRIC in ('cosine_blur', 'zncc_blur'):
+        arr = _box_blur(arr)
+    if _METRIC in ('zncc', 'zncc_blur'):
+        arr = arr - arr.mean()
+    n = float(np.sqrt((arr * arr).sum()))
+    return arr / n if n > 1e-9 else arr
+
+
+def _prepare_items(items: Sequence[Tuple[str, List[np.ndarray]]]
+                   ) -> List[Tuple[str, List[np.ndarray]]]:
+    """`_prepare` every variant of a reference set, keeping its shape."""
+    return [(ch, [_prepare(v) for v in variants]) for ch, variants in items]
+
+
+def _similarity_prepared(a: np.ndarray, b: np.ndarray) -> float:
+    """Similarity between two arrays already through `_prepare`.
+
+    Both are unit-norm, so this is the cosine (or the Pearson correlation, for
+    the mean-centred metrics) and the dot product is the whole computation.
+    """
+    return float((a * b).sum())
+
+
 def _similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """Cosine similarity between two inked-pixel arrays. Range ~0..1."""
-    denom = float(np.sqrt((a * a).sum() * (b * b).sum())) + 1e-6
-    return float((a * b).sum() / denom)
+    """Similarity between two RAW inked-pixel arrays.
+
+    Convenience wrapper that prepares both. Correct but wasteful in a loop --
+    the hot paths prepare once and call `_similarity_prepared`.
+
+    Range depends on the metric: ~0..1 for the cosine variants, ~-1..1 for the
+    mean-centred ones. Callers that compare against an absolute threshold must
+    take their constant from `_METRIC_CONSTANTS`, never hard-code one.
+    """
+    return _similarity_prepared(_prepare(a), _prepare(b))
 
 
 # ----- non-visual glyph features ---------------------------------------
@@ -700,19 +902,55 @@ def _scan_fonts(doc: pymupdf.Document, only_fixable: bool = True) -> List[_FontI
     return out
 
 
-def _build_pil_font_for_gid_render(font_bytes: bytes) -> Optional[ImageFont.FreeTypeFont]:
-    """Patch the font's cmap to expose every GID at code `_PUA_BASE + gid`,
-    then load it via PIL so `chr(_PUA_BASE + gid)` renders that glyph.
+def _build_pil_font_for_gid_render(
+        font_bytes: bytes,
+        needed_gids: Optional[Set[int]] = None,
+) -> Optional[Tuple[ImageFont.FreeTypeFont, Dict[int, int]]]:
+    """Expose the wanted GIDs at Private-Use codepoints so PIL can render them.
+
+    Returns `(pil_font, {gid: codepoint})`, or None if the font will not build.
+    Render a glyph with `chr(code_by_gid[gid])`.
+
+    `needed_gids` restricts the patch to the glyphs actually asked for, and is
+    not an optimisation -- it is what makes large fonts work at all. The BMP
+    Private Use Area is U+E000..U+F8FF, 6 400 codes, and a format-4 cmap
+    subtable is 16-bit by definition. Mapping EVERY gid to `_PUA_BASE + gid`
+    therefore overflows on any font with more than ~6 400 glyphs: fontTools
+    refuses to compile the subtable, this function returned None, and
+    `_build_font_mapping` then produced NO MAPPING AT ALL for that font --
+    silently, since a missing repair is indistinguishable from a font that
+    needed none.
+
+    That is not a hypothetical size. Arial Unicode has 50 377 glyphs (codes to
+    U+1A4C9); `datasheets/mcc/MCAC100N08Y-TP.pdf` embeds MicrosoftYaHei at
+    30 133 and SegoeUISymbol at 9 209, and both were being skipped entirely.
+    A page's used-CID set is a few hundred at most, so packing only those into
+    the PUA keeps every font in range regardless of how large it is.
     """
     try:
         tt = TTFont(io.BytesIO(font_bytes))
     except Exception:
         return None
     glyph_order = tt.getGlyphOrder()
+
+    wanted = [gid for gid in
+              (sorted(needed_gids) if needed_gids is not None
+               else range(len(glyph_order)))
+              if 0 <= gid < len(glyph_order) and glyph_order[gid] != '.notdef']
+    if not wanted:
+        return None
+    if len(wanted) > _PUA_SIZE:
+        # More glyphs wanted than the PUA can hold. Truncating would render the
+        # tail as whatever the leftover codes happen to hit, which is worse than
+        # rendering nothing: the caller can tell None from a wrong bitmap.
+        warnings.warn('fix_encoding: %d glyphs exceed the %d-codepoint PUA; '
+                      'font skipped' % (len(wanted), _PUA_SIZE))
+        return None
+
+    code_by_gid: Dict[int, int] = {
+        gid: _PUA_BASE + i for i, gid in enumerate(wanted)}
     new_map: Dict[int, str] = {
-        _PUA_BASE + gid: gname for gid, gname in enumerate(glyph_order)
-        if gname != '.notdef'
-    }
+        code: glyph_order[gid] for gid, code in code_by_gid.items()}
     if 'cmap' in tt:
         cmap_t = tt['cmap']
     else:
@@ -737,7 +975,7 @@ def _build_pil_font_for_gid_render(font_bytes: bytes) -> Optional[ImageFont.Free
     except Exception:
         return None
     try:
-        return ImageFont.truetype(io.BytesIO(buf.getvalue()), _GLYPH_SIZE)
+        return ImageFont.truetype(io.BytesIO(buf.getvalue()), _GLYPH_SIZE), code_by_gid
     except Exception:
         return None
 
@@ -1255,6 +1493,10 @@ def _build_font_mapping(
         fi: _FontInfo,
         ref_items: List[Tuple[str, List[np.ndarray]]],
         min_similarity: float,
+        use_exact: bool = True,
+        use_lm: bool = True,
+        use_fontid: bool = True,
+        fontid_exclude: Optional[Set[str]] = None,
 ) -> Optional[Dict[int, str]]:
     """For a single suspect font, render each used CID and pick the best
     matching reference char. Returns {cid: unicode_str} or None on failure.
@@ -1278,28 +1520,96 @@ def _build_font_mapping(
             return None
         if not font_bytes:
             return None
-        pil_font = _build_pil_font_for_gid_render(font_bytes)
-        if pil_font is None:
-            return None
         cid_to_gid = _cid_to_gid_lookup(font_bytes, fi.is_type0)
+        # Only the glyphs this page uses are patched into the PUA; see
+        # _build_pil_font_for_gid_render on why mapping all of them silently
+        # dropped every font over 6 400 glyphs.
+        wanted = set()
+        for c in fi.used_codes:
+            g = cid_to_gid(c)
+            if g:
+                wanted.add(g)
+        built = _build_pil_font_for_gid_render(font_bytes, wanted)
+        if built is None:
+            return None
+        pil_font, code_by_gid = built
 
         def render(cid: int) -> Optional[np.ndarray]:
             gid = cid_to_gid(cid)
             if gid is None or gid == 0:
                 return None
-            return _render_glyph(pil_font, _PUA_BASE + gid)
+            code = code_by_gid.get(gid)
+            if code is None:
+                return None
+            return _render_glyph(pil_font, code)
+
+    # Exact identification first, where the font permits it. A full-face embed
+    # of an installed face is a lookup, not a similarity judgement, and pixels
+    # can only make it worse: see dslib/pdf/glyph_exact.py. Returns None -- no
+    # opinion -- for subsetted or unknown faces, which then go through vision
+    # exactly as before.
+    exact: Dict[int, str] = {}
+    if use_exact and font_bytes and cid_to_gid is not None:
+        try:
+            from dslib.pdf.glyph_exact import exact_mapping
+            em = exact_mapping(font_bytes, cid_to_gid, set(fi.used_codes))
+        except Exception as e:
+            warnings.warn('fix_encoding: exact match failed for font %s: %s'
+                          % (fi.short_name, e))
+            em = None
+        if em is not None:
+            exact = em.mapping
+
+    # Render once, up front. The bitmaps are needed twice -- to identify the
+    # face and then to match against it -- and rasterising is the expensive part.
+    arrays: Dict[int, np.ndarray] = {}
+    for cid in sorted(set(fi.used_codes) - set(exact)):
+        a = render(cid)
+        if a is not None:
+            arrays[cid] = a
+
+    # Type3 glyphs are drawing procedures with no hmtx, so width abstains for
+    # them and topology alone does the arbitration.
+    emb_adv = (_embedded_advances(font_bytes, cid_to_gid, set(arrays))
+               if font_bytes and cid_to_gid else {})
+
+    # Identify the face and, if it explains these shapes more decisively than
+    # the fixed reference does, compare against it instead. Abstains to
+    # `ref_items` otherwise -- it can only ever swap in a reference that scored
+    # BETTER on this font's own glyphs, so a wrong guess cannot degrade the
+    # match. See dslib/pdf/glyph_fontid.py.
+    ref_advs: Optional[Dict[str, List[float]]] = None
+    if use_fontid and arrays:
+        try:
+            from dslib.pdf.glyph_fontid import detect_face
+            face = detect_face(arrays, emb_adv, ref_items,
+                               exclude=fontid_exclude)
+        except Exception as e:
+            warnings.warn('fix_encoding: face detection failed for %s: %s'
+                          % (fi.short_name, e))
+            face = None
+        if face is not None:
+            ref_items = face.ref_items
+            # The identified face's OWN metrics also replace the reference
+            # advances. That matters more than the bitmaps for the width
+            # tie-break: against the true face the widths agree exactly rather
+            # than up to a fitted scale factor.
+            ref_advs = face.advances
 
     # Rank every candidate per CID, keeping the runners-up: a near-tie is not
     # visible from the winner alone, and the tie-break needs the rivals.
+    #
+    # References are prepared ONCE for the whole font rather than per glyph:
+    # `_prepare` is the expensive half of the comparison (a blur and a
+    # normalisation) and the reference set does not change between glyphs.
+    prepared_refs = _prepare_items(ref_items)
     ranked: Dict[int, List[Tuple[float, str]]] = {}
     holes: Dict[int, int] = {}
-    for cid in sorted(fi.used_codes):
-        glyph_arr = render(cid)
-        if glyph_arr is None:
-            continue
+    for cid, glyph_arr in arrays.items():
+        pg = _prepare(glyph_arr)
         scores = sorted(
-            ((max(_similarity(glyph_arr, v) for v in variants), ref_ch)
-             for ref_ch, variants in ref_items),
+            ((max(_similarity_prepared(pg, v) for v in variants), ref_ch)
+             for ref_ch, variants in prepared_refs),
             reverse=True)
         if not scores:
             continue
@@ -1309,14 +1619,13 @@ def _build_font_mapping(
         except Exception:
             pass  # no topology evidence for this CID; width/vision still apply
 
-    # Type3 glyphs are drawing procedures with no hmtx, so width abstains for
-    # them and topology alone does the arbitration.
-    emb_adv = (_embedded_advances(font_bytes, cid_to_gid, set(ranked))
-               if font_bytes and cid_to_gid else {})
-    scale = _calibrate_width_scale(ranked, emb_adv)
+    scale = _calibrate_width_scale(ranked, emb_adv, ref_advs)
 
     mapping: Dict[int, str] = {}
     for cid in sorted(fi.used_codes):
+        if cid in exact:
+            mapping[cid] = exact[cid]
+            continue
         scores = ranked.get(cid)
         if not scores:
             mapping[cid] = ' '
@@ -1326,12 +1635,27 @@ def _build_font_mapping(
             mapping[cid] = ' '
             continue
         mapping[cid] = _break_tie(scores, holes.get(cid),
-                                  emb_adv.get(cid), scale)
+                                  emb_adv.get(cid), scale,
+                                  ref_items, ref_advs)
+
+    if use_lm and mapping:
+        # Document-level arbitration, last: it needs the per-CID shortlists AND
+        # the mapping vision settled on, and it may only reorder candidates
+        # vision already ranked. `exact` CIDs are passed as pinned -- an outline
+        # identity is not something a language model gets to overrule.
+        try:
+            from dslib.pdf.glyph_lm import lm_refine
+            mapping = lm_refine(doc, fi, mapping, ranked, pinned=set(exact))
+        except Exception as e:
+            warnings.warn('fix_encoding: lm refine failed for font %s: %s'
+                          % (fi.short_name, e))
     return mapping or None
 
 
 def _calibrate_width_scale(ranked: Dict[int, List[Tuple[float, str]]],
-                           emb_adv: Dict[int, float]) -> Optional[float]:
+                           emb_adv: Dict[int, float],
+                           ref_adv: Optional[Dict[str, List[float]]] = None
+                           ) -> Optional[float]:
     """Ratio between this font's advance widths and the reference font's.
 
     Subset display faces are routinely 5-15% wider or narrower than the
@@ -1345,7 +1669,11 @@ def _calibrate_width_scale(ranked: Dict[int, List[Tuple[float, str]]],
     unmeasured font would decide 3%-separated pairs on an assumption, and the
     caller abstains instead.
     """
-    ref_adv = _reference_advances()
+    # `ref_adv` is the IDENTIFIED face's metrics when face detection accepted
+    # one, and the fixed reference's otherwise. Against the true face the fitted
+    # ratio comes out at ~1.0 and the width tie-break stops depending on a
+    # calibration at all.
+    ref_adv = ref_adv if ref_adv is not None else _reference_advances()
     ratios: List[float] = []
     for cid, scores in ranked.items():
         if len(scores) < 2 or scores[0][0] - scores[1][0] < _CONFIDENT_MARGIN:
@@ -1363,7 +1691,9 @@ def _calibrate_width_scale(ranked: Dict[int, List[Tuple[float, str]]],
 
 
 def _break_tie(scores: List[Tuple[float, str]], hole_count: Optional[int],
-               emb_width: Optional[float], scale: Optional[float]) -> str:
+               emb_width: Optional[float], scale: Optional[float],
+               ref_items: Optional[Sequence[Tuple[str, List[np.ndarray]]]] = None,
+               ref_adv: Optional[Dict[str, List[float]]] = None) -> str:
     """Choose among visual candidates that are within `_TIE_MARGIN` of the top.
 
     Returns the visual winner unchanged whenever the extra features are absent
@@ -1378,7 +1708,8 @@ def _break_tie(scores: List[Tuple[float, str]], hole_count: Optional[int],
 
     # --- topology first: discrete, and invariant to weight and width.
     if hole_count is not None:
-        ref_glyphs = _reference_glyphs()
+        ref_glyphs = (dict(ref_items) if ref_items is not None
+                      else _reference_glyphs())
         agreeing = []
         for s, c in tied:
             variants = ref_glyphs.get(c) or []
@@ -1399,7 +1730,7 @@ def _break_tie(scores: List[Tuple[float, str]], hole_count: Optional[int],
     # --- then width, for same-topology pairs such as l/I and O/Q.
     if scale is None or not emb_width or emb_width <= 0:
         return best_ch
-    ref_adv = _reference_advances()
+    ref_adv = ref_adv if ref_adv is not None else _reference_advances()
     scaled = emb_width * scale
 
     def rel_err(ch: str) -> Optional[float]:

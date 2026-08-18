@@ -58,6 +58,16 @@ __pycache__
 *.cff
 *.otf
 
+# ... except the reference faces deliberately shipped with the repo. The
+# patterns above exist for fonts EXTRACTED out of datasheets by dslib/pdf/fonts.py,
+# which are artifacts; dslib/pdf/fonts/ is source. Without this negation the
+# bundle is silently absent from a fresh clone and `_find_reference_fonts` falls
+# back to whatever fontconfig returns -- which is the host-dependence the bundle
+# exists to remove, reintroduced invisibly. (The language-model corpus hit the
+# same trap via the bare `data` pattern and had to be moved out of dslib/pdf/data/.)
+!dslib/pdf/fonts/*.ttf
+!dslib/pdf/fonts/*.otf
+
 test.html
 
 *.odt
