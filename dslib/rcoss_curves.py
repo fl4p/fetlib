@@ -119,6 +119,20 @@ def _check_fp_and_review(sub, key, slot):
                 f"rcoss store entry {key}/{slot}: human_verified=True without a "
                 f"review bound to this fingerprint (need reviewer + artifact_sha256 "
                 f"+ entry_fingerprint == {fp[:12]}...) — a naked flag is not a review")
+        # the review must name the artifact THIS entry records — a review of some
+        # other artifact is a review of something else (verify round V1: a forged
+        # review naming a different sha loaded as human-verified)
+        rec = (sub.get("review_artifact") or {}).get("sha256")
+        if not rec:
+            raise RcossStoreError(
+                f"rcoss store entry {key}/{slot}: human_verified=True but the entry "
+                f"records no review_artifact — there is nothing the review can have "
+                f"reviewed")
+        if rev.get("artifact_sha256") != rec:
+            raise RcossStoreError(
+                f"rcoss store entry {key}/{slot}: review names artifact "
+                f"{str(rev.get('artifact_sha256'))[:12]}... but the entry records "
+                f"{rec[:12]}... — the review is not OF this entry's artifact")
     return fp
 
 
@@ -214,19 +228,35 @@ class _Lock:
         self.timeout = timeout
         self.fd = None
 
+    # The critical section is a read-validate-write of one JSON file (milliseconds);
+    # a lock this old cannot belong to a healthy promoter even if its recorded pid
+    # was reused by an unrelated live process (verify V4: pid-liveness alone never
+    # stole a reused-pid lock; age alone could steal a live one — use dead-pid OR
+    # very-old, whichever proves staleness first).
+    MAX_LOCK_AGE_S = 600.0
+
     def __enter__(self):
         deadline = time.monotonic() + self.timeout
         while True:
             try:
-                self.fd = os.open(self.lockfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-                os.write(self.fd, str(os.getpid()).encode())
+                # write the pid via an exclusive temp + link so the lockfile NEVER
+                # exists without its pid (verify V4: a crash between create and
+                # write left an unstealable empty lock)
+                tmp = f"{self.lockfile}.{os.getpid()}.tmp"
+                fd = os.open(tmp, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.write(fd, str(os.getpid()).encode())
+                os.close(fd)
+                try:
+                    os.link(tmp, self.lockfile)
+                except OSError as e:
+                    os.unlink(tmp)
+                    raise
+                os.unlink(tmp)
+                self.fd = True
                 return self
             except OSError as e:
                 if e.errno != errno.EEXIST:
                     raise
-                # steal ONLY a lock whose recorded holder pid is dead (impl review
-                # I5: age alone let the original holder later unlink a successor's
-                # lock). Age is the fallback when the pid is unreadable.
                 try:
                     with open(self.lockfile) as lf:
                         pid = int(lf.read().strip() or "0")
@@ -239,10 +269,11 @@ class _Lock:
                     except ProcessLookupError:
                         dead = True
                     except PermissionError:
-                        pass           # alive under another uid
+                        pass           # alive under another uid — never steal
                 try:
-                    stale = time.time() - os.path.getmtime(self.lockfile) > 60.0
-                    if dead or (pid == 0 and stale):
+                    age = time.time() - os.path.getmtime(self.lockfile)
+                    if dead or age > self.MAX_LOCK_AGE_S \
+                            or (pid == 0 and age > 60.0):
                         os.unlink(self.lockfile)
                         continue
                 except OSError:
@@ -255,8 +286,7 @@ class _Lock:
                 time.sleep(0.05)
 
     def __exit__(self, *exc):
-        if self.fd is not None:
-            os.close(self.fd)
+        if self.fd:
             os.unlink(self.lockfile)
 
 
@@ -324,10 +354,16 @@ def set_human_verified(mfr, mpn, kind, reviewer, artifact_sha256, path=None):
         if sub.get("kind") == "tombstone":
             raise RcossStoreError("set_human_verified: tombstones carry no review state")
         # The review must name the artifact the entry actually records (impl review
-        # I2: any supplied sha used to be accepted, unbinding the review from what
-        # was reviewed).
+        # I2 + verify V1: any supplied sha used to be accepted, and an artifact-less
+        # entry could be "reviewed" with any sha — both unbind the review from what
+        # was actually reviewed).
         rec = (sub.get("review_artifact") or {}).get("sha256")
-        if rec and artifact_sha256 != rec:
+        if not rec:
+            raise RcossStoreError(
+                "set_human_verified: this entry records no review_artifact — there "
+                "is nothing to have reviewed. Re-promote so an artifact exists, "
+                "then review that.")
+        if artifact_sha256 != rec:
             raise RcossStoreError(
                 f"set_human_verified: artifact sha {artifact_sha256[:12]}... does not "
                 f"match the entry's recorded review artifact {rec[:12]}... — review "

@@ -252,11 +252,14 @@ class RcossAnchor:
                     "RcossAnchor(single-bias-derived): the frequency row at V_ref is "
                     "required — without it the 'one bias row' certificate is decorative "
                     "(re-review finding A4)")
-            if not self.provenance:
+            missing = [k for k in ("model_sha256", "derive_version")
+                       if not self.provenance.get(k)]
+            if missing:
                 raise RcossStoreError(
-                    "RcossAnchor(single-bias-derived): empty provenance — a derived "
-                    "anchor must carry the same model/coss/code fingerprints as a "
-                    "derived curve (impl review I7)")
+                    f"RcossAnchor(single-bias-derived): provenance is missing "
+                    f"{missing} — a derived anchor must carry the same model/code "
+                    f"fingerprints as a derived curve; an arbitrary non-empty dict "
+                    f"is not provenance (impl review I7, verify V3)")
             fs = [f for f, _ in sorted(self.vendor_share_row)]
             if not _strictly_increasing(fs):
                 raise RcossStoreError("RcossAnchor: duplicate frequency in vendor_share_row")
@@ -282,6 +285,17 @@ class RcossAnchor:
                 raise RcossStoreError(
                     f"RcossAnchor(bench-fit): fitted_to has empty values for {empty} — "
                     f"a null placeholder cannot show what the fit reproduced (I7)")
+            # semantic minimums for the numerically load-bearing fields (verify V3)
+            if not isinstance(fit["l_loop_nh"], (int, float)) \
+                    or not math.isfinite(fit["l_loop_nh"]) or fit["l_loop_nh"] <= 0:
+                raise RcossStoreError(
+                    f"RcossAnchor(bench-fit): fitted_to.l_loop_nh must be a positive "
+                    f"number (got {fit['l_loop_nh']!r}) — the Q-match is meaningless "
+                    f"without the loop inductance it was fitted against")
+            if not isinstance(fit["target"], dict) or not fit["target"].get("q"):
+                raise RcossStoreError(
+                    f"RcossAnchor(bench-fit): fitted_to.target must be a dict naming "
+                    f"the fitted Q (got {fit['target']!r})")
 
     def summary(self):
         cert = ("row-certifiable" if self.source == "single-bias-derived"
@@ -310,6 +324,12 @@ class RcossTombstone:
                 "about a specific model file and must expire with it (finding F2)")
         if derive_version is None:
             raise RcossStoreError("RcossTombstone: derive_version is required")
+        if not self.provenance.get("derive_source_sha256"):
+            raise RcossStoreError(
+                "RcossTombstone: provenance.derive_source_sha256 is required — the "
+                "structural negative is a claim by a specific DETECTOR, and without "
+                "its code hash an obsolete detector's 'no evidence' stays "
+                "load-bearing forever (verify round V2)")
 
     def at(self, vds):
         raise RcossUnverified(

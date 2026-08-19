@@ -3,7 +3,7 @@
   "infineon:IPP022N12NM6": {
    "anchor": null,
    "curve": {
-    "entry_fingerprint": "57be42ff4710ab347c486b476c343e8fe0108ed47e7e08a4531c71bbbcd0cae8",
+    "entry_fingerprint": "85c0981488ed28748c5c32a50d487500276a5087c2c3755a2cfa1bb5b15b46ff",
     "human_verified": false,
     "kind": "derived",
     "points": [
@@ -69,7 +69,7 @@
      "coss_knots_sha256": "d31d6855345178c350cdc0997b9969ab8453e735b4c09d4d2b132421b6bb887d",
      "coss_registry_id": "infineon:IPP022N12NM6:coss-v1",
      "coss_split_rule": "Cds=Coss-Crss, Cgd=Crss",
-     "derive_source_sha256": "06d14fa7697ba0c3f8342f24b36e861686bfab0c24ee89cbbe130698b6621dd7",
+     "derive_source_sha256": "75d151c239180f65b6079666cfe13d197bded249e78d3af95576a00f86aaf783",
      "derive_version": 2,
      "element": "Rsp",
      "element_note": "literal vendor resistor value \u2014 NOT the port-equivalent R of the emitted branch; metadata only (re-review A3)",
@@ -88,8 +88,9 @@
     },
     "review": null,
     "review_artifact": {
-     "path": "/Users/fab/dev/pv/pwr-mosfet-lib/out/rcoss-review/infineon-IPP022N12NM6-90ba0991fe1c.json",
-     "sha256": "000d009116603237332d07daa2ff338f7fa4e26fe7a0dd6fa7d9411bde875921"
+     "material_pre_fingerprint": "3d76d08d112d0dec8af225ee5d9a957014eb3ceddbb21d93ae2a7c23c5437307",
+     "path": "/Users/fab/dev/pv/pwr-mosfet-lib/out/rcoss-review/infineon-IPP022N12NM6-3d76d08d112d.json",
+     "sha256": "24327714d7c71f5bcf74cef36aa56b7e8132b7dc5e2a6234ede34744f252e77c"
     },
     "vendor_share": [
      [
@@ -1528,7 +1529,7 @@
   "infineon:IPP050N10NF2S": {
    "anchor": null,
    "curve": {
-    "entry_fingerprint": "da9d19abfd0977d3244c164cca2733a64e9a85a43d4f9be3d7f90124fb96a308",
+    "entry_fingerprint": "f371595456b52816c08123ccd0481bcbb352b51873320242378ff50f7f95fb90",
     "human_verified": false,
     "kind": "derived",
     "points": [
@@ -1589,7 +1590,7 @@
      "coss_knots_sha256": "ce8db4d72080dfa42b62e3b2fda9eb05cad77b74a54944bcbafc25d10d04d196",
      "coss_registry_id": "infineon:IPP050N10NF2S:coss-v1",
      "coss_split_rule": "Cds=Coss-Crss, Cgd=Crss",
-     "derive_source_sha256": "06d14fa7697ba0c3f8342f24b36e861686bfab0c24ee89cbbe130698b6621dd7",
+     "derive_source_sha256": "75d151c239180f65b6079666cfe13d197bded249e78d3af95576a00f86aaf783",
      "derive_version": 2,
      "element": "Rsp",
      "element_note": "literal vendor resistor value \u2014 NOT the port-equivalent R of the emitted branch; metadata only (re-review A3)",
@@ -1608,8 +1609,9 @@
     },
     "review": null,
     "review_artifact": {
-     "path": "/Users/fab/dev/pv/pwr-mosfet-lib/out/rcoss-review/infineon-IPP050N10NF2S-b488d6a86b6f.json",
-     "sha256": "8d95ba3a4b5a3326c635e87c077f4fad803d475712936b5f3a12d914d228d459"
+     "material_pre_fingerprint": "497b3986665229d14a00d051d5abd5bc06b546f2f0fbf655c5cda7713de9d2c7",
+     "path": "/Users/fab/dev/pv/pwr-mosfet-lib/out/rcoss-review/infineon-IPP050N10NF2S-497b39866652.json",
+     "sha256": "c1b7f7d44837edd9d175754560dc37d9c4a1f7af9390a267a89aa6b2dd67fda5"
     },
     "vendor_share": [
      [
@@ -2918,7 +2920,7 @@
   "infineon:IPP055N08NF2S": {
    "anchor": null,
    "curve": {
-    "entry_fingerprint": "35cb488d4a46272e807c1e7429d320ee871d7a0c8a3d21eef213933b7bbca284",
+    "entry_fingerprint": "aca396d2472ad8793379a9cf738c2227bf0badf0c3f31ce32f3b7e59a53e69e6",
     "human_verified": false,
     "kind": "derived",
     "points": [
@@ -2979,7 +2981,7 @@
      "coss_knots_sha256": "57a9a73aa8246696a120686af4008078b94fae47d449afdad6653d701076b732",
      "coss_registry_id": "infineon:IPP055N08NF2S:coss-v1",
      "coss_split_rule": "Cds=Coss-Crss, Cgd=Crss",
-     "derive_source_sha256": "06d14fa7697ba0c3f8342f24b36e861686bfab0c24ee89cbbe130698b6621dd7",
+     "derive_source_sha256": "75d151c239180f65b6079666cfe13d197bded249e78d3af95576a00f86aaf783",
      "derive_version": 2,
      "element": "Rsp",
      "element_note": "literal vendor resistor value \u2014 NOT the port-equivalent R of the emitted branch; metadata only (re-review A3)",
@@ -2998,8 +3000,9 @@
     },
     "review": null,
     "review_artifact": {
-     "path": "/Users/fab/dev/pv/pwr-mosfet-lib/out/rcoss-review/infineon-IPP055N08NF2S-b965bb75a8c4.json",
-     "sha256": "213ce21e43d08fb7bf5cffcd3f37f226dc965398a4879ba8709ad90d799feb13"
+     "material_pre_fingerprint": "e75e81e8b373386806cd8296ff31053970e3b4f4dd6e0c40947938a7ebe00cf7",
+     "path": "/Users/fab/dev/pv/pwr-mosfet-lib/out/rcoss-review/infineon-IPP055N08NF2S-e75e81e8b373.json",
+     "sha256": "bce5301fd3a7bf2da4485e30fc805edba62a2662f0ad05ba0da13f864256d7cd"
     },
     "vendor_share": [
      [
