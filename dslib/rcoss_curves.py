@@ -68,11 +68,21 @@ def _key(mfr, mpn):
     return f"{mfr.strip().lower()}:{mpn.strip().upper()}"
 
 
-def _load_raw(path):
-    """Parse + top-level-validate the store file. An ABSENT file is an empty store
-    (nothing has ever been promoted); an UNREADABLE or MALFORMED file raises."""
+def _load_raw(path, missing_ok=False):
+    """Parse + top-level-validate the store file.
+
+    An ABSENT file raises unless `missing_ok` (impl review I1: the shipped store is a
+    versioned file — a missing one means a broken checkout or a wrong
+    RCOSS_STORE_PATH, and reading it as empty would route every curated part to the
+    live tier). Only publish() passes missing_ok=True, to create a fresh store.
+    """
     if not os.path.exists(path):
-        return {"schema": SCHEMA, "entries": {}}
+        if missing_ok:
+            return {"schema": SCHEMA, "entries": {}}
+        raise RcossStoreError(
+            f"rcoss store {path} does not exist — this is a STORE FAILURE, not an "
+            f"empty store (a fresh store is created by publish, never implied by a "
+            f"missing file). Check the fetlib checkout / RCOSS_STORE_PATH.")
     try:
         with open(path) as f:
             raw = json.load(f)
@@ -88,20 +98,58 @@ def _load_raw(path):
     return raw
 
 
+def _check_fp_and_review(sub, key, slot):
+    """Fingerprint + review-binding invariants shared by curve and anchor entries.
+
+    human_verified=True is only meaningful when bound to THIS entry's fingerprint
+    and a concrete artifact sha (impl review I2: a hand-edited `true` with
+    review=null loaded fine and became golden-eligible)."""
+    stored_fp = sub.get("entry_fingerprint")
+    fp = entry_fingerprint(sub)
+    if stored_fp != fp:
+        raise RcossStoreError(
+            f"rcoss store entry {key}/{slot}: entry_fingerprint mismatch "
+            f"(stored {stored_fp!r}, computed {fp!r}) — the entry was edited "
+            f"without re-fingerprinting; its review state is unbound")
+    if sub.get("human_verified"):
+        rev = sub.get("review")
+        if not isinstance(rev, dict) or rev.get("entry_fingerprint") != fp \
+                or not rev.get("artifact_sha256") or not rev.get("reviewer"):
+            raise RcossStoreError(
+                f"rcoss store entry {key}/{slot}: human_verified=True without a "
+                f"review bound to this fingerprint (need reviewer + artifact_sha256 "
+                f"+ entry_fingerprint == {fp[:12]}...) — a naked flag is not a review")
+    return fp
+
+
+def _prov_with_artifact(sub):
+    """Serving provenance = the provenance block plus the entry-level review_artifact
+    reference (I2: the loader used to drop it, so refusals printed an empty ref)."""
+    prov = dict(sub.get("provenance") or {})
+    if sub.get("review_artifact"):
+        prov["review_artifact"] = sub["review_artifact"]
+    return prov
+
+
 def _build_curve(sub, key):
     kind = sub.get("kind")
     if kind == "derived":
+        fp = _check_fp_and_review(sub, key, "curve")
+        return RcossDerived(sub["points"], sub["vendor_share"], _prov_with_artifact(sub),
+                            human_verified=sub.get("human_verified", False),
+                            review=sub.get("review"), fingerprint=fp)
+    if kind == "tombstone":
+        # tombstones are fingerprinted too (impl review I4: an unfingerprinted
+        # tombstone could be hand-edited into a different structural claim, or its
+        # derive_version rewritten, with no detection — a stale "no evidence" claim
+        # silently staying load-bearing)
         stored_fp = sub.get("entry_fingerprint")
         fp = entry_fingerprint(sub)
         if stored_fp != fp:
             raise RcossStoreError(
-                f"rcoss store entry {key}/curve: entry_fingerprint mismatch "
-                f"(stored {stored_fp!r}, computed {fp!r}) — the entry was edited "
-                f"without re-fingerprinting; its review state is unbound")
-        return RcossDerived(sub["points"], sub["vendor_share"], sub.get("provenance", {}),
-                            human_verified=sub.get("human_verified", False),
-                            review=sub.get("review"), fingerprint=fp)
-    if kind == "tombstone":
+                f"rcoss store entry {key}/curve: tombstone fingerprint mismatch "
+                f"(stored {stored_fp!r}, computed {fp!r}) — edited without "
+                f"re-promotion")
         return RcossTombstone(sub.get("why", ""), sub.get("model_sha256"),
                               sub.get("derive_version"), sub.get("provenance"))
     raise RcossStoreError(f"rcoss store entry {key}/curve: unknown kind {kind!r}")
@@ -115,15 +163,10 @@ def _build_anchor(sub, key):
         raise RcossStoreError(
             f"rcoss store entry {key}/anchor: carries curve 'points' — an anchor is one "
             f"value; a multi-point law belongs in the curve slot")
-    stored_fp = sub.get("entry_fingerprint")
-    fp = entry_fingerprint(sub)
-    if stored_fp != fp:
-        raise RcossStoreError(
-            f"rcoss store entry {key}/anchor: entry_fingerprint mismatch "
-            f"(stored {stored_fp!r}, computed {fp!r})")
+    fp = _check_fp_and_review(sub, key, "anchor")
     v_ref, r_ohm = sub["anchor"]
     return RcossAnchor(v_ref, r_ohm, sub.get("anchor_source"),
-                       sub.get("provenance", {}),
+                       _prov_with_artifact(sub),
                        vendor_share_row=sub.get("vendor_share_row"),
                        why_no_curve=sub.get("why_no_curve", ""),
                        human_verified=sub.get("human_verified", False),
@@ -138,8 +181,13 @@ def _validate_all(raw, path):
         if not isinstance(slot, dict) or set(slot) - {"curve", "anchor"}:
             raise RcossStoreError(f"rcoss store entry {key}: bad slot shape "
                                   f"{sorted(slot) if isinstance(slot, dict) else slot!r}")
-        curve = _build_curve(slot["curve"], key) if slot.get("curve") else None
-        anchor = _build_anchor(slot["anchor"], key) if slot.get("anchor") else None
+        # ONLY None is absent. A falsey-but-present sub-entry ({}, "", 0) is malformed
+        # and must refuse — treating it as absent routed derived mode to the live tier
+        # (impl review I1, reproduced).
+        curve = (_build_curve(slot["curve"], key)
+                 if slot.get("curve") is not None else None)
+        anchor = (_build_anchor(slot["anchor"], key)
+                  if slot.get("anchor") is not None else None)
         if curve is None and anchor is None:
             raise RcossStoreError(f"rcoss store entry {key}: empty bundle — a part with "
                                   f"no evidence must be ABSENT, not present-and-empty")
@@ -176,9 +224,26 @@ class _Lock:
             except OSError as e:
                 if e.errno != errno.EEXIST:
                     raise
+                # steal ONLY a lock whose recorded holder pid is dead (impl review
+                # I5: age alone let the original holder later unlink a successor's
+                # lock). Age is the fallback when the pid is unreadable.
                 try:
-                    if time.time() - os.path.getmtime(self.lockfile) > 60.0:
-                        os.unlink(self.lockfile)   # stale holder
+                    with open(self.lockfile) as lf:
+                        pid = int(lf.read().strip() or "0")
+                except (OSError, ValueError):
+                    pid = 0
+                dead = False
+                if pid > 0:
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        dead = True
+                    except PermissionError:
+                        pass           # alive under another uid
+                try:
+                    stale = time.time() - os.path.getmtime(self.lockfile) > 60.0
+                    if dead or (pid == 0 and stale):
+                        os.unlink(self.lockfile)
                         continue
                 except OSError:
                     continue
@@ -211,13 +276,16 @@ def publish(mfr, mpn, kind, sub_entry, path=None, expected_store_sha=None):
             raise RcossStoreError(
                 f"publish: store {p} changed since it was read (CAS mismatch) — "
                 f"re-read and retry; refusing a lost-update overwrite")
-        raw = _load_raw(p)
+        raw = _load_raw(p, missing_ok=True)        # publish CREATES a fresh store
         sub = dict(sub_entry)
         sub.pop("entry_fingerprint", None)
         prev = (raw["entries"].get(key) or {}).get(kind)
         if sub.get("kind") == "tombstone":
-            new = sub                              # tombstones carry no review state
-            fp = None
+            # tombstones carry no review state but ARE fingerprinted (I4)
+            fp = entry_fingerprint(sub)
+            new = dict(sub, entry_fingerprint=fp)
+            if prev and prev.get("entry_fingerprint") == fp:
+                return {"action": "noop", "entry_fingerprint": fp, "path": p}
         else:
             # fingerprint over the material entry with review state at its reset values
             new = dict(sub, human_verified=False, review=None)
@@ -255,6 +323,15 @@ def set_human_verified(mfr, mpn, kind, reviewer, artifact_sha256, path=None):
             raise RcossStoreError(f"set_human_verified: no {kind} entry for {key}")
         if sub.get("kind") == "tombstone":
             raise RcossStoreError("set_human_verified: tombstones carry no review state")
+        # The review must name the artifact the entry actually records (impl review
+        # I2: any supplied sha used to be accepted, unbinding the review from what
+        # was reviewed).
+        rec = (sub.get("review_artifact") or {}).get("sha256")
+        if rec and artifact_sha256 != rec:
+            raise RcossStoreError(
+                f"set_human_verified: artifact sha {artifact_sha256[:12]}... does not "
+                f"match the entry's recorded review artifact {rec[:12]}... — review "
+                f"the artifact this entry points to, not another one")
         sub["human_verified"] = True
         sub["review"] = {"reviewer": reviewer,
                          "reviewed_at": time.strftime("%Y-%m-%d"),

@@ -262,8 +262,45 @@ def audit(keys) -> list:
                 "datasheet", None, None, "", "", "cap",
                 note=f"no datasheet fields ({type(e).__name__})")]))
             continue
-        cards.append(Card(mfr, mpn, getattr(specs, "Vds", None), build_card(specs, ds)))
+        rows = build_card(specs, ds)
+        rows.append(_rcoss_row(mfr, mpn))
+        cards.append(Card(mfr, mpn, getattr(specs, "Vds", None), rows))
     return cards
+
+
+def _rcoss_row(mfr, mpn) -> Row:
+    """Curated Rcoss(V) row — graded `vendor-port-derived`, NEVER datasheet-grounded.
+
+    No datasheet publishes a Coss-path series resistance, so `ref` is always None
+    and the verdict can never read PASS-against-nameplate: the row exists to say
+    WHAT is curated and its review state (UNVERIFIED != PASS). The R(V) shape is
+    the vendor macromodel's own and is unvalidated against measured ESR shapes
+    (Raciti 2018 peak-and-fall); see dcdc-tools loss/lib/rcoss_derive.py.
+    """
+    try:
+        from dslib.rcoss_curves import rcoss_for
+        b = rcoss_for(mfr, mpn)
+    except Exception as e:  # noqa: BLE001 — store failure is a fact for the card
+        return Row("Rcoss(V) vendor-port", None, None, "ohm", "", "rcoss",
+                   note=f"rcoss store failure: {type(e).__name__}")
+    if b is None or (b.curve is None and b.anchor is None):
+        return Row("Rcoss(V) vendor-port", None, None, "ohm", "", "rcoss",
+                   note="no curated Rcoss entry")
+    if b.curve is not None and b.curve.kind == "derived":
+        c = b.curve
+        rev = "human-verified" if c.human_verified else "UNREVIEWED"
+        return Row("Rcoss(V) vendor-port", c.points[-1][1], None, "ohm",
+                   f"@{c.points[-1][0]:g}V", "rcoss",
+                   note=f"vendor-port-derived, {len(c.points)} pts, {rev}; "
+                        f"not datasheet-grounded, shape is the vendor's")
+    if b.curve is not None:      # tombstone
+        return Row("Rcoss(V) vendor-port", None, None, "ohm", "", "rcoss",
+                   note=f"structural negative: {b.curve.why[:80]}")
+    a = b.anchor
+    return Row("Rcoss anchor", a.r_ohm, None, "ohm", f"@{a.v_ref:g}V", "rcoss",
+               note=f"{a.source} declared fit, "
+                    f"{'human-verified' if a.human_verified else 'UNREVIEWED'}; "
+                    f"UNCERTIFIED band validity, never golden")
 
 
 def keys_with_curves():

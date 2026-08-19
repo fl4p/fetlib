@@ -122,28 +122,47 @@ class RcossDerived:
             raise RcossStoreError("RcossDerived: vendor_share surface is empty — the "
                                   "serve-time certificate would have nothing to check "
                                   "against (a derived law without its evidence)")
-        share_v = {v for v, _f, _r in self.vendor_share}
-        for v in vs:
-            if not any(abs(v - sv) <= 1e-9 * max(abs(v), 1.0) for sv in share_v):
-                raise RcossStoreError(
-                    f"RcossDerived: vendor_share carries no frequency row for bias "
-                    f"knot {v:g} V — every emitted knot must be certifiable")
         for v, f, re_ in self.vendor_share:
-            if not (_finite(f) and f > 0 and _finite(re_) and re_ > 0):
+            if not (_finite(v) and v >= 0 and _finite(f) and f > 0
+                    and _finite(re_) and re_ > 0):
                 raise RcossStoreError(
                     f"RcossDerived: malformed vendor_share sample ({v!r}, {f!r}, {re_!r})")
+        # The surface must be a RECTANGULAR grid over EXACTLY the emitted knots
+        # (impl review I3: extra/near-duplicate bias rows let a fabricated row widen
+        # the global frequency span or shadow a real row, and ragged rows let the
+        # certificate pass on extrapolated flat tails outside a row's real evidence).
+        share_v = sorted({v for v, _f, _r in self.vendor_share})
+        if len(share_v) != len(vs) or any(
+                abs(a - b) > 1e-9 * max(abs(a), 1.0) for a, b in zip(share_v, vs)):
+            raise RcossStoreError(
+                f"RcossDerived: vendor_share bias rows {share_v} must be exactly the "
+                f"emitted knots {vs} — no missing, extra, or near-duplicate rows")
+        axes = {}
+        for v, f, _r in self.vendor_share:
+            axes.setdefault(v, []).append(f)
+        ref_axis = None
+        for v, fs in axes.items():
+            fs = sorted(fs)
+            if not _strictly_increasing(fs):
+                raise RcossStoreError(
+                    f"RcossDerived: duplicate frequency sample at bias {v:g} V")
+            if ref_axis is None:
+                ref_axis = fs
+            elif len(fs) != len(ref_axis) or any(
+                    abs(a - b) > 1e-9 * max(abs(a), 1.0)
+                    for a, b in zip(fs, ref_axis)):
+                raise RcossStoreError(
+                    f"RcossDerived: bias row {v:g} V has a different frequency axis — "
+                    f"the surface must be rectangular so span checks hold per-row")
 
     def share_rows(self):
-        """{bias_V: sorted [(f_hz, re_ohm)]} of the stored surface."""
+        """{bias_V: sorted [(f_hz, re_ohm)]} of the stored (validated-rectangular)
+        surface."""
         rows = {}
         for v, f, re_ in self.vendor_share:
             rows.setdefault(v, []).append((f, re_))
         for v in rows:
             rows[v].sort()
-            fs = [f for f, _ in rows[v]]
-            if not _strictly_increasing(fs):
-                raise RcossStoreError(
-                    f"RcossDerived: duplicate frequency sample at bias {v:g} V")
         return rows
 
     def freq_span(self):
@@ -233,6 +252,11 @@ class RcossAnchor:
                     "RcossAnchor(single-bias-derived): the frequency row at V_ref is "
                     "required — without it the 'one bias row' certificate is decorative "
                     "(re-review finding A4)")
+            if not self.provenance:
+                raise RcossStoreError(
+                    "RcossAnchor(single-bias-derived): empty provenance — a derived "
+                    "anchor must carry the same model/coss/code fingerprints as a "
+                    "derived curve (impl review I7)")
             fs = [f for f, _ in sorted(self.vendor_share_row)]
             if not _strictly_increasing(fs):
                 raise RcossStoreError("RcossAnchor: duplicate frequency in vendor_share_row")
@@ -252,6 +276,12 @@ class RcossAnchor:
                 raise RcossStoreError(
                     f"RcossAnchor(bench-fit): fitted_to is missing {missing} "
                     f"(required: {list(BENCH_FIT_REQUIRED)})")
+            empty = [k for k in BENCH_FIT_REQUIRED
+                     if fit[k] in (None, "", [], {})]
+            if empty:
+                raise RcossStoreError(
+                    f"RcossAnchor(bench-fit): fitted_to has empty values for {empty} — "
+                    f"a null placeholder cannot show what the fit reproduced (I7)")
 
     def summary(self):
         cert = ("row-certifiable" if self.source == "single-bias-derived"
