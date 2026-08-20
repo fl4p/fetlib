@@ -1011,3 +1011,36 @@ def test_ks184_125a_reproduces_its_own_datasheet_dc_bias_point():
     assert l_typ < 344.4e-6 * 1.35, (
         f"typical {l_typ*1e6:.1f} uH is more than 35% above the Min. -- the bias law or A_L "
         f"is wrong, not merely conservative")
+
+
+def test_koolmu_max40_record():
+    """Kool Mu MAX 40 / 0079736A7: vendor numbers, structured coefficients and the 30% floor."""
+    import math
+    import pytest
+    from maglib.materials import MagInc_KoolMuMAX_40 as m
+    from maglib.cores import MagInc_740_KoolMuMAX40 as c
+    assert m.dc_bias_coef == (0.01, 2.5e-07, 2.0)
+    assert m.dc_bias_floor == 0.30
+    assert m.coef_source == 'band'
+    # 92 turns: 1.151 mH at 0 A, 0.792 mH at 21.43 A (pa/spwm/spwm-coils.md)
+    N = 92
+    L0 = N * N * c.A_L
+    kH = N / (c.l_e * 79.5775)
+    assert abs(L0 - 1.1511e-3) < 1e-6
+    assert abs(L0 * m.retained_permeability(kH * 21.43) - 0.7921e-3) < 1e-6
+    # datasheet minimums 80% @ 85 Oe, 50% @ 180 Oe: the typical fit must sit above them
+    assert m.retained_permeability(85) > 0.80
+    assert m.retained_permeability(180) > 0.50
+    # floor: 30% is the last validated point, 29% raises, no_raise warns
+    H30 = math.sqrt((0.01 / 0.30 - 0.01) / 2.5e-7)
+    m.retained_permeability(H30 * 0.999)
+    with pytest.raises(AssertionError):
+        m.retained_permeability(H30 * 1.02)
+    with pytest.warns(UserWarning):
+        m.retained_permeability(H30 * 1.02, no_raise=True)
+    # the A/m accessor shares the same floor
+    with pytest.raises(AssertionError):
+        m.permeability_dc_bias(H30 * 1.02 * 79.5775)
+    # plain Kool Mu keeps its historical 25% floor
+    from maglib.materials import MagInc_KoolMu_60
+    assert MagInc_KoolMu_60.dc_bias_floor == 0.25

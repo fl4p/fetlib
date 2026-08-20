@@ -52,8 +52,23 @@ class MagneticCoreMaterialSpecs:
                  dc_bias: Callable,
                  dc_magnetization: Callable = None,
                  coef_source: str = None,
+                 dc_bias_coef: tuple = None,
+                 dc_bias_floor: float = 0.25,
                  ):
-        """:param coef_source: where the curve coefficients came from --
+        """:param dc_bias_coef: the (a, b, c) of the vendor percent-permeability
+            fit ``%mu_i = 1/(a + b*H_oe**c)`` (Magnetics / Micrometals form, so
+            the retained FRACTION is ``0.01/(a + b*H_oe**c)``), kept as DATA so a
+            consumer that needs the analytic law (e.g. a closed-form flux linkage,
+            which exists only for c == 2) can read it instead of re-fitting the
+            opaque ``dc_bias`` callable. Optional; when given it must agree with
+            ``dc_bias`` (checked at construction).
+        :param dc_bias_floor: lowest retained fraction the vendor curve is
+            published for. Magnetics prints "Fit valid only for range shown on
+            graph", and the graphs do not all reach the same depth: plain Kool Mu
+            is drawn to 25%, Kool Mu MAX only to 30%. Below the floor
+            ``permeability_dc_bias`` raises (or warns with no_raise) exactly as it
+            always did at the old hard-coded 25%.
+        :param coef_source: where the curve coefficients came from --
             ``'datasheet'`` (this exact part's own printed values),
             ``'band'`` (a per-(material, permeability) fit shared across an OD
             range), or None for the hand-entered materials in this module.
@@ -76,6 +91,43 @@ class MagneticCoreMaterialSpecs:
         self.dc_bias = _finite_or_raise(dc_bias, mfr, mpn, 'dc_bias')
         self.dc_magnetization = _finite_or_raise(
             dc_magnetization, mfr, mpn, 'dc_magnetization')
+        assert 0 < dc_bias_floor < 1, dc_bias_floor
+        self.dc_bias_floor = dc_bias_floor
+        self.dc_bias_coef = tuple(dc_bias_coef) if dc_bias_coef is not None else None
+        if self.dc_bias_coef is not None:
+            a, b, c = self.dc_bias_coef
+            for H_oe in (10.0, 100.0):
+                want = 0.01 / (a + b * H_oe ** c)
+                got = self.dc_bias(H_oe=H_oe)
+                assert abs(got - want) <= 1e-6 * max(1.0, abs(want)), (
+                    mfr, mpn, 'dc_bias_coef disagrees with dc_bias at H=%g Oe: %r vs %r'
+                    % (H_oe, got, want))
+
+    def retained_permeability(self, H_oe, no_raise=False):
+        """Retained FRACTION of initial permeability (0..1) at H in OERSTEDS.
+
+        Same range policy as ``permeability_dc_bias`` (raise below
+        ``dc_bias_floor``, or warn with ``no_raise``), but returns ``r`` rather
+        than ``r * mu_r`` and takes Oe rather than A/m, because the vendor fits
+        are written in Oe and a caller deriving ``L_inc(I) = L0 * r(H(I))`` wants
+        the fraction. Having one accessor that returns ``r*mu_r`` in A/m and
+        nothing that returns ``r`` in Oe made every consumer re-derive both.
+        """
+        r = self.dc_bias(H_oe=H_oe)
+        self._check_bias_range(r, no_raise)
+        return r
+
+    def _check_bias_range(self, dc_bias, no_raise):
+        in_range = self.dc_bias_floor <= dc_bias <= 1
+        if not in_range:
+            if not no_raise:
+                assert False, "dc bias core saturation too high, %%µi = %.0f%% (validated floor %.0f%%)" % (
+                    dc_bias * 100, self.dc_bias_floor * 100)
+            warnings.warn(
+                '%s/%s: dc-bias permeability is outside the validated '
+                '%.0f%%..100%% band; the value is returned unchecked because '
+                'no_raise=True. Inductance and every flux/loss figure derived '
+                'from it are extrapolated here.' % (self.mfr, self.mpn, self.dc_bias_floor * 100))
 
     def permeability_dc_bias(self, H, no_raise=False):
         """Effective permeability at DC bias H (A/m).
@@ -96,15 +148,7 @@ class MagneticCoreMaterialSpecs:
         """
         H_oe = H / .7958e2
         dc_bias = self.dc_bias(H_oe=H_oe)
-        in_range = 0.25 <= dc_bias <= 1
-        if not in_range:
-            if not no_raise:
-                assert False, "dc bias core saturation too high, %%µi = %.0f%%" % (dc_bias * 100)
-            warnings.warn(
-                '%s/%s: dc-bias permeability is outside the validated '
-                '25%%..100%% band; the value is returned unchecked because '
-                'no_raise=True. Inductance and every flux/loss figure derived '
-                'from it are extrapolated here.' % (self.mfr, self.mpn))
+        self._check_bias_range(dc_bias, no_raise)
         # too much DC bias inductivity drop
         return dc_bias * self.mu_r
 
@@ -180,16 +224,24 @@ MagInc_KoolMu_60 = MagneticCoreMaterialSpecs(
 #   p.63  Permeability vs DC Bias fit, "Kool Mµ MAX Toroids", 40µ: a=0.01 b=2.500E-07 c=2.000
 #   p.109 Core Loss Density P = a B^b f^c (mW/cm3, T, kHz), "Kool Mµ MAX Toroids",
 #         26/40/60/75/90µ: a=113.53 b=2.072 c=1.379
-#   p.129 DC Magnetization fit, "Kool Mµ MAX Toroids", 40µ row.
+#   p.128 DC Magnetization fit, "Kool Mµ MAX Toroids", 40µ row.
 # The bias exponent is EXACTLY 2.000 in the vendor table (MAX 60µ and 75µ too); that is
 # what makes the arctan closed-form flux linkage in pa/spwm/SPICE-SIMULATION-PLAN.md valid
 # for this material, and it is not true of plain Kool Mµ (c=1.704..1.855 above).
+# coef_source is 'band', not 'datasheet': these are the catalog's per-material curves, not
+# coefficients printed on the 0079736A7 datasheet -- that sheet only guarantees MINIMUM
+# retained permeability of 80% at 85 Oe and 50% at 180 Oe (the typical fit gives 84.7%
+# and 55.3%). The catalog states "Fit valid only for range shown on graph" (p.63) and the
+# MAX graph (p.48) is drawn down to 30%, hence dc_bias_floor=0.30 rather than the 25%
+# the plain Kool Mµ graph supports.
 MagInc_KoolMuMAX_40 = MagneticCoreMaterialSpecs(
     'maginc', 'KoolMµMAX40', mu_r=40,
     core_loss_density=lambda Bpk_tesla, f_khz: 113.53 * (Bpk_tesla ** 2.072) * (f_khz ** 1.379),  # p.109
     dc_bias=lambda H_oe: 0.01 / (0.01 + 2.500E-07 * H_oe ** 2.000),  # p.63
-    dc_magnetization=maginc_dc_magnetization_model(4.927E-02, 1.443E-02, 5.832E-04, 7.862E-02, 4.579E-04, 1.626),  # p.129
-    coef_source='datasheet',
+    dc_magnetization=maginc_dc_magnetization_model(4.927E-02, 1.443E-02, 5.832E-04, 7.862E-02, 4.579E-04, 1.626),  # p.128
+    coef_source='band',
+    dc_bias_coef=(0.01, 2.500E-07, 2.000),
+    dc_bias_floor=0.30,
 )
 
 # https://s3.amazonaws.com/micrometals-production/filer_public/db/06/db06aae2-7ebf-4690-a80c-cd90e892ac65/ms-060-datasheet.pdf
