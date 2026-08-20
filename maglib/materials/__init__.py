@@ -174,6 +174,24 @@ MagInc_KoolMu_60 = MagneticCoreMaterialSpecs(
     dc_magnetization=maginc_dc_magnetization_model(3.601E-02, 1.721E-02, 5.401E-04, 5.624E-02, 5.156E-04, 1.577),
 )
 
+# Magnetics Powder Core Catalog (current edition, fetched 2026-08-20 from
+# https://www.mag-inc.com/Media/Magnetics/File-Library/Product%20Literature/Powder%20Core%20Literature/Magnetics-Powder-Core-Catalog.pdf
+# -- the "-2024" URL used above now 404s). Printed page numbers:
+#   p.63  Permeability vs DC Bias fit, "Kool Mµ MAX Toroids", 40µ: a=0.01 b=2.500E-07 c=2.000
+#   p.109 Core Loss Density P = a B^b f^c (mW/cm3, T, kHz), "Kool Mµ MAX Toroids",
+#         26/40/60/75/90µ: a=113.53 b=2.072 c=1.379
+#   p.129 DC Magnetization fit, "Kool Mµ MAX Toroids", 40µ row.
+# The bias exponent is EXACTLY 2.000 in the vendor table (MAX 60µ and 75µ too); that is
+# what makes the arctan closed-form flux linkage in pa/spwm/SPICE-SIMULATION-PLAN.md valid
+# for this material, and it is not true of plain Kool Mµ (c=1.704..1.855 above).
+MagInc_KoolMuMAX_40 = MagneticCoreMaterialSpecs(
+    'maginc', 'KoolMµMAX40', mu_r=40,
+    core_loss_density=lambda Bpk_tesla, f_khz: 113.53 * (Bpk_tesla ** 2.072) * (f_khz ** 1.379),  # p.109
+    dc_bias=lambda H_oe: 0.01 / (0.01 + 2.500E-07 * H_oe ** 2.000),  # p.63
+    dc_magnetization=maginc_dc_magnetization_model(4.927E-02, 1.443E-02, 5.832E-04, 7.862E-02, 4.579E-04, 1.626),  # p.129
+    coef_source='datasheet',
+)
+
 # https://s3.amazonaws.com/micrometals-production/filer_public/db/06/db06aae2-7ebf-4690-a80c-cd90e892ac65/ms-060-datasheet.pdf
 # TODO import from https://s3.amazonaws.com/micrometals-production/filer_public/a7/22/a722ffb5-f2e4-4418-a4cc-f64472001cb4/mmcurvefitcoefficientsall.xlsx
 Micrometals_Sendust_60u = MagneticCoreMaterialSpecs(

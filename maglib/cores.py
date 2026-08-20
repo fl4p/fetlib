@@ -208,6 +208,23 @@ MagInc_106_KoolMu60 = MagneticCoreSpecs('0077894A7', MagInc_KoolMu_60,
                                         Vol=4150e-9,  # mm3 eff. Volume
                                         )
 
+# Magnetics size 740 toroid, from the 0079736A7 datasheet (rev 10/7/2021,
+# https://www.mag-inc.com/Media/Magnetics/Datasheets/0079736A7.pdf, fetched 2026-08-20):
+# Le 184 mm, Ae 497 mm2, Ve 91,400 mm3, WA 1,550 mm2; uncoated OD/ID/HT 74.09/45.29/35.00 mm,
+# coated limits OD max 75.21, ID min 44.40, HT max 35.92 mm. Geometrically the same body as
+# MicrometalsT292 below (74.10/45.30/35.00), with Magnetics' own coated limits.
+MagInc_740 = ToroidShape('740', l_e=184e-3, A_e=497e-6, Vol=91.4e-6, od=74.09e-3, id=45.29e-3, ht=35.00e-3,
+                         id_coated=44.40e-3, od_coated=75.21e-3, ht_coated=35.92e-3)
+
+# Kool Mµ MAX 40µ on size 740. Datasheet: AL 136 nH/T2 +-8%; DC bias minimums 80% at 85 Oe
+# and 50% at 180 Oe (the typical fit gives 84.7% and 55.3% there); max loss 700 mW/cm3 at
+# 100 kHz / 100 mT (the typical fit gives 551). Candidate SPWM filter coil for the EGS002
+# inverter (pa/spwm/spwm-coils.md, 92 turns: 1.151 mH at 0 A, 0.792 mH at 21.43 A).
+MagInc_740_KoolMuMAX40 = MagneticCoreSpecs('0079736A7', materials.MagInc_KoolMuMAX_40,
+                                           A_L=136e-9,  # nH/N2
+                                           shape=MagInc_740,
+                                           )
+
 # Toroid shapes from the Micrometals Alloy Powder Cores catalogue (2021),
 # "Physical Dimensions" / "Magnetic Dimensions" block per size:
 #   https://s3.amazonaws.com/micrometals-production/filer_public/2f/ed/
