@@ -76,18 +76,34 @@ def test_unusable_material_raises():
     -- the most favourable answer available -- and the run went on to claim
     'mthd: 1' because nan > 0 is False, naming a method that never ran.
 
-    KDM_SendustKS_125 is written with literal nan exponents and backs
-    KDM_KS184_125A in cores.py, so this is reachable, not hypothetical.
+    KDM_SendustKS_125 used to be the live example: literal nan exponents,
+    backing KDM_KS184_125A in cores.py. It now carries KDM's printed law, so
+    the material is built HERE instead. That is a weaker witness -- the guard
+    no longer has a shipped material proving it fires -- but the defect class
+    is still live: try_float turns any unparseable Micrometals CSV cell into
+    nan and feeds it straight into a coefficient tuple, and nothing in the
+    loader refuses it.
     """
     import pytest
 
-    from maglib.materials import KDM_SendustKS_125, Micrometals_Sendust_60u
+    from maglib.materials import (MagneticCoreMaterialSpecs, KDM_SendustKS_125,
+                                  Micrometals_Sendust_60u)
 
+    unusable = MagneticCoreMaterialSpecs(
+        'test', 'nan-coef', mu_r=125,
+        core_loss_density=lambda Bpk_tesla, f_khz: (Bpk_tesla * 10) ** math.nan,
+        dc_bias=lambda H_oe: 1 / (1 + 1.34e-3 * H_oe ** 1.78),
+    )
     with pytest.raises(ValueError):
-        KDM_SendustKS_125.core_loss_density(Bpk_tesla=0.05, f_khz=100)
+        unusable.core_loss_density(Bpk_tesla=0.05, f_khz=100)
 
-    # the same material's dc_bias HAS real coefficients and must be unaffected
-    assert 0 < KDM_SendustKS_125.dc_bias(H_oe=50) < 1
+    # the unusable material's dc_bias HAS real coefficients and must be unaffected
+    assert 0 < unusable.dc_bias(H_oe=50) < 1
+
+    # KDM 125u is the material this guard was written for; it must now COMPUTE.
+    # If a future edit re-breaks its coefficients, the guard above still fires --
+    # this line is what tells you it did.
+    assert KDM_SendustKS_125.core_loss_density(Bpk_tesla=0.05, f_khz=100) > 0
 
     # and a healthy material must not be disturbed by the guard
     assert Micrometals_Sendust_60u.core_loss_density(
@@ -1044,3 +1060,82 @@ def test_koolmu_max40_record():
     # plain Kool Mu keeps its historical 25% floor
     from maglib.materials import MagInc_KoolMu_60
     assert MagInc_KoolMu_60.dc_bias_floor == 0.25
+
+
+def test_kdm_sendust_core_loss_law():
+    """KDM's printed Sendust loss law: what is corroborated, and what is only transcribed.
+
+    The law lives in the "Core Loss Curves (Typical)" panel:
+        P = B**2.225 * (4.584*f + 0.0238*f**1.966)   [mW/cm3, kGauss, kHz]
+
+    TWO DIFFERENT STRENGTHS OF CHECK BELOW, and they are not interchangeable.
+
+    (1) INDEPENDENT, f axis only. The Electrical Parameters table carries a separate
+        printed figure, "50kHz/1000Gs -> 350 mW/cm3 (Max.)", rendered independently of
+        the curve panel. The law must land under it. But 1000 Gs is exactly 1 kGauss,
+        so B**b == 1 for any b -- this anchor cannot see the B exponent at all. A digit
+        slip there passes it silently, which is why (2) exists.
+
+    (2) TRANSCRIPTION LOCK, both axes. The coefficients are asserted as literals. This
+        proves nothing about the physics -- it is the arithmetic asserting itself -- and
+        it is NOT here as validation. It is here because the source is a SCANNED sheet
+        read at 600 dpi, the realistic failure is a misread digit (1.966 resolves as
+        1.866 at 150 dpi), and a wrong digit must not be able to enter silently. Change
+        these only against a fresh render, and say what render in the commit.
+
+    The B axis has no independent anchor yet. Digitizing the curve panel (dsdig) at any
+    B != 1 kGauss would give one; until then, treat the B exponent as transcribed.
+    """
+    from maglib.materials import (KDM_SendustKS_60, KDM_SendustKS_125,
+                                  KDM_SENDUST_DATASHEET_LOSS_MAX, KDM_SENDUST_LOSS_COEF)
+
+    # (2) transcription lock -- 600 dpi render of
+    # ee/datasheets/kdm/KS184-125A_semic_Ljf_T184-S-125A_KD.pdf
+    # sha256 5aa7be7a03717a95cd75b527c0cfddaf1e9f46f3a174ad2d2bf33410244e632d
+    assert KDM_SENDUST_LOSS_COEF == (2.225, 4.584, 0.0238, 1.966)
+
+    # (1) the sheet's own printed max, which a typical may not exceed. The lower bound is
+    # loose on purpose: the sheet publishes no typical-to-max ratio, so anything tighter
+    # would be an invented threshold rather than a sourced one. It is the coefficient
+    # assert above that catches digit slips, NOT this band.
+    f_khz, bpk_t, p_max = KDM_SENDUST_DATASHEET_LOSS_MAX
+    for m in (KDM_SendustKS_60, KDM_SendustKS_125):
+        p = m.core_loss_density(Bpk_tesla=bpk_t, f_khz=f_khz)
+        assert 0.5 * p_max < p < p_max, (m.mpn, p, p_max)
+
+    # One law for every KS permeability: the vendor's panel header names 60/75/90/125u
+    # together and its curves are frequencies, not permeabilities. If someone re-splits
+    # these into per-material copies, this is what catches the copies drifting.
+    for f_khz in (8., 25., 100.):
+        for bpk_t in (0.02, 0.063, 0.2):
+            a = KDM_SendustKS_60.core_loss_density(Bpk_tesla=bpk_t, f_khz=f_khz)
+            b = KDM_SendustKS_125.core_loss_density(Bpk_tesla=bpk_t, f_khz=f_khz)
+            assert a == b, (f_khz, bpk_t, a, b)
+
+    # Monotone in both axes -- a sign slip in an exponent shows up here and nowhere else.
+    lo = KDM_SendustKS_125.core_loss_density(Bpk_tesla=0.05, f_khz=25.)
+    assert KDM_SendustKS_125.core_loss_density(Bpk_tesla=0.10, f_khz=25.) > lo
+    assert KDM_SendustKS_125.core_loss_density(Bpk_tesla=0.05, f_khz=50.) > lo
+
+
+def test_ks184_125a_core_loss_is_computable_and_sane():
+    """KDM_KS184_125A must produce a NUMBER, and one an independent model agrees with.
+
+    Before the law was filled in, this core's loss raised out of ``_finite_or_raise`` --
+    correct behaviour for missing coefficients, and the reason every flu deck run had to
+    substitute a Micrometals core. This pins that the substitution is no longer needed AND
+    that the two disagree by little enough that past results computed on the substitute do
+    not silently move.
+
+    15% is chosen to be wider than the disagreement measured at the flu operating point
+    (2.7%) but far tighter than the ~35% by which Micrometals' shared BAND fit is known to
+    run low against per-part datasheet nominals -- see MagneticCoreMaterialSpecs.coef_source.
+    It is a cross-vendor plausibility band, not a claim that either curve is right.
+    """
+    from maglib.cores import KDM_KS184_125A, Micrometals_MS_184_125
+    assert KDM_KS184_125A.mat.coef_source == 'datasheet'
+    # flu's operating point: 17 turns, 39.01 kHz, Bpk 63 mT
+    kdm = KDM_KS184_125A.mat.core_loss_density(Bpk_tesla=0.0633, f_khz=39.01487)
+    mm = Micrometals_MS_184_125.mat.core_loss_density(Bpk_tesla=0.0633, f_khz=39.01487)
+    assert math.isfinite(kdm) and kdm > 0, kdm
+    assert abs(rel_err(kdm, mm)) < 0.15, (kdm, mm)

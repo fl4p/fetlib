@@ -24,11 +24,16 @@ def _finite_or_raise(fn: Callable, mfr, mpn, what: str):
     instead. Loud beats plausible: an unusable material should stop a design,
     not quietly top it.
 
-    Not hypothetical. ``KDM_SendustKS_125`` is written with literal ``nan``
-    exponents (see below) and backs ``KDM_KS184_125A`` in ``maglib/cores.py``.
-    The same path is reachable for any Micrometals material whose CSV cell
-    fails to parse, because ``try_float`` turns a ValueError into nan and feeds
-    it straight into the coefficient tuple.
+    Not hypothetical. ``KDM_SendustKS_125`` used to be written with literal
+    ``nan`` exponents while backing ``KDM_KS184_125A`` in ``maglib/cores.py``;
+    this guard is what turned that into a stop rather than a free win, and it
+    held for as long as the coefficients were missing. It now carries the
+    vendor's printed law (``kdm_sendust_core_loss``), so that particular hole
+    is closed -- but the CLASS of defect is not: the same path is reachable for
+    any Micrometals material whose CSV cell fails to parse, because
+    ``try_float`` turns a ValueError into nan and feeds it straight into the
+    coefficient tuple. Do not remove this guard on the strength of the one
+    example that no longer trips it.
     """
     if fn is None:
         return None
@@ -192,22 +197,83 @@ def micrometals_dc_bias_model(a, b, c, d):
 # https://semic.cz/!old/files/pdf_www/Ljf_KDM.pdf
 # https://semic.cz/!old/files/pdf_www/Ljf_KS.pdf
 # https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
+
+
+def kdm_sendust_core_loss(Bpk_tesla, f_khz):
+    """KDM's own printed Sendust core-loss law.
+
+        P = B**2.225 * (4.584*f + 0.0238*f**1.966)      P mW/cm3, B kGauss, f kHz
+
+    Printed inside the "Core Loss Curves (Typical)" panel of the KDM Sendust
+    spec sheets, under a header naming FOUR permeabilities at once --
+    "Sendust 60u, 75u, 90u, 125u". The chart's six curves are the six
+    FREQUENCIES (8/10/16/25/50/100 kHz), not the permeabilities, so the law is
+    written by the vendor as permeability-independent and one function serves
+    every KS material here. That is why 60u and 125u share this callable rather
+    than each carrying a copy: two copies can drift, and the 125u copy was
+    previously a row of ``nan`` placeholders (see ``_finite_or_raise``).
+
+    Verified against a printed value the same sheets carry INDEPENDENTLY of the
+    curve panel -- the "Core Loss / 50kHz/1000Gs" row of the Electrical
+    Parameters table, 350 mW/cm3 (Max.). This law returns 281 mW/cm3 there,
+    i.e. a typical sitting under a max, which is the only relation those two
+    numbers may have. Read at 600 dpi off
+    ee/datasheets/kdm/KS184-125A_semic_Ljf_T184-S-125A_KD.pdf
+    (sha256 5aa7be7a03717a95cd75b527c0cfddaf1e9f46f3a174ad2d2bf33410244e632d);
+    the sheet is SCANNED, pdftotext returns one byte, so it must be rendered.
+    At 150 dpi the f exponent misreads as 1.866 -- it is 1.966.
+
+    NOT a substitute for a measurement: it is the vendor's typical curve, and
+    the sheet gives no tolerance band on it.
+    """
+    b, k1, k2, e = KDM_SENDUST_LOSS_COEF
+    return (Bpk_tesla * 10) ** b * (k1 * f_khz + k2 * f_khz ** e)
+
+
+#: The four printed constants of ``kdm_sendust_core_loss``, exposed as DATA so a
+#: test can lock the TRANSCRIPTION independently of the arithmetic. They are read
+#: off a scanned sheet, and the failure mode is a misread digit, not a wrong
+#: formula: at 150 dpi the last exponent resolves as 1.866 and is 1.966. A test
+#: that only evaluates the callable cannot see that -- see
+#: KDM_SENDUST_DATASHEET_LOSS_MAX for exactly how far the one printed number
+#: constrains these, which is less far than it looks.
+#: (B exponent, linear-f coefficient, power-f coefficient, f exponent)
+KDM_SENDUST_LOSS_COEF = (2.225, 4.584, 0.0238, 1.966)
+
+#: The one operating point where KDM prints core loss as a NUMBER rather than a
+#: curve: "Core Loss / 50kHz/1000Gs -> 350 mW/cm3 (Max.)" in the Electrical
+#: Parameters table, which is a different rendering of the material from the
+#: curve panel the law is printed in. (f_khz, Bpk_tesla, max mW/cm3).
+#:
+#: MIND THE BLIND SPOT: 1000 Gs is exactly 1 kGauss, and the law's B term is
+#: ``B_kGauss ** b``, so this anchor returns 1 for ANY b. It corroborates the
+#: f axis and says NOTHING about the B exponent. The B axis is transcription-
+#: locked only, until someone digitizes the curve panel (dsdig) and adds a
+#: second anchor off a curve at B != 1 kGauss.
+KDM_SENDUST_DATASHEET_LOSS_MAX = (50.0, 0.1, 350.0)
+
 KDM_SendustKS_60 = MagneticCoreMaterialSpecs(
     'kdm', 'KS60', mu_r=60,
 
-    core_loss_density=lambda Bpk_tesla, f_khz: (Bpk_tesla * 10) ** 2.225 * (4.584 * f_khz + 0.0238 * f_khz ** 1.966),
+    core_loss_density=kdm_sendust_core_loss,
     dc_bias=lambda H_oe: 1 / (1 + 3.57e-4 * H_oe ** 1.748),
     # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
     dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
+    coef_source='datasheet',
 )
 
 KDM_SendustKS_125 = MagneticCoreMaterialSpecs(
     'kdm', 'KS125', mu_r=125,
 
-    core_loss_density=lambda Bpk_tesla, f_khz: (Bpk_tesla * 10) ** nan * (nan * f_khz + nan * f_khz ** nan),
+    # Was ``(Bpk*10)**nan * (nan*f + nan*f**nan)``, which made every consumer of
+    # KDM_KS184_125A raise out of _finite_or_raise. The placeholders were never
+    # unknown data -- the sheet's own curve panel covers 125u in the same breath
+    # as 60u; nobody had filled them in.
+    core_loss_density=kdm_sendust_core_loss,
     dc_bias=lambda H_oe: 1 / (1 + 1.34e-3 * H_oe ** 1.78),
     # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
     # dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
+    coef_source='datasheet',
 )
 
 # https://www.mag-inc.com/Media/Magnetics/File-Library/Product%20Literature/Powder%20Core%20Literature/Magnetics-Powder-Core-Catalog-2024.pdf#page=106
