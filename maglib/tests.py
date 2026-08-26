@@ -1133,7 +1133,11 @@ def test_ks184_125a_core_loss_is_computable_and_sane():
     It is a cross-vendor plausibility band, not a claim that either curve is right.
     """
     from maglib.cores import KDM_KS184_125A, Micrometals_MS_184_125
-    assert KDM_KS184_125A.mat.coef_source == 'datasheet'
+    # Deliberately NOT stamped 'datasheet'. The loss law is the sheet's own, but
+    # coef_source is one flag for the whole material and apps/inductor_core_sweep.py
+    # gates a loss ranking on it -- stamping it would buy this material's UNVERIFIED
+    # dc_bias / dc_magnetization curves a trust boost the loss curve earned.
+    assert KDM_KS184_125A.mat.coef_source is None
     # flu's operating point: 17 turns, 39.01 kHz, Bpk 63 mT
     kdm = KDM_KS184_125A.mat.core_loss_density(Bpk_tesla=0.0633, f_khz=39.01487)
     mm = Micrometals_MS_184_125.mat.core_loss_density(Bpk_tesla=0.0633, f_khz=39.01487)

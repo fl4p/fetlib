@@ -252,6 +252,30 @@ KDM_SENDUST_LOSS_COEF = (2.225, 4.584, 0.0238, 1.966)
 #: second anchor off a curve at B != 1 kGauss.
 KDM_SENDUST_DATASHEET_LOSS_MAX = (50.0, 0.1, 350.0)
 
+#: Why these two materials keep ``coef_source=None`` even though the loss law above
+#: IS this part's own printed law.
+#:
+#: ``coef_source`` is one flag per MATERIAL, but the three curves on a KDM material do
+#: not share a provenance. ``core_loss_density`` is the sheet's printed formula, checked
+#: against the sheet's own printed max. ``dc_bias`` has never carried a provenance note
+#: in this module's history, and ``dc_magnetization`` is documented at its own line as
+#: "a very rough fit from looking at this chart" -- off a generic Sendust catalogue page,
+#: not this part's sheet.
+#:
+#: The flag is not decorative: ``apps/inductor_core_sweep.py`` gates on
+#: ``coef_source != 'datasheet'`` to decide whether a core is admitted to a loss ranking
+#: WITHOUT the band-fit penalty. Stamping 'datasheet' here would buy two unverified
+#: curves a trust boost earned by a third, and it would do so in the optimistic
+#: direction -- the same shape of defect the class docstring warns about for band fits.
+#: So the material stays unstamped and the loss law's provenance lives in
+#: ``kdm_sendust_core_loss.__doc__`` and in ``KDM_SENDUST_LOSS_COEF``, where it describes
+#: exactly the one curve it is true of.
+#:
+#: The real fix is per-curve provenance on ``MagneticCoreMaterialSpecs``. That is a
+#: schema change touching every material and every consumer, so it is deliberately NOT
+#: bundled with a coefficient transcription.
+KDM_CORE_LOSS_IS_DATASHEET_BUT_COEF_SOURCE_IS_NOT = True
+
 KDM_SendustKS_60 = MagneticCoreMaterialSpecs(
     'kdm', 'KS60', mu_r=60,
 
@@ -259,7 +283,7 @@ KDM_SendustKS_60 = MagneticCoreMaterialSpecs(
     dc_bias=lambda H_oe: 1 / (1 + 3.57e-4 * H_oe ** 1.748),
     # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
     dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
-    coef_source='datasheet',
+    # NOT 'datasheet' -- see KDM_CORE_LOSS_IS_DATASHEET_BUT_COEF_SOURCE_IS_NOT below.
 )
 
 KDM_SendustKS_125 = MagneticCoreMaterialSpecs(
@@ -273,7 +297,7 @@ KDM_SendustKS_125 = MagneticCoreMaterialSpecs(
     dc_bias=lambda H_oe: 1 / (1 + 1.34e-3 * H_oe ** 1.78),
     # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
     # dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
-    coef_source='datasheet',
+    # NOT 'datasheet' -- see KDM_CORE_LOSS_IS_DATASHEET_BUT_COEF_SOURCE_IS_NOT below.
 )
 
 # https://www.mag-inc.com/Media/Magnetics/File-Library/Product%20Literature/Powder%20Core%20Literature/Magnetics-Powder-Core-Catalog-2024.pdf#page=106
