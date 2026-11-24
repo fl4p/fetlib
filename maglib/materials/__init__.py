@@ -280,8 +280,14 @@ KDM_SendustKS_60 = MagneticCoreMaterialSpecs(
     'kdm', 'KS60', mu_r=60,
 
     core_loss_density=kdm_sendust_core_loss,
+    # KDM's printed DC-bias row, %mu = 100/(a + b*H_oe^c), a=1 b=3.57E-04 c=1.748, H in Oe.
+    # Printed identically in the Sendust DC-bias panel of the KS184-125A sheet, Ljf_KS.pdf p.1
+    # and k6_Catalogue_Alloy_Powder_Core.pdf p.14 (not p.18, which is the B-H curves).
+    # dsdig (digitize-powder-dc-bias, validated 2026-11-24) reads the drawn curve within 0.53 %-pt.
+    # Small-signal (20 kHz/1 V on bias). Chart drawn 1..1000 Oe, down to ~1 %.
+    # Evidence: fugu-mppt-firmware/doc/research/coil-dcbias/README.md
     dc_bias=lambda H_oe: 1 / (1 + 3.57e-4 * H_oe ** 1.748),
-    # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
+    dc_bias_coef=(0.01, 3.57e-6, 1.748),  # vendor row rescaled to the a=0.01 convention
     dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
     # NOT 'datasheet' -- see KDM_CORE_LOSS_IS_DATASHEET_BUT_COEF_SOURCE_IS_NOT below.
 )
@@ -294,8 +300,11 @@ KDM_SendustKS_125 = MagneticCoreMaterialSpecs(
     # unknown data -- the sheet's own curve panel covers 125u in the same breath
     # as 60u; nobody had filled them in.
     core_loss_density=kdm_sendust_core_loss,
-    dc_bias=lambda H_oe: 1 / (1 + 1.34e-3 * H_oe ** 1.78),
-    # this is a very rough fit from looking at this chart: https://www.semic.cz/!KATEGORIE/6K/k6_Catalogue%20Alloy%20Powder%20Core.pdf#page=18
+    # KDM's printed DC-bias row, a=1 b=1.34E-03 c=1.780 (same three sources as KS60).
+    # dsdig reads the drawn curve within 0.50 %-pt. Part-sheet anchor (KS184-125A): 344.4 uH min
+    # at 50 Oe vs 913.0 uH +-8 % -> 41.0 % of the -8 % L0; this law gives 41.4 %.
+    dc_bias=lambda H_oe: 1 / (1 + 1.34e-3 * H_oe ** 1.780),
+    dc_bias_coef=(0.01, 1.34e-5, 1.780),
     # dc_magnetization=micrometals_dc_mag_model(60, a=9E-03, b=2E+00, c=2E+09, d=0.000E-08, e=1.6E+02),
     # NOT 'datasheet' -- see KDM_CORE_LOSS_IS_DATASHEET_BUT_COEF_SOURCE_IS_NOT below.
 )
